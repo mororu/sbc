@@ -1,0 +1,4 @@
+.DS_Store
+
+# BMAD personal (non-team) config
+_bmad/custom/config.user.toml
