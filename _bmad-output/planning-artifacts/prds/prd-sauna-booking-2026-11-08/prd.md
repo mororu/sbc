@@ -21,7 +21,8 @@ Terms in §4 Glossary are used exactly as defined. Requirements are numbered FR-
 ## 1. Vision
 
 A wood-fired sauna wagon stands at the public lake-shore swimming place in winter, and anyone
-may use it. This product is its booking calendar. It is a mobile-first page where a guest
+may use it. This product is its booking calendar, published as *Sauna Luegisee* at
+sauna-luegisee.ch. It is a mobile-first page where a guest
 sees the coming two weeks, takes the whole wagon for one to three hours, and gets the keybox
 code by email the day before.
 
@@ -515,8 +516,8 @@ or third-party analytics are used.
   clock times, never "same time tomorrow". The booking horizon is counted in calendar days.
 - **NFR-4 Timeliness of emails.** Keybox emails are sent within 15 minutes after the 24-hour
   cutoff. Heat-change emails are sent within 15 minutes after the settle delay.
-- **NFR-5 Deliverability.** Emails come from a sender on the project's own domain with
-  standard authentication, so they reach common Swiss and international mailboxes rather than
+- **NFR-5 Deliverability.** Emails come from a sender on the project's own domain,
+  sauna-luegisee.ch, with standard authentication, so they reach common Swiss and international mailboxes rather than
   spam folders.
 - **NFR-6 No lost bookings.** Bookings are backed up daily to a location off the server. A
   restore is tested before the season opens.
@@ -598,8 +599,9 @@ cannot be measured by the app. It is judged by whether anyone complains.
 
 ## 10. Open Questions
 
-1. **Sender and domain.** The domain is not registered yet. Which domain and sender address
-   will the emails come from? *Needed before launch, not before architecture.*
+1. **Sender address.** The domain will be sauna-luegisee.ch (decided 2026-11-08) but is not
+   registered yet. Which sender address will the emails come from? *Registration and sender
+   needed before launch, not before architecture.*
 2. **Exact season dates.** When does the first season open and close? Admins can set and
    move them (FR-20), so this does not block the build.
 3. **Admins.** How many operators share the password, and who changes it when people leave?
