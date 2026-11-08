@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sauna Luegisee – Einstellungen (Key Screen)</title>
+<style>
+/* =====================================================================
+   KEY SCREEN: Settings (/admin/settings) - phone 360px + laptop 1280px, light; dark thumbnail
+   State 1: all groups at rest (defaults: changeover 15, pre-heat 30-40, horizon 14).
+   State 2: validation error - pre-heat shorter end (45) above longer end (40).
+   Governing spine sections - check these before changing this mock:
+   EXPERIENCE.md  Component Patterns: Settings forms (one card per group, own "Speichern";
+                    notes for changeover, keybox code, password), Secondary button, admin top bar
+                  State Patterns: Validation error (inline under the field, value kept, focus to
+                    first error); Focus
+                  Accessibility Floor: Forms (visible labels, aria-describedby, aria-invalid)
+                  Key Flows > Supporting flows: Rotate the keybox code
+   DESIGN.md      Components: Settings forms (surface block, 1px line, section-label heading),
+                    Text field (+ error), Secondary button; Typography: section label, field, note
+   PRD            FR-15 (password change signs out others), FR-20 (allowed values, keybox code)
+   Not rendered on purpose: list of upcoming guests holding the old keybox code (no spine
+   pattern) - see the key-screens report.
+   ===================================================================== */
+.light{--bg:#F5EEE2;--surface:#FFFCF6;--text:#2B2118;--muted:#665645;--primary:#76461C;--onprimary:#FFFFFF;--hot:#9A4A12;--cold:#2F6652;--taken:#6F6152;--error:#B42318;--onerror:#FFFFFF;--focus:#2E5C8A;--line:#2B211829;--line2:#2B211814;--scrim:rgba(43,33,24,.4)}
+.dark{--bg:#1D1712;--surface:#2B231B;--text:#F3EADC;--muted:#BFAE97;--primary:#D9A066;--onprimary:#1D1712;--hot:#EBA265;--cold:#8FCBB2;--taken:#9A8B79;--error:#F59B8F;--onerror:#1D1712;--focus:#9CC3EA;--line:#F3EADC2E;--line2:#F3EADC17;--scrim:rgba(243,234,220,.4)}
+:root{--sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif}
+*{box-sizing:border-box;margin:0;padding:0}
+/* ---- presentation page (not product UI) ---- */
+body{background:#E9E1D4;color:#2B2118;font:15px/1.5 var(--sans);padding:40px 32px 80px;min-width:1760px}
+.page-head{margin:0 0 32px;max-width:1100px}
+.page-head h1{font:600 26px/1.2 var(--sans);margin-bottom:6px}
+.page-head p{color:#665645}
+.state-h{font:600 15px var(--sans);margin:48px 0 16px;padding-top:24px;border-top:1px solid rgba(43,33,24,.16)}
+.row{display:flex;gap:40px;align-items:flex-start;flex-wrap:nowrap}
+figure{display:flex;flex-direction:column;gap:10px;flex:none}
+figcaption{font:600 13px var(--sans);color:#665645;max-width:1280px}
+.phone{width:380px;padding:10px;border-radius:44px;background:#14100c;box-shadow:0 20px 40px rgba(43,33,24,.22)}
+.screen{width:360px;min-height:760px;border-radius:34px;overflow:hidden;background:var(--bg);color:var(--text);position:relative;font:300 16px/1.55 var(--sans)}
+.sb{height:34px;display:flex;justify-content:space-between;align-items:center;padding:0 26px;font:600 13px var(--sans);color:var(--text)}
+.bwin{width:1282px;border:1px solid #cbbfae;border-radius:10px;overflow:hidden;box-shadow:0 20px 40px rgba(43,33,24,.18);background:#E2DACD}
+.bbar{height:44px;display:flex;align-items:center;gap:8px;padding:0 16px;background:#E2DACD;border-bottom:1px solid #cbbfae}
+.bbar i{width:12px;height:12px;border-radius:50%;background:#bfb3a2;display:block}
+.bbar .url{margin-left:18px;width:520px;height:28px;border-radius:6px;background:#FBF8F2;display:flex;align-items:center;padding:0 12px;font:400 13px var(--sans);color:#4d4033}
+.vp{width:1280px;min-height:820px;background:var(--bg);color:var(--text);position:relative;font:300 16px/1.55 var(--sans)}
+.thumb{width:190px;overflow:hidden;border-radius:22px;background:#14100c;padding:5px}
+.thumb .screen{transform:scale(.5);transform-origin:0 0;margin-bottom:-50%}
+.thumb-clip{height:420px;overflow:hidden;border-radius:18px}
+/* ---- product UI ---- */
+.i{width:20px;height:20px;flex:none;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.num{font-variant-numeric:tabular-nums}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+a{color:inherit}
+button{font:inherit;color:inherit;background:none;border:0;cursor:pointer}
+.focusring{outline:3px solid var(--focus);outline-offset:2px}
+/* app header */
+.hdr{display:flex;justify-content:space-between;align-items:center;padding:14px 24px 0}
+.brand{font:500 12px var(--sans);letter-spacing:.22em;text-transform:uppercase}
+.sw{display:flex;font:400 13px var(--sans);letter-spacing:.08em}
+.sw a{min-width:44px;height:44px;display:grid;place-items:center;color:var(--muted);text-decoration:none}
+.sw a.on{color:var(--text);font-weight:600;text-decoration:underline;text-underline-offset:6px;text-decoration-thickness:1.5px}
+.sw .i{width:18px;height:18px}
+/* admin nav: phone = horizontal scroll row of 44px tabs */
+.nav{display:flex;margin:10px 0 0 14px;border-bottom:1px solid var(--line);overflow:hidden;white-space:nowrap}
+.nav a{flex:none;min-height:44px;padding:0 10px;display:flex;align-items:center;gap:8px;font:400 13px var(--sans);letter-spacing:.08em;color:var(--muted);text-decoration:none}
+.nav a[aria-current]{color:var(--text);font-weight:600;border-bottom:2px solid var(--text);margin-bottom:-1px}
+.nav .cnt{font-size:12px;padding:0 6px;min-width:20px}
+.main{padding:26px 24px 36px}
+/* laptop: capped at admin-max 1040px */
+.vp .hdr{max-width:1040px;margin:0 auto;padding:14px 0 0}
+.vp .nav{max-width:1040px;margin:10px auto 0}
+.vp .nav a:first-child{padding-left:0}
+.vp .nav .out{margin-left:auto;padding-right:0}
+.vp .main{max-width:1040px;margin:0 auto;padding:32px 0 48px}
+.cols>section+section{margin-top:36px}
+.vp .cols{display:grid;grid-template-columns:1fr 1fr;gap:56px;align-items:start}
+.vp .cols>.col>section+section{margin-top:36px}
+.col>section+section{margin-top:36px}
+/* section label + count badge */
+.sh{display:flex;align-items:center;gap:10px;font:500 11px var(--sans);letter-spacing:.16em;text-transform:uppercase;color:var(--muted);margin-bottom:14px}
+.k{font:500 11px var(--sans);letter-spacing:.16em;text-transform:uppercase;color:var(--muted)}
+.cnt{display:inline-grid;place-items:center;min-width:24px;padding:2px 8px;border:1.5px solid var(--text);border-radius:3px;font:500 13px/1.3 var(--sans);letter-spacing:.06em;color:var(--text);font-variant-numeric:tabular-nums}
+/* state label (icon + label) */
+.st{display:inline-flex;align-items:center;gap:7px;font:500 13px var(--sans);letter-spacing:.06em;text-transform:uppercase}
+.st .i{width:17px;height:17px;stroke-width:1.6}
+.hot{color:var(--hot)}.cold{color:var(--cold)}
+.chg{display:flex;align-items:center;flex-wrap:wrap;gap:7px;font:500 13px var(--sans);letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
+.chg .st{gap:5px}
+/* markers */
+.mk{display:inline-flex;align-items:center;font:500 13px/1.2 var(--sans);letter-spacing:.06em;text-transform:uppercase;padding:4px 8px;border-radius:3px;white-space:nowrap}
+.mk.req{border:1.5px solid var(--error);color:var(--error)}
+.mk.opt{border:1px solid var(--line);color:var(--muted)}
+.tag{display:inline-block;font:500 11px/1.3 var(--sans);letter-spacing:.08em;text-transform:uppercase;border:1px solid var(--text);color:var(--text);padding:2px 6px;border-radius:3px;white-space:nowrap}
+/* buttons */
+.btn2{height:44px;min-width:44px;padding:0 18px;border:1px solid var(--line);border-radius:3px;background:transparent;color:var(--text);font:500 16px var(--sans);letter-spacing:.04em;display:inline-grid;place-items:center;flex:none}
+.btnx{height:44px;padding:0 18px;border-radius:3px;background:var(--error);color:var(--onerror);font:500 16px var(--sans);letter-spacing:.04em;display:inline-grid;place-items:center}
+/* call list entry */
+.call{border:1px solid var(--line);border-radius:3px;padding:16px 14px;display:flex;flex-direction:column;gap:10px;align-items:flex-start}
+.call+.call,.rem+.rem{margin-top:14px}
+.call .top{display:flex;align-items:baseline;gap:14px}
+.call .t{font:200 26px/1 var(--sans)}
+.who{font:400 16px/1.3 var(--sans)}
+.who small{display:block;font:400 12.5px/1.4 var(--sans);color:var(--muted)}
+.give .k{margin-bottom:4px}
+.give p:not(.k){font:300 16px/1.55 var(--sans)}
+.last{font:400 12.5px/1.4 var(--sans);color:var(--muted)}
+.acts{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px 16px;width:100%}
+.tel,.mail{display:inline-flex;align-items:center;gap:8px;min-height:44px;font:400 16px var(--sans);color:var(--text);text-decoration:underline;text-underline-offset:4px;text-decoration-thickness:1px}
+.mail{font-size:15px;word-break:break-all}
+/* reply reminder */
+.rem{border:1px dashed var(--line);border-radius:3px;padding:16px 14px;display:flex;flex-direction:column;gap:6px}
+.rem .when{font:300 14px/1.5 var(--sans);color:var(--muted)}
+.empty{font:300 14px/1.5 var(--sans);color:var(--muted)}
+/* admin booking row */
+.sub{font:500 11px var(--sans);letter-spacing:.16em;text-transform:uppercase;color:var(--muted);margin:18px 0 0}
+.sub:first-of-type{margin-top:0}
+.ar{display:grid;grid-template-columns:1fr auto 20px;grid-template-areas:"tm st ch" "nm nm ch";align-items:center;gap:4px 10px;padding:14px 0;border-bottom:1px solid var(--line);text-decoration:none;color:inherit;min-height:44px}
+.ar .tm{grid-area:tm;font:300 18px/1.2 var(--sans)}
+.ar .st{grid-area:st}
+.ar .nm{grid-area:nm;font:300 14px/1.5 var(--sans);display:flex;flex-wrap:wrap;gap:6px 10px;align-items:center}
+.ar .ch{grid-area:ch;color:var(--muted)}
+/* booking detail */
+.back{display:inline-flex;align-items:center;gap:6px;min-height:44px;font:500 12px var(--sans);letter-spacing:.22em;text-transform:uppercase;text-decoration:none;color:var(--text)}
+.back .i{width:16px;height:16px}
+.dh{padding:10px 0 0}
+.dh .eb{font:400 13px var(--sans);letter-spacing:.14em;text-transform:uppercase;color:var(--muted);margin-bottom:8px}
+.dh h1{font:200 34px/1.05 var(--sans);letter-spacing:-.01em}
+.dl{display:grid;grid-template-columns:auto 1fr;gap:10px 18px;margin-top:22px;align-items:baseline}
+.dl dt{font:300 14px/1.5 var(--sans);color:var(--muted)}
+.dl dd{font:300 16px/1.55 var(--sans)}
+.dl dd a{text-underline-offset:4px;text-decoration-thickness:1px}
+.nts{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:22px}
+.nts>div{display:flex;flex-direction:column;gap:6px}
+.nts .nt{font:400 13.5px/1.4 var(--sans);color:var(--muted)}
+.hr{border:0;border-top:1px solid var(--line);margin:24px 0 20px}
+.detail .btnx{width:100%}
+.vp .detail{max-width:640px}
+.vp .detail .btnx{width:auto}
+/* impact dialog */
+.scrim{position:absolute;inset:0;background:var(--scrim)}
+.dlg{position:absolute;left:0;right:0;bottom:0;background:var(--surface);border-top:1px solid var(--line);border-radius:3px 3px 0 0;padding:24px;display:flex;flex-direction:column;gap:14px}
+.vp .dlg{left:50%;right:auto;top:50%;bottom:auto;transform:translate(-50%,-50%);width:480px;border:1px solid var(--line);border-radius:3px}
+.dlg h2{font:200 26px/1.1 var(--sans)}
+.dlg .what{font:300 16px/1.55 var(--sans)}
+.mini{border:1px solid var(--line);border-radius:3px;padding:14px;display:flex;flex-direction:column;gap:8px}
+.mini .mt{display:flex;flex-wrap:wrap;align-items:center;gap:8px 10px;font:400 16px/1.3 var(--sans)}
+.mini .cons{font:400 13.5px/1.4 var(--sans);display:flex;flex-wrap:wrap;align-items:center;gap:6px 8px}
+.dacts{display:flex;flex-direction:column;gap:10px;margin-top:6px}
+.dacts button{width:100%}
+.vp .dacts{flex-direction:row;justify-content:flex-end}
+.vp .dacts button{width:auto}
+/* settings */
+.cards>.card+.card{margin-top:20px}
+.vp .cards{columns:2;column-gap:24px}
+.vp .cards>.card{break-inside:avoid;margin:0 0 24px}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:3px;padding:20px;display:flex;flex-direction:column;gap:14px;align-items:flex-start}
+.card .k{color:var(--text)}
+.pair{display:grid;grid-template-columns:1fr 1fr;gap:18px;width:100%}
+.fld{display:flex;flex-direction:column;width:100%}
+.fl{font:400 12.5px/1.4 var(--sans);color:var(--muted)}
+.in{height:48px;border:0;border-bottom:1px solid var(--line);background:transparent;color:var(--text);font:300 16px var(--sans);padding:14px 0 8px;width:100%;border-radius:0}
+textarea.in{height:auto;min-height:132px;resize:none;line-height:1.5}
+.in.err{border-bottom:2px solid var(--error)}
+.note{font:400 12.5px/1.4 var(--sans);color:var(--muted)}
+.errm{display:flex;gap:6px;align-items:flex-start;font:400 12.5px/1.4 var(--sans);color:var(--error);margin-top:6px}
+.errm .i{width:16px;height:16px;margin-top:1px}
+
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+<symbol id="flame" viewBox="0 0 24 24"><path d="M12 2.5c.6 3.2 4.8 5.3 4.8 10.2a4.8 4.8 0 0 1-9.6 0c0-2.3 1-3.8 2.2-5 .1 1.9.9 3.1 2.1 3.5-.6-3 .1-5.8.5-8.7z"/></symbol>
+<symbol id="snow" viewBox="0 0 24 24"><path d="M12 2v20M3.3 7l17.4 10M3.3 17l17.4-10M9.5 3.5 12 6l2.5-2.5M9.5 20.5 12 18l2.5 2.5M3.6 10.6l3.3-.9-.9-3.3M20.4 13.4l-3.3.9.9 3.3M3.6 13.4l3.3.9-.9 3.3M20.4 10.6l-3.3-.9.9-3.3"/></symbol>
+<symbol id="left" viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7"/></symbol>
+<symbol id="right" viewBox="0 0 24 24"><path d="M9 5l7 7-7 7"/></symbol>
+<symbol id="mail" viewBox="0 0 24 24"><rect x="3" y="5.5" width="18" height="13" rx="2"/><path d="M3.5 7l8.5 6 8.5-6"/></symbol>
+<symbol id="phone" viewBox="0 0 24 24"><path d="M5 3.5h3.5l2 5-2.5 1.6a11.5 11.5 0 0 0 5.9 5.9l1.6-2.5 5 2V19a2 2 0 0 1-2 2A17.5 17.5 0 0 1 3 5.5a2 2 0 0 1 2-2z"/></symbol>
+<symbol id="moon" viewBox="0 0 24 24"><path d="M20 14.5A8.5 8.5 0 1 1 9.5 4a6.8 6.8 0 0 0 10.5 10.5z"/></symbol>
+<symbol id="sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2.5v2M12 19.5v2M2.5 12h2M19.5 12h2M5.3 5.3l1.4 1.4M17.3 17.3l1.4 1.4M5.3 18.7l1.4-1.4M17.3 6.7l1.4-1.4"/></symbol>
+<symbol id="alert" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7.5v5.5M12 16.5v.01"/></symbol>
+</svg>
+<header class="page-head"><h1>Einstellungen · Telefon und Laptop</h1><p>Jede Gruppe ist eine eigene Karte mit eigenem „Speichern“. Zustand 2 zeigt einen Eingabefehler bei der Vorheizzeit: die kürzeste Zeit (45) ist länger als die längste (40).</p></header>
+<h2 class="state-h" style="margin-top:0;border:0;padding:0">Zustand 1 · in Ruhe</h2><div class="row"><figure><div class="phone"><div class="screen light"><div class="sb"><span>20:12</span><span>●●● 5G</span></div><header class="hdr"><div class="brand">Sauna Luegisee</div><div class="sw"><a class="on" href="#" aria-current="true" lang="de">DE</a><a href="#" lang="en">EN</a><a href="#" aria-label="Dunkles Design"><svg class="i" aria-hidden="true"><use href="#moon"/></svg></a></div></header><nav class="nav" aria-label="Admin"><a href="#">Übersicht <span class="cnt" aria-label="2 Anrufe">2</span></a><a href="#">Buchungen</a><a href="#">Blocks</a><a href="#" aria-current="page">Einstellungen</a><a href="#">Auswertung</a><a href="#" class="out">Abmelden</a></nav><main class="main"><h1 class="sr">Einstellungen</h1><div class="cards"><section class="card" aria-labelledby="pc1"><h2 class="k" id="pc1">Saison</h2><div class="pair"><div class="fld"><label class="fl" for="ps1">Beginn</label><input class="in num" id="ps1" type="text" value="09.01.2027"></div><div class="fld"><label class="fl" for="ps2">Ende</label><input class="in num" id="ps2" type="text" value="31.03.2027"></div></div><button class="btn2" type="button">Speichern</button></section><section class="card" aria-labelledby="pc2"><h2 class="k" id="pc2">Betriebszeiten</h2><div class="pair"><div class="fld"><label class="fl" for="po1">Von</label><input class="in num" id="po1" type="text" value="08:00"></div><div class="fld"><label class="fl" for="po2">Bis</label><input class="in num" id="po2" type="text" value="22:00"></div></div><button class="btn2" type="button">Speichern</button></section><section class="card" aria-labelledby="pc3"><h2 class="k" id="pc3">Wechselzeit</h2><div class="fld"><label class="fl" for="pw">Minuten</label><input class="in num" id="pw" type="text" value="15" inputmode="numeric"></div><p class="note">Gilt nur für neue Buchungen.</p><button class="btn2" type="button">Speichern</button></section><section class="card" aria-labelledby="pc4"><h2 class="k" id="pc4">Buchungshorizont</h2><div class="fld"><label class="fl" for="ph">Tage</label><input class="in num" id="ph" type="text" value="14" inputmode="numeric"></div><button class="btn2" type="button">Speichern</button></section><section class="card" aria-labelledby="pc5"><h2 class="k" id="pc5">Vorheizzeit</h2><div class="pair"><div class="fld"><label class="fl" for="pv1">Kürzeste Zeit (Minuten)</label><input class="in num" id="pv1" type="text" value="30" inputmode="numeric"></div><div class="fld"><label class="fl" for="pv2">Längste Zeit (Minuten)</label><input class="in num" id="pv2" type="text" value="40" inputmode="numeric"></div></div><button class="btn2" type="button">Speichern</button></section><section class="card" aria-labelledby="pc6"><h2 class="k" id="pc6">Schlüsselbox-Code</h2><div class="fld"><label class="fl" for="pk">Code</label><input class="in num" id="pk" type="text" value="4711" inputmode="numeric"></div><p class="note">Gilt für jede Schlüsselmail ab jetzt; verschickte Mails bleiben.</p><button class="btn2" type="button">Speichern</button></section><section class="card" aria-labelledby="pc7"><h2 class="k" id="pc7">Anleitung DE / EN</h2><div class="fld"><label class="fl" for="pa1">Deutsch</label><textarea class="in" id="pa1" rows="4">Die Schlüsselbox hängt rechts neben der Tür. Holz liegt im Unterstand. Beim Gehen: Ofentür zu, Schlüssel zurück in die Box, Code verstellen.</textarea></div><div class="fld"><label class="fl" for="pa2">English</label><textarea class="in" id="pa2" rows="4">The keybox is to the right of the door. Firewood is in the shelter. When you leave: close the stove door, put the key back in the box, scramble the code.</textarea></div><button class="btn2" type="button">Speichern</button></section><section class="card" aria-labelledby="pc8"><h2 class="k" id="pc8">Kontaktadresse</h2><div class="fld"><label class="fl" for="pm">E-Mail</label><input class="in num" id="pm" type="email" value="sauna@sauna-luegisee.ch"></div><button class="btn2" type="button">Speichern</button></section><section class="card" aria-labelledby="pc9"><h2 class="k" id="pc9">Passwort</h2><div class="fld"><label class="fl" for="pp">Neues Passwort</label><input class="in num" id="pp" type="password" value="" autocomplete="new-password"></div><p class="note">Alle anderen Admins werden abgemeldet.</p><button class="btn2" type="button">Speichern</button></section></div></main></div></div><figcaption>Telefon 360 px · ganze Seite (gescrollt), Karten gestapelt</figcaption></figure><figure><div class="bwin"><div class="bbar"><i></i><i></i><i></i><div class="url">sauna-luegisee.ch/admin/settings</div></div><div class="vp light"><header class="hdr"><div class="brand">Sauna Luegisee</div><div class="sw"><a class="on" href="#" aria-current="true" lang="de">DE</a><a href="#" lang="en">EN</a><a href="#" aria-label="Dunkles Design"><svg class="i" aria-hidden="true"><use href="#moon"/></svg></a></div></header><nav class="nav" aria-label="Admin"><a href="#">Übersicht <span class="cnt" aria-label="2 Anrufe">2</span></a><a href="#">Buchungen</a><a href="#">Blocks</a><a href="#" aria-current="page">Einstellungen</a><a href="#">Auswertung</a><a href="#" class="out">Abmelden</a></nav><main class="main"><h1 class="sr">Einstellungen</h1><div class="cards"><section class="card" aria-labelledby="lc1"><h2 class="k" id="lc1">Saison</h2><div class="pair"><div class="fld"><label class="fl" for="ls1">Beginn</label><input class="in num" id="ls1" type="text" value="09.01.2027"></div><div class="fld"><label class="fl" for="ls2">Ende</label><input class="in num" id="ls2" type="text" value="31.03.2027"></div></div><button class="btn2" type="button">Speichern</button></section><section class="card" aria-labelledby="lc2"><h2 class="k" id="lc2">Betriebszeiten</h2><div class="pair"><div class="fld"><label class="fl" for="lo1">Von</label><input class="in num" id="lo1" type="text" value="08:00"></div><div class="fld"><label class="fl" for="lo2">Bis</label><input class="in num" id="lo2" type="text" value="22:00"></div></div><button class="btn2" type="button">Speichern</button></section><section class="card" aria-labelledby="lc3"><h2 class="k" id="lc3">Wechselzeit</h2><div class="fld"><label class="fl" for="lw">Minuten</label><input class="in num" id="lw" type="text" value="15" inputmode="numeric"></div><p class="note">Gilt nur für neue Buchungen.</p><button class="btn2" type="button">Speichern</button></section><section class="card" aria-labelledby="lc4"><h2 class="k" id="lc4">Buchungshorizont</h2><div class="fld"><label class="fl" for="lh">Tage</label><input class="in num" id="lh" type="text" value="14" inputmode="numeric"></div><button class="btn2" type="button">Speichern</button></section><section class="card" aria-labelledby="lc5"><h2 class="k" id="lc5">Vorheizzeit</h2><div class="pair"><div class="fld"><label class="fl" for="lv1">Kürzeste Zeit (Minuten)</label><input class="in num" id="lv1" type="text" value="30" inputmode="numeric"></div><div class="fld"><label class="fl" for="lv2">Längste Zeit (Minuten)</label><input class="in num" id="lv2" type="text" value="40" inputmode="numeric"></div></div><button class="btn2" type="button">Speichern</button></section><section class="card" aria-labelledby="lc6"><h2 class="k" id="lc6">Schlüsselbox-Code</h2><div class="fld"><label class="fl" for="lk">Code</label><input class="in num" id="lk" type="text" value="4711" inputmode="numeric"></div><p class="note">Gilt für jede Schlüsselmail ab jetzt; verschickte Mails bleiben.</p><button class="btn2" type="button">Speichern</button></section><section class="card" aria-labelledby="lc7"><h2 class="k" id="lc7">Anleitung DE / EN</h2><div class="fld"><label class="fl" for="la1">Deutsch</label><textarea class="in" id="la1" rows="4">Die Schlüsselbox hängt rechts neben der Tür. Holz liegt im Unterstand. Beim Gehen: Ofentür zu, Schlüssel zurück in die Box, Code verstellen.</textarea></div><div class="fld"><label class="fl" for="la2">English</label><textarea class="in" id="la2" rows="4">The keybox is to the right of the door. Firewood is in the shelter. When you leave: close the stove door, put the key back in the box, scramble the code.</textarea></div><button class="btn2" type="button">Speichern</button></section><section class="card" aria-labelledby="lc8"><h2 class="k" id="lc8">Kontaktadresse</h2><div class="fld"><label class="fl" for="lm">E-Mail</label><input class="in num" id="lm" type="email" value="sauna@sauna-luegisee.ch"></div><button class="btn2" type="button">Speichern</button></section><section class="card" aria-labelledby="lc9"><h2 class="k" id="lc9">Passwort</h2><div class="fld"><label class="fl" for="lp">Neues Passwort</label><input class="in num" id="lp" type="password" value="" autocomplete="new-password"></div><p class="note">Alle anderen Admins werden abgemeldet.</p><button class="btn2" type="button">Speichern</button></section></div></main></div></div><figcaption>Laptop 1280 px · Karten in zwei Spalten bis 1040 px</figcaption></figure></div><h2 class="state-h">Zustand 2 · Eingabefehler Vorheizzeit (Wert bleibt, Fokus auf dem ersten Fehler)</h2><div class="row"><figure><div class="phone"><div class="screen light"><div class="sb"><span>20:14</span><span>●●● 5G</span></div><main class="main"><h1 class="sr">Einstellungen</h1><div class="cards"><section class="card" aria-labelledby="pec4"><h2 class="k" id="pec4">Buchungshorizont</h2><div class="fld"><label class="fl" for="peh">Tage</label><input class="in num" id="peh" type="text" value="14" inputmode="numeric"></div><button class="btn2" type="button">Speichern</button></section><section class="card" aria-labelledby="pec5"><h2 class="k" id="pec5">Vorheizzeit</h2><div class="pair"><div class="fld"><label class="fl" for="pev1">Kürzeste Zeit (Minuten)</label><input class="in num err" id="pev1" type="text" value="45" inputmode="numeric" aria-invalid="true" aria-describedby="pev1e"><p class="errm" id="pev1e" aria-live="assertive"><svg class="i" aria-hidden="true"><use href="#alert"/></svg><span>Die kürzeste Zeit darf nicht länger sein als die längste.</span></p></div><div class="fld"><label class="fl" for="pev2">Längste Zeit (Minuten)</label><input class="in num" id="pev2" type="text" value="40" inputmode="numeric"></div></div><button class="btn2" type="button">Speichern</button></section><section class="card" aria-labelledby="pec6"><h2 class="k" id="pec6">Schlüsselbox-Code</h2><div class="fld"><label class="fl" for="pek">Code</label><input class="in num" id="pek" type="text" value="4711" inputmode="numeric"></div><p class="note">Gilt für jede Schlüsselmail ab jetzt; verschickte Mails bleiben.</p><button class="btn2" type="button">Speichern</button></section></div></main></div></div><figcaption>Telefon 360 px · gescrollt bis Vorheizzeit</figcaption></figure><figure><div class="bwin"><div class="bbar"><i></i><i></i><i></i><div class="url">sauna-luegisee.ch/admin/settings</div></div><div class="vp light"><header class="hdr"><div class="brand">Sauna Luegisee</div><div class="sw"><a class="on" href="#" aria-current="true" lang="de">DE</a><a href="#" lang="en">EN</a><a href="#" aria-label="Dunkles Design"><svg class="i" aria-hidden="true"><use href="#moon"/></svg></a></div></header><nav class="nav" aria-label="Admin"><a href="#">Übersicht <span class="cnt" aria-label="2 Anrufe">2</span></a><a href="#">Buchungen</a><a href="#">Blocks</a><a href="#" aria-current="page">Einstellungen</a><a href="#">Auswertung</a><a href="#" class="out">Abmelden</a></nav><main class="main"><h1 class="sr">Einstellungen</h1><div class="cards"><section class="card" aria-labelledby="lec1"><h2 class="k" id="lec1">Saison</h2><div class="pair"><div class="fld"><label class="fl" for="les1">Beginn</label><input class="in num" id="les1" type="text" value="09.01.2027"></div><div class="fld"><label class="fl" for="les2">Ende</label><input class="in num" id="les2" type="text" value="31.03.2027"></div></div><button class="btn2" type="button">Speichern</button></section><section class="card" aria-labelledby="lec2"><h2 class="k" id="lec2">Betriebszeiten</h2><div class="pair"><div class="fld"><label class="fl" for="leo1">Von</label><input class="in num" id="leo1" type="text" value="08:00"></div><div class="fld"><label class="fl" for="leo2">Bis</label><input class="in num" id="leo2" type="text" value="22:00"></div></div><button class="btn2" type="button">Speichern</button></section><section class="card" aria-labelledby="lec3"><h2 class="k" id="lec3">Wechselzeit</h2><div class="fld"><label class="fl" for="lew">Minuten</label><input class="in num" id="lew" type="text" value="15" inputmode="numeric"></div><p class="note">Gilt nur für neue Buchungen.</p><button class="btn2" type="button">Speichern</button></section><section class="card" aria-labelledby="lec4"><h2 class="k" id="lec4">Buchungshorizont</h2><div class="fld"><label class="fl" for="leh">Tage</label><input class="in num" id="leh" type="text" value="14" inputmode="numeric"></div><button class="btn2" type="button">Speichern</button></section><section class="card" aria-labelledby="lec5"><h2 class="k" id="lec5">Vorheizzeit</h2><div class="pair"><div class="fld"><label class="fl" for="lev1">Kürzeste Zeit (Minuten)</label><input class="in num err" id="lev1" type="text" value="45" inputmode="numeric" aria-invalid="true" aria-describedby="lev1e"><p class="errm" id="lev1e" aria-live="assertive"><svg class="i" aria-hidden="true"><use href="#alert"/></svg><span>Die kürzeste Zeit darf nicht länger sein als die längste.</span></p></div><div class="fld"><label class="fl" for="lev2">Längste Zeit (Minuten)</label><input class="in num" id="lev2" type="text" value="40" inputmode="numeric"></div></div><button class="btn2" type="button">Speichern</button></section><section class="card" aria-labelledby="lec6"><h2 class="k" id="lec6">Schlüsselbox-Code</h2><div class="fld"><label class="fl" for="lek">Code</label><input class="in num" id="lek" type="text" value="4711" inputmode="numeric"></div><p class="note">Gilt für jede Schlüsselmail ab jetzt; verschickte Mails bleiben.</p><button class="btn2" type="button">Speichern</button></section><section class="card" aria-labelledby="lec7"><h2 class="k" id="lec7">Anleitung DE / EN</h2><div class="fld"><label class="fl" for="lea1">Deutsch</label><textarea class="in" id="lea1" rows="4">Die Schlüsselbox hängt rechts neben der Tür. Holz liegt im Unterstand. Beim Gehen: Ofentür zu, Schlüssel zurück in die Box, Code verstellen.</textarea></div><div class="fld"><label class="fl" for="lea2">English</label><textarea class="in" id="lea2" rows="4">The keybox is to the right of the door. Firewood is in the shelter. When you leave: close the stove door, put the key back in the box, scramble the code.</textarea></div><button class="btn2" type="button">Speichern</button></section><section class="card" aria-labelledby="lec8"><h2 class="k" id="lec8">Kontaktadresse</h2><div class="fld"><label class="fl" for="lem">E-Mail</label><input class="in num" id="lem" type="email" value="sauna@sauna-luegisee.ch"></div><button class="btn2" type="button">Speichern</button></section><section class="card" aria-labelledby="lec9"><h2 class="k" id="lec9">Passwort</h2><div class="fld"><label class="fl" for="lep">Neues Passwort</label><input class="in num" id="lep" type="password" value="" autocomplete="new-password"></div><p class="note">Alle anderen Admins werden abgemeldet.</p><button class="btn2" type="button">Speichern</button></section></div></main></div></div><figcaption>Laptop 1280 px</figcaption></figure></div><h2 class="state-h">Dunkel (Thumbnail, 50 %)</h2><div class="row"><figure><div class="thumb"><div class="thumb-clip"><div class="screen dark"><div class="sb"><span>20:12</span><span>●●● 5G</span></div><header class="hdr"><div class="brand">Sauna Luegisee</div><div class="sw"><a class="on" href="#" aria-current="true" lang="de">DE</a><a href="#" lang="en">EN</a><a href="#" aria-label="Helles Design"><svg class="i" aria-hidden="true"><use href="#sun"/></svg></a></div></header><nav class="nav" aria-label="Admin"><a href="#">Übersicht <span class="cnt" aria-label="2 Anrufe">2</span></a><a href="#">Buchungen</a><a href="#">Blocks</a><a href="#" aria-current="page">Einstellungen</a><a href="#">Auswertung</a><a href="#" class="out">Abmelden</a></nav><main class="main"><h1 class="sr">Einstellungen</h1><div class="cards"><section class="card" aria-labelledby="dc1"><h2 class="k" id="dc1">Saison</h2><div class="pair"><div class="fld"><label class="fl" for="ds1">Beginn</label><input class="in num" id="ds1" type="text" value="09.01.2027"></div><div class="fld"><label class="fl" for="ds2">Ende</label><input class="in num" id="ds2" type="text" value="31.03.2027"></div></div><button class="btn2" type="button">Speichern</button></section><section class="card" aria-labelledby="dc2"><h2 class="k" id="dc2">Betriebszeiten</h2><div class="pair"><div class="fld"><label class="fl" for="do1">Von</label><input class="in num" id="do1" type="text" value="08:00"></div><div class="fld"><label class="fl" for="do2">Bis</label><input class="in num" id="do2" type="text" value="22:00"></div></div><button class="btn2" type="button">Speichern</button></section><section class="card" aria-labelledby="dc3"><h2 class="k" id="dc3">Wechselzeit</h2><div class="fld"><label class="fl" for="dw">Minuten</label><input class="in num" id="dw" type="text" value="15" inputmode="numeric"></div><p class="note">Gilt nur für neue Buchungen.</p><button class="btn2" type="button">Speichern</button></section><section class="card" aria-labelledby="dc4"><h2 class="k" id="dc4">Buchungshorizont</h2><div class="fld"><label class="fl" for="dh">Tage</label><input class="in num" id="dh" type="text" value="14" inputmode="numeric"></div><button class="btn2" type="button">Speichern</button></section><section class="card" aria-labelledby="dc5"><h2 class="k" id="dc5">Vorheizzeit</h2><div class="pair"><div class="fld"><label class="fl" for="dv1">Kürzeste Zeit (Minuten)</label><input class="in num" id="dv1" type="text" value="30" inputmode="numeric"></div><div class="fld"><label class="fl" for="dv2">Längste Zeit (Minuten)</label><input class="in num" id="dv2" type="text" value="40" inputmode="numeric"></div></div><button class="btn2" type="button">Speichern</button></section><section class="card" aria-labelledby="dc6"><h2 class="k" id="dc6">Schlüsselbox-Code</h2><div class="fld"><label class="fl" for="dk">Code</label><input class="in num" id="dk" type="text" value="4711" inputmode="numeric"></div><p class="note">Gilt für jede Schlüsselmail ab jetzt; verschickte Mails bleiben.</p><button class="btn2" type="button">Speichern</button></section><section class="card" aria-labelledby="dc7"><h2 class="k" id="dc7">Anleitung DE / EN</h2><div class="fld"><label class="fl" for="da1">Deutsch</label><textarea class="in" id="da1" rows="4">Die Schlüsselbox hängt rechts neben der Tür. Holz liegt im Unterstand. Beim Gehen: Ofentür zu, Schlüssel zurück in die Box, Code verstellen.</textarea></div><div class="fld"><label class="fl" for="da2">English</label><textarea class="in" id="da2" rows="4">The keybox is to the right of the door. Firewood is in the shelter. When you leave: close the stove door, put the key back in the box, scramble the code.</textarea></div><button class="btn2" type="button">Speichern</button></section><section class="card" aria-labelledby="dc8"><h2 class="k" id="dc8">Kontaktadresse</h2><div class="fld"><label class="fl" for="dm">E-Mail</label><input class="in num" id="dm" type="email" value="sauna@sauna-luegisee.ch"></div><button class="btn2" type="button">Speichern</button></section><section class="card" aria-labelledby="dc9"><h2 class="k" id="dc9">Passwort</h2><div class="fld"><label class="fl" for="dp">Neues Passwort</label><input class="in num" id="dp" type="password" value="" autocomplete="new-password"></div><p class="note">Alle anderen Admins werden abgemeldet.</p><button class="btn2" type="button">Speichern</button></section></div></main></div></div></div><figcaption>Einstellungen · dunkel</figcaption></figure></div>
+</body>
+</html>
