@@ -1,0 +1,8 @@
+# Deferred work
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-1-1-project-scaffold.md`
+  summary: Close the SQLite connection on SIGTERM/SIGINT so the WAL is checkpointed cleanly when the container stops.
+  evidence: Story 1.1 review; nothing closes the connection on shutdown. Belongs with the container lifecycle work in Epic 5 (Story 5.1 or 5.4).
+- source_spec: `_bmad-output/implementation-artifacts/spec-1-1-project-scaffold.md`
+  summary: Replace the specifier-regex layer rules with path-resolving rules (e.g. eslint-plugin-import `no-restricted-paths`) so pure layers can use relative imports between their own subfolders.
+  evidence: Story 1.1 review; `^\.\./` in the domain/time/schemas rules refuses `domain/a/x.ts` → `../b`. Workaround documented in the README (use `#lib/domain/…`); needs a new dependency, so not patched in 1.1.
