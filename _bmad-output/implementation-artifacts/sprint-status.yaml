@@ -29,7 +29,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 # - Retrospective appends its action items to action_items; the status view surfaces open ones
 generated: 11-09-2026 19:44
-last_updated: 11-11-2026 21:27
+last_updated: 11-11-2026 21:37
 project: sauna-booking
 project_key: NOKEY
 tracking_system: file-system
@@ -38,7 +38,7 @@ development_status:
   epic-1: in-progress
   1-1-project-scaffold: done
   1-2-page-shell-with-de-en-and-light-dark: done
-  1-3-time-module-and-start-time-core: backlog
+  1-3-time-module-and-start-time-core: review
   1-4-guest-sees-a-day-s-start-times-with-hot-cold-start: backlog
   1-5-guest-browses-days: backlog
   1-6-guest-sees-the-arrival-time-on-cold-starts: backlog
