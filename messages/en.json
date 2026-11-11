@@ -1,6 +1,17 @@
 {
 	"$schema": "https://inlang.com/schema/inlang-message-format",
-	"placeholder_title": "Sauna Luegisee",
-	"placeholder_heading": "Sauna Luegisee",
-	"placeholder_body": "The booking calendar for the sauna wagon is coming here."
+	"brand": "Sauna Luegisee",
+	"title_suffix": "Sauna Luegisee",
+	"skip_to_times": "Skip to times",
+	"theme_switch_name": "Dark mode",
+	"footer_info": "How it works",
+	"footer_privacy": "Privacy",
+	"footer_imprint": "Imprint",
+	"home_title": "Calendar",
+	"home_heading": "Sauna Luegisee",
+	"home_body": "The booking calendar for the sauna wagon is coming here.",
+	"info_title": "How it works",
+	"privacy_title": "Privacy",
+	"imprint_title": "Imprint",
+	"stub_body": "This text is coming soon."
 }
