@@ -1,0 +1,3 @@
+# Crawlers may index the guest pages, not the admin portal.
+User-agent: *
+Disallow: /admin
