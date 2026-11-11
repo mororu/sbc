@@ -1,6 +1,17 @@
 {
 	"$schema": "https://inlang.com/schema/inlang-message-format",
-	"placeholder_title": "Sauna Luegisee",
-	"placeholder_heading": "Sauna Luegisee",
-	"placeholder_body": "Hier entsteht der Buchungskalender für den Saunawagen."
+	"brand": "Sauna Luegisee",
+	"title_suffix": "Sauna Luegisee",
+	"skip_to_times": "Zu den Zeiten",
+	"theme_switch_name": "Dunkles Design",
+	"footer_info": "So funktioniert's",
+	"footer_privacy": "Datenschutz",
+	"footer_imprint": "Impressum",
+	"home_title": "Kalender",
+	"home_heading": "Sauna Luegisee",
+	"home_body": "Hier entsteht der Buchungskalender für den Saunawagen.",
+	"info_title": "So funktioniert's",
+	"privacy_title": "Datenschutz",
+	"imprint_title": "Impressum",
+	"stub_body": "Dieser Text folgt bald."
 }

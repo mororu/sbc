@@ -1,0 +1,185 @@
+/*
+ * Design tokens: palette "Lärche", typography, spacing and shape (DESIGN.md frontmatter).
+ * The ONLY file in src/ that may contain hex colours. Everything else uses these properties.
+ * Dark mode: an explicit stored choice (data-theme) wins; otherwise the device setting.
+ */
+
+:root {
+	color-scheme: light;
+
+	/* Colour, light */
+	--background: #f5eee2;
+	--surface: #fffcf6;
+	--text: #2b2118;
+	--muted: #665645;
+	--primary: #76461c;
+	--on-primary: #ffffff;
+	--hot: #9a4a12;
+	--cold-start: #2f6652;
+	--taken: #6f6152;
+	--error: #b42318;
+	--on-error: #ffffff;
+	--focus: #2e5c8a;
+	--line: #2b211829; /* text at 16 % */
+	--line-subtle: #2b211814; /* text at 8 % */
+	--line-strong: #2b21188c; /* text at 55 %, >= 3:1 */
+	--scrim: #2b211866; /* text at 40 % */
+
+	/* Typography: one family, the system sans stack. No web fonts. */
+	--font: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+
+	--type-brand-size: 12px;
+	--type-brand-weight: 500;
+	--type-brand-tracking: 0.22em;
+	--type-date-heading-size: 34px;
+	--type-date-heading-weight: 300;
+	--type-date-heading-leading: 1.05;
+	--type-date-heading-tracking: -0.01em;
+	--type-date-eyebrow-size: 13px;
+	--type-date-eyebrow-weight: 400;
+	--type-date-eyebrow-tracking: 0.14em;
+	--type-strip-day-size: 18px;
+	--type-strip-day-weight: 300;
+	--type-strip-day-leading: 1.2;
+	--type-strip-weekday-size: 11px;
+	--type-strip-weekday-weight: 500;
+	--type-strip-weekday-tracking: 0.1em;
+	--type-slot-time-size: 26px;
+	--type-slot-time-weight: 300;
+	--type-slot-time-leading: 1;
+	--type-slot-time-taken-size: 18px;
+	--type-slot-time-taken-weight: 400;
+	--type-slot-time-taken-leading: 1;
+	--type-state-label-size: 13px;
+	--type-state-label-weight: 500;
+	--type-state-label-tracking: 0.06em;
+	--type-notice-size: 13.5px;
+	--type-notice-weight: 400;
+	--type-notice-leading: 1.4;
+	--type-section-label-size: 12px;
+	--type-section-label-weight: 500;
+	--type-section-label-tracking: 0.16em;
+	--type-field-label-size: 13.5px;
+	--type-field-label-weight: 500;
+	--type-field-label-leading: 1.4;
+	--type-field-error-size: 13.5px;
+	--type-field-error-weight: 500;
+	--type-field-error-leading: 1.4;
+	--type-name-size: 16px;
+	--type-name-weight: 400;
+	--type-name-leading: 1.3;
+	--type-summary-time-size: 44px;
+	--type-summary-time-weight: 300;
+	--type-summary-time-leading: 1;
+	--type-display-size: 52px;
+	--type-display-weight: 200;
+	--type-display-leading: 1;
+	--type-body-size: 16px;
+	--type-body-weight: 300;
+	--type-body-leading: 1.55;
+	/* Small text that carries meaning uses 400 (resolved ambiguity 2026-11-08). */
+	--type-body-sm-size: 14px;
+	--type-body-sm-weight: 400;
+	--type-body-sm-leading: 1.5;
+	--type-note-size: 13.5px;
+	--type-note-weight: 400;
+	--type-note-leading: 1.4;
+	--type-segment-size: 15px;
+	--type-segment-weight: 400;
+	--type-segment-selected-size: 15px;
+	--type-segment-selected-weight: 500;
+	--type-field-size: 16px;
+	--type-field-weight: 300;
+	--type-button-size: 16px;
+	--type-button-weight: 500;
+	--type-button-tracking: 0.04em;
+	--type-switch-size: 13px;
+	--type-switch-weight: 400;
+	--type-switch-tracking: 0.08em;
+	--type-switch-active-size: 13px;
+	--type-switch-active-weight: 600;
+	--type-switch-active-tracking: 0.08em;
+
+	/* Spacing and sizes. Heights are minimums that grow with text. */
+	--space-1: 4px;
+	--space-2: 8px;
+	--space-3: 12px;
+	--space-4: 16px;
+	--space-5: 20px;
+	--space-6: 24px;
+	--space-7: 28px;
+	--gutter: 24px;
+	--slot-gap: 14px;
+	--list-top: 26px;
+	--section-gap: 20px;
+	--target-min: 44px;
+	--field-height: 48px;
+	--button-height: 54px;
+	--hatch-band: 12px;
+	--content-max: 560px;
+	--admin-max: 1040px;
+	--detail-max: 640px;
+	--dialog-max: 480px;
+
+	/* Shape: 3px corners everywhere; 0 on the date strip and field underlines. No pills, no shadows. */
+	--radius: 3px;
+	--radius-none: 0px;
+
+	/* Borders (UX-DR6) */
+	--border-hot: 2px solid var(--hot);
+	--border-cold-start: 2px dashed var(--cold-start);
+	--border-taken: 1px solid var(--line);
+	--border-control: 1px solid var(--line-strong);
+	--border-selected-day: 2px solid var(--primary);
+	--border-active-tab: 2px solid var(--text);
+	--border-field-focus: 2px solid var(--focus);
+	--border-error: 1.5px solid var(--error);
+
+	/* Focus ring and motion */
+	--focus-ring-width: 3px;
+	--focus-ring-offset: 2px;
+	--motion-fade: 150ms;
+}
+
+/* Dark twins: the same roles. */
+:root[data-theme='dark'] {
+	color-scheme: dark;
+	--background: #1d1712;
+	--surface: #2b231b;
+	--text: #f3eadc;
+	--muted: #bfae97;
+	--primary: #d9a066;
+	--on-primary: #1d1712;
+	--hot: #eba265;
+	--cold-start: #8fcbb2;
+	--taken: #9a8b79;
+	--error: #f59b8f;
+	--on-error: #1d1712;
+	--focus: #9cc3ea;
+	--line: #f3eadc2e; /* text at 18 % */
+	--line-subtle: #f3eadc17; /* text at 9 % */
+	--line-strong: #f3eadc66; /* text at 40 %, >= 3:1 */
+	--scrim: #0d0a0899; /* near-black at 60 %; never a light scrim */
+}
+
+@media (prefers-color-scheme: dark) {
+	:root:not([data-theme='light']) {
+		color-scheme: dark;
+		--background: #1d1712;
+		--surface: #2b231b;
+		--text: #f3eadc;
+		--muted: #bfae97;
+		--primary: #d9a066;
+		--on-primary: #1d1712;
+		--hot: #eba265;
+		--cold-start: #8fcbb2;
+		--taken: #9a8b79;
+		--error: #f59b8f;
+		--on-error: #1d1712;
+		--focus: #9cc3ea;
+		--line: #f3eadc2e;
+		--line-subtle: #f3eadc17;
+		--line-strong: #f3eadc66;
+		--scrim: #0d0a0899;
+	}
+}

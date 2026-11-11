@@ -1,12 +1,19 @@
 <script lang="ts">
+	import PageTitle from '#lib/components/PageTitle.svelte';
 	import { m } from '#lib/paraglide/messages.js';
 </script>
 
-<svelte:head>
-	<title>{m.placeholder_title()}</title>
-</svelte:head>
+<PageTitle title={m.home_title()} />
 
-<main>
-	<h1>{m.placeholder_heading()}</h1>
-	<p>{m.placeholder_body()}</p>
-</main>
+<h1>{m.home_heading()}</h1>
+<p>{m.home_body()}</p>
+
+<style>
+	h1 {
+		font-size: var(--type-date-heading-size);
+		font-weight: var(--type-date-heading-weight);
+		line-height: var(--type-date-heading-leading);
+		letter-spacing: var(--type-date-heading-tracking);
+		margin-bottom: var(--space-4);
+	}
+</style>
