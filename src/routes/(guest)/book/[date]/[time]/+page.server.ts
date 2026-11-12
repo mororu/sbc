@@ -1,11 +1,13 @@
 // `/book/{yyyy-mm-dd}/{hhmm}`: the booking form (FR-5, FR-6, FR-9). The action validates with the
-// shared schema, books through the command, and answers with a 303: to the confirmation, or to the
-// refreshed day with `?error=conflict|past&time=hhmm`. Invalid fields come back as fail(400) with
+// shared schema, books through the command, and answers with a 303: to the confirmation (with the
+// one-time flags `?new=1` and, when the notice changed since the form loaded, `&changed=1`), or to
+// the refreshed day with `?error=conflict|past&time=hhmm`. Invalid fields come back as fail(400) with
 // error keys and the typed values. Guest data never goes into a URL, cookie, redirect or log.
 import { fail, redirect } from '@sveltejs/kit';
 import { getLocale } from '#lib/paraglide/runtime.js';
+import { parseNotice, type Notice } from '#lib/domain/index.ts';
 import { BOOKING_FIELDS, parseBooking, type BookingErrors } from '#lib/schemas/index.ts';
-import { dayErrorHref, invalidUrlTarget, loadBookView, parseStart } from '#lib/server/book-view.ts';
+import { bookedHref, dayErrorHref, invalidUrlTarget, loadBookView, parseStart } from '#lib/server/book-view.ts';
 import { createBooking, isLockTimeout, type CreateBookingResult } from '#lib/server/commands/index.ts';
 import type { Actions, PageServerLoad } from './$types';
 
@@ -42,6 +44,12 @@ export const actions: Actions = {
 		if (!parsed.ok) return fail(400, { errors: parsed.errors, values } satisfies BookFormFailure);
 
 		const { value } = parsed;
+		let displayedNotice: Notice;
+		try {
+			displayedNotice = parseNotice(value.notice);
+		} catch {
+			return fail(400, { errors: { notice: 'form_invalid' }, values } satisfies BookFormFailure);
+		}
 		let result: CreateBookingResult;
 		try {
 			result = createBooking({
@@ -52,7 +60,8 @@ export const actions: Actions = {
 				email: value.email,
 				mobile: value.mobile,
 				locale: getLocale(),
-				submitToken: value.submitToken
+				submitToken: value.submitToken,
+				displayedNotice
 			});
 		} catch (error) {
 			// Another writer held the lock too long: nothing was booked. The form says so and keeps
@@ -62,7 +71,7 @@ export const actions: Actions = {
 			}
 			throw error;
 		}
-		if (result.ok) redirect(303, `/booked/${result.publicId}`);
+		if (result.ok) redirect(303, bookedHref(result.publicId, result.changed));
 		if (result.code === 'invalid') {
 			return fail(400, { errors: { submitToken: 'form_invalid' }, values } satisfies BookFormFailure);
 		}

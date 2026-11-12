@@ -42,6 +42,15 @@ export function withoutDayError(url: URL): URL | null {
 	return clean;
 }
 
+/** The confirmation URL without its one-time flags (`new`, `changed`), or null when it has neither. */
+export function withoutBookedFlags(url: URL): URL | null {
+	if (!url.searchParams.has('new') && !url.searchParams.has('changed')) return null;
+	const clean = new URL(url.href);
+	clean.searchParams.delete('new');
+	clean.searchParams.delete('changed');
+	return clean;
+}
+
 /** The skip link's target: the start-time list on a day page, otherwise `main`. */
 export function skipTarget(pageData: unknown): 'times' | 'main' {
 	const page = (pageData as { page?: { kind?: unknown } } | null | undefined)?.page;

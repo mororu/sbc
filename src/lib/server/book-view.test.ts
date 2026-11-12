@@ -8,7 +8,7 @@ import { toInstant } from '#lib/time/index.ts';
 import { createDb, openDatabase, type Db } from './db/index.ts';
 // eslint-disable-next-line no-restricted-imports
 import { applyMigrations, MIGRATIONS_FOLDER } from './db/migrate.ts';
-import { buildBookView, invalidUrlTarget, loadBookView, parseStart, unavailableNote, type BookView } from './book-view.ts';
+import { bookedHref, buildBookView, invalidUrlTarget, loadBookView, parseStart, unavailableNote, type BookView } from './book-view.ts';
 
 const settings: Settings = { changeoverMin: 15, openMinute: 600, closeMinute: 1320, horizonDays: 14, preheatMinMin: 30, preheatMaxMin: 40 };
 const seasons = [{ startDate: '2027-01-09', endDate: '2027-04-30' }];
@@ -57,7 +57,20 @@ function form(
 
 const enabled = (v: BookView) => v.durations.filter((d) => d.enabled).map((d) => d.value);
 
+describe('bookedHref', () => {
+	it('carries only the one-time flags', () => {
+		expect(bookedHref(TOKEN, false)).toBe(`/booked/${TOKEN}?new=1`);
+		expect(bookedHref(TOKEN, true)).toBe(`/booked/${TOKEN}?new=1&changed=1`);
+	});
+});
+
 describe('buildBookView', () => {
+	it('carries the displayed notice as its canonical token', () => {
+		expect(form('18:15', { bookings: [booking('17:00', 60)] }).noticeToken).toBe(
+			'{"heat":"hot","earliest":null,"latest":null}'
+		);
+	});
+
 	it('builds the form for 18:00 with a booking at 20:00', () => {
 		const v = form('18:00', { bookings: [booking('20:00', 60)] });
 		expect(v).toMatchObject({
@@ -73,7 +86,8 @@ describe('buildBookView', () => {
 			duration: 60,
 			partySize: 2,
 			partySizes: [1, 2, 3, 4, 5, 6],
-			submitToken: TOKEN
+			submitToken: TOKEN,
+			noticeToken: '{"heat":"cold","earliest":"2027-01-12T16:20:00Z","latest":"2027-01-12T16:30:00Z"}'
 		});
 		expect(enabled(v)).toEqual([60, 90]);
 		expect(v.durations[1]).toEqual({ value: 90, name: '90 Minuten, bis 19:30', note: 'Minuten · bis 19:30', enabled: true });

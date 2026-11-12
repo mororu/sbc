@@ -175,13 +175,13 @@ The EN day title follows the DE pattern: "Tue, 12 January". "Nur" is used for ex
 2. A stale form (the time is taken or has begun when the form loads) redirects straight to the day with the matching message. A URL that names no real time (bad `hhmm`, a time skipped by the spring clock change) goes to the day, a bad date to `/`; the action does the same for a post to such a URL.
 3. The form posts to its own `default` action. `src/lib/schemas/booking.ts` (Valibot) validates it, the same schema the client runs. Invalid fields → `fail(400, { errors, values })`: error keys plus the typed values, a summary at the top ("2 Angaben fehlen oder stimmen nicht."), focus on the first invalid field (`autofocus` without JavaScript).
 4. `createBooking` (`src/lib/server/commands/create-booking.ts`) runs in one `BEGIN IMMEDIATE` transaction on the raw connection (`db.$client.transaction(…).immediate()`). Inside it, it looks up the submit token first (a resubmit returns the existing public id), then refuses `past` when the start has begun, reads settings, seasons, bookings and blocks fresh, and accepts only a start and duration that `offeredStartTimes` offers (`conflict` otherwise). It records the current changeover, `created_at`, `season_id`, party size, the locale at submit, the normalised contact data, a fresh public id and the submit token. Malformed input → `invalid`. It never throws for these outcomes. A token whose booking an admin has since deleted gets `conflict`, never the deleted booking's id. A lock-wait timeout (`SQLITE_BUSY` after the busy timeout) is the one error the action catches: it answers `fail(503)` so the form shows "Das hat nicht geklappt …" with the input kept; any other error stays a 500.
-5. Success → 303 to `/booked/{publicId}`: the minimal confirmation (date, "Gebucht!", start, duration, party size, "Weitere Zeit buchen"). Its load selects only start, duration and party size. An unknown or malformed id is a 404 in the guest layout (`src/routes/(guest)/+error.svelte`), revealing nothing. The notice badge, the keybox sentence and the details list follow in Story 1.8.
+5. Success → 303 to `/booked/{publicId}?new=1` (plus `&changed=1` when the notice changed, Story 1.8): the confirmation. An unknown or malformed id is a 404 in the guest layout (`src/routes/(guest)/+error.svelte`), revealing nothing.
 6. `conflict` and `past` → 303 to `/day/{date}?error=conflict|past&time=hhmm`. The day rebuilds fresh with the message first in `main` (`role="alert"`, focused on load via `autofocus`, which SvelteKit also honours after a client navigation) and `<title>` prefixed "Fehler: ". This is the same with and without JavaScript; with `use:enhance` the redirect is followed the same way. If the day is no longer selectable, its redirect to the nearest day carries `error` and `time` along. With JavaScript, once the message is shown, `error` and `time` are dropped from the address (shallow replace), so a reload, bookmark or language switch does not show it again.
 
 ### Ids, guest data and privacy
 
 - Public ids and submit tokens are `crypto.randomBytes(16)` as base64url (22 characters, `src/lib/server/ids.ts`), unique in the database. The schema and the command share one pattern for them (`RANDOM_ID`). Every form load makes a fresh token. Row ids never reach a guest page.
-- Name, email and mobile never go into a URL, cookie, redirect or log. The only query parameters in the flow are `d`, `p`, `error` and `time`. The form and the confirmation are sent with `cache-control: private, no-store`; the confirmation and the error page carry `noindex`.
+- Name, email and mobile never go into a URL, cookie, redirect or log. The only query parameters in the flow are `d`, `p`, `error`, `time`, `new` and `changed`. The form and the confirmation are sent with `cache-control: private, no-store`; the confirmation and the error page carry `noindex`.
 - With JavaScript, name, email and mobile (only those) are kept in `sessionStorage` under `sauna-booking.contact`, written on input and on submit and read to prefill empty fields, so a conflict, a language switch or a second booking does not re-ask. Nothing else is stored.
 
 ### Validation (AD-16)
@@ -222,12 +222,49 @@ Migration `0002_booking_contact.sql` adds `party_size` (1–6), `locale` (`de`/`
 | `error_summary` singular | 1 Angabe fehlt oder stimmt nicht. | 1 detail is missing or wrong. |
 | `submit_busy` (EN of "Wird gebucht …") | – | Booking … |
 | `booked_title` (`<title>`) | Gebucht | Booked |
-| `booked_minutes` / `booked_people` (confirmation line) | {minutes} Min. / 1 Person, {count} Personen | {minutes} min / 1 person, {count} people |
+| `booked_people` (confirmation details) | 1 Person, {count} Personen | 1 person, {count} people |
 | `not_found_title` / `not_found_heading` (guest 404) | Nicht gefunden / Diese Seite gibt es nicht. | Not found / This page doesn't exist. |
 | `error_page_title` / `error_page_heading` (other errors) | Fehler / Das hat nicht geklappt. | Error / That didn't work. |
 | `error_page_home` (link on the error page) | Zum Kalender | To the calendar |
 
 The empty mobile field gets the UX mobile message ("Bitte gib eine Handynummer an …"), which reads as a request. A crafted or stale field (`form_invalid`) and a command `invalid` show the UX network-failure message, since nothing was booked.
+
+## Confirmation with the notice at booking (Story 1.8)
+
+### The notice at booking
+
+- The booking form carries the notice it displays as a hidden `notice` field: the canonical JSON from `serializeNotice` (`BookView.noticeToken`). The schema only checks that the field is there and at most 200 characters; the action parses it with `parseNotice`. A missing or malformed token is `form_invalid` (400, input kept, nothing booked). The form shows it as the form-level "Das hat nicht geklappt …" message, never at the hidden field.
+- `createBooking` takes it as `displayedNotice`. Inside its `BEGIN IMMEDIATE` transaction the booking's notice is the `notice` of the matching `offeredStartTimes` entry. It is stored as `serializeNotice(…)` in both `booking.notice_at_booking` and `booking.last_told_notice`, and the result says `changed: !noticeEquals(stored, displayed)`. A token that differs still books. A resubmit returns the existing booking and compares its stored notice at booking with the resubmitted token, so a retry gets the same answer (`false` when no notice is stored).
+- `notice_at_booking` is never updated after insert. The trigger `booking_notice_at_booking_immutable` (migration 0003) aborts any update of a value that is set; a row without one (development data from before 0003) may still get one. `last_told_notice` will move with the heat-change emails (Epic 2).
+- The action redirects with `?new=1`, plus `&changed=1` when the notice changed. These one-time flags are not guest data. With JavaScript the page drops them from the address after the first render (shallow replace, `withoutBookedFlags` in `src/lib/day-nav.ts`), so a reload counts as a revisit. Without JavaScript they stay, and a reload still shows the "just booked" page.
+
+### The page
+
+- `src/lib/server/booked-view.ts` builds the view model from `getConfirmation`, which selects only start, duration, party size, `created_at`, the notice at booking and the admin contact. The page data holds only pre-formatted strings derived from the date, start, duration, party size, notice at booking, keybox time and admin contact: no name, email, mobile, row id or `created_at` (checked in `server.test.ts`).
+- Layout (DESIGN.md `confirmation`): eyebrow date, "Gebucht!", the large state badge with the notice sentence, the "changed" or "revisit" line, then below a hairline the keybox sentence and a details list (Wann, Personen, Absagen), then "Weitere Zeit buchen" and "So funktioniert's". The large badge uses button type and is not uppercased, since it carries a whole sentence.
+- Badge: hot "Schon heiss um 18:15.", cold "Kaltstart: komm zwischen 17:20 und 17:30 und heiz ein." A collapsed window or an arrival already past uses the row texts behind "Kaltstart: ", starting lower-case ("Kaltstart: nur 15 Minuten …"). "Past" is judged at the booking's `created_at`, because the badge shows the state at booking. Neither is styled as an error.
+- "Das hat sich gerade geändert." shows only with `new=1&changed=1`. "So stand es bei der Buchung. Änderungen schicken wir dir per Mail." shows on every visit without `new=1`.
+- Keybox sentence: the email goes out at start − 24 h of real time (AD-9), so 10:00 on Sunday 28 March 2027 gives "am Sa 27. März um 09:00". Booked at or after that time, or once it has passed, the line reads "Der Schlüsselcode ist schon unterwegs in dein Postfach."
+- A booking row without a stored notice (development data from before migration 0003) shows no badge.
+
+### Admin contact
+
+Migration `0003_booking_notice.sql` adds `setting.admin_contact` and seeds it with **`platzhalter@sauna-luegisee.ch`, a placeholder that must be replaced by the admins' real address before launch (Story 5.5)**. Admins will edit it in Epic 3. The seed `UPDATE` (only when the value is NULL or blank, so it is idempotent) and the immutability trigger are written by hand below the generated DDL; keep both if the migration is ever regenerated. The `mailto:` link encodes the address (keeping the `@`). `npm run db:fixtures` now books the fixtures one minute apart and stores each one's notice as it stood when it was made (only the bookings before it count).
+
+### Drafted copy for operator review (Story 1.8)
+
+The badge texts, "Das hat sich gerade geändert.", the revisit line, the "schon unterwegs" keybox line, "Gebucht!" and "Weitere Zeit buchen" are EXPERIENCE.md copy (DE, and EN where it has one). These were drafted:
+
+| Key | DE | EN |
+| --- | --- | --- |
+| `booked_badge_cold_other` (collapsed or past: the row text behind the prefix) | Kaltstart: {notice} | Cold start: {notice} |
+| `booked_keybox` (keybox sentence) | Den Schlüsselcode bekommst du am {at}. | You'll get the keybox code on {at}. |
+| `booked_keybox_at` (keybox time) | {date} um {time} ("Mo 11. Januar um 18:00") | {date} at {time} ("Mon 11 January at 18:00") |
+| `booked_keybox_sent` (EN only) | – | The keybox code is already on its way to your inbox. |
+| `booked_revisit` (EN only) | – | This is how it stood when you booked. We'll email you about any changes. |
+| `booked_when` / `booked_people_term` / `booked_cancel_term` (details terms) | Wann / Personen / Absagen | When / People / To cancel |
+| `booked_when_value` (the start is a `<time>`) | {date}, {start}–{end} ("Di 12. Januar, 18:00–19:30") | {date}, {start}–{end} ("Tue 12 January, 18:00–19:30") |
+| `booked_cancel` (the cancel line; the address is a `mailto:` link) | Schreib an {address}. | Email {address}. |
 
 ## Scaffold decisions
 

@@ -37,13 +37,16 @@ describe('normaliseMobile', () => {
 	});
 });
 
+const NOTICE = '{"heat":"hot","earliest":null,"latest":null}';
+
 const valid = {
 	name: 'Lena',
 	email: 'lena@example.ch ',
 	mobile: '079 123 45 67',
 	duration: '90',
 	partySize: '3',
-	submitToken: 'AAAAAAAAAAAAAAAAAAAAAA'
+	submitToken: 'AAAAAAAAAAAAAAAAAAAAAA',
+	notice: NOTICE
 };
 
 describe('parseBooking', () => {
@@ -56,7 +59,8 @@ describe('parseBooking', () => {
 				mobile: '+41791234567',
 				duration: 90,
 				partySize: 3,
-				submitToken: 'AAAAAAAAAAAAAAAAAAAAAA'
+				submitToken: 'AAAAAAAAAAAAAAAAAAAAAA',
+				notice: NOTICE
 			}
 		});
 	});
@@ -72,7 +76,7 @@ describe('parseBooking', () => {
 			ok: false,
 			errors: { name: 'field_required', email: 'field_required', mobile: 'mobile_invalid' }
 		});
-		expect(parseBooking({ duration: '60', partySize: '2', submitToken: valid.submitToken })).toEqual({
+		expect(parseBooking({ duration: '60', partySize: '2', submitToken: valid.submitToken, notice: NOTICE })).toEqual({
 			ok: false,
 			errors: { name: 'field_required', email: 'field_required', mobile: 'mobile_invalid' }
 		});
@@ -112,9 +116,20 @@ describe('parseBooking', () => {
 		['submitToken', 'short'],
 		['submitToken', 'AAAAAAAAAAAAAAAAAAAA/A=='],
 		['submitToken', 'A'.repeat(23)],
-		['submitToken', 'A'.repeat(21)]
+		['submitToken', 'A'.repeat(21)],
+		['notice', ''],
+		['notice', 'x'.repeat(201)]
 	])('refuses a crafted %s of %j as form_invalid', (field, value) => {
 		expect(parseBooking({ ...valid, [field]: value })).toEqual({ ok: false, errors: { [field]: 'form_invalid' } });
+	});
+});
+
+describe('the notice field', () => {
+	it('only checks that it is there: the action parses it', () => {
+		expect(parseBooking({ ...valid, notice: 'not json' }).ok).toBe(true);
+		expect(parseBooking({ ...valid, notice: 'x'.repeat(200) }).ok).toBe(true);
+		const { notice: _notice, ...missing } = valid;
+		expect(parseBooking(missing)).toEqual({ ok: false, errors: { notice: 'form_invalid' } });
 	});
 });
 

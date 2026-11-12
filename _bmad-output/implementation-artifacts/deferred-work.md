@@ -21,3 +21,6 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-1-7-guest-books-a-start-time.md`
   summary: Decide whether the back link keeps the UX name "Zurück zu Dienstag, 12. Januar" while it visibly reads "‹ Di, 12. Januar" (WCAG 2.5.3 label in name).
   evidence: Story 1.7 review; same kind of conflict as the language links (Story 1.2 deferred item). A UX decision, not a code fix.
+- source_spec: `_bmad-output/implementation-artifacts/spec-1-8-guest-sees-the-confirmation-with-the-notice-at-booking.md`
+  summary: Add a browser-level test layer (Vitest browser mode or a small Playwright flow) for client behaviour that server tests cannot reach: day switching state, BookForm busy/slow/failure handling, sessionStorage prefill, shallow URL cleanups, focus management.
+  evidence: Raised by the verification-gap review in Stories 1.5, 1.7 and 1.8; the repo has only a node test project, so these behaviours are checked by hand only. Needs a new dev dependency, so it is a decision of its own.

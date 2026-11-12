@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type Database from 'better-sqlite3';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { DURATIONS } from '#lib/domain/index.ts';
+import { DURATIONS, type Notice } from '#lib/domain/index.ts';
 import { BOOKING_DURATIONS, PARTY_SIZES } from '#lib/schemas/index.ts';
 import { locales } from '#lib/paraglide/runtime.js';
 import { toInstant } from '#lib/time/index.ts';
@@ -39,6 +39,11 @@ afterEach(() => {
 	rmSync(dir, { recursive: true, force: true });
 });
 
+/** What the form showed for 18:00 with nothing before it: come between 17:20 and 17:30. */
+const COLD_1800: Notice = { heat: 'cold', earliest: '2027-01-12T16:20:00Z', latest: '2027-01-12T16:30:00Z' };
+const COLD_1800_JSON = '{"heat":"cold","earliest":"2027-01-12T16:20:00Z","latest":"2027-01-12T16:30:00Z"}';
+const HOT: Notice = { heat: 'hot', earliest: null, latest: null };
+
 const lena = (over: Partial<CreateBookingInput> = {}): CreateBookingInput => ({
 	start: at('18:00'),
 	durationMin: 90,
@@ -48,6 +53,7 @@ const lena = (over: Partial<CreateBookingInput> = {}): CreateBookingInput => ({
 	mobile: '+41791234567',
 	locale: 'de',
 	submitToken: randomId(),
+	displayedNotice: COLD_1800,
 	...over
 });
 
@@ -76,7 +82,7 @@ describe('createBooking', () => {
 	it('inserts a valid booking with everything it must record', () => {
 		const token = randomId();
 		const result = createBooking(lena({ submitToken: token }), { now: NOW, db });
-		expect(result).toEqual({ ok: true, publicId: expect.stringMatching(/^[A-Za-z0-9_-]{22}$/) });
+		expect(result).toEqual({ ok: true, publicId: expect.stringMatching(/^[A-Za-z0-9_-]{22}$/), changed: false });
 		if (!result.ok) return;
 		expect(rows()).toEqual([
 			{
@@ -93,7 +99,9 @@ describe('createBooking', () => {
 				email: 'lena@example.ch',
 				mobile: '+41791234567',
 				public_id: result.publicId,
-				submit_token: token
+				submit_token: token,
+				notice_at_booking: COLD_1800_JSON,
+				last_told_notice: COLD_1800_JSON
 			}
 		]);
 	});
@@ -186,10 +194,94 @@ describe('createBooking', () => {
 		['a short submit token', { submitToken: 'abc' }],
 		['an empty name', { name: '' }],
 		['an untrimmed email', { email: ' lena@example.ch' }],
-		['an unnormalised mobile', { mobile: '079 123 45 67' }]
+		['an unnormalised mobile', { mobile: '079 123 45 67' }],
+		['a hot notice with an arrival', { displayedNotice: { ...HOT, earliest: '2027-01-12T16:20:00Z' } }],
+		['a cold notice without an arrival', { displayedNotice: { heat: 'cold', earliest: null, latest: null } as Notice }],
+		['a notice with an unknown heat', { displayedNotice: { ...COLD_1800, heat: 'warm' } as unknown as Notice }],
+		['a notice with a malformed instant', { displayedNotice: { ...COLD_1800, latest: '2027-01-12 17:30' } }]
 	])('refuses %s with invalid', (_name, over) => {
 		expect(createBooking(lena(over), { now: NOW, db })).toEqual({ ok: false, code: 'invalid' });
 		expect(rows()).toHaveLength(0);
+	});
+
+	describe('notice at booking (Story 1.8)', () => {
+		const notices = () =>
+			rows().map((r) => ({ at: r.notice_at_booking, told: r.last_told_notice }));
+
+		it('stores a hot notice in both columns', () => {
+			expect(createBooking(lena({ start: at('17:00'), durationMin: 60 }), { now: NOW, db }).ok).toBe(true);
+			const result = createBooking(lena({ start: at('18:15'), displayedNotice: HOT }), { now: NOW, db });
+			expect(result).toMatchObject({ ok: true, changed: false });
+			const hot = '{"heat":"hot","earliest":null,"latest":null}';
+			expect(notices()[1]).toEqual({ at: hot, told: hot });
+		});
+
+		it('stores a collapsed cold notice with a null latest', () => {
+			// A block ending 17:45 leaves 15 minutes to heat before 18:00: one arrival time.
+			sqlite
+				.prepare("insert into block (start_at, end_at, reason) values (?, ?, 'cleaning')")
+				.run(at('16:00'), at('17:45'));
+			const collapsed: Notice = { heat: 'cold', earliest: '2027-01-12T16:45:00Z', latest: null };
+			expect(createBooking(lena({ displayedNotice: collapsed }), { now: NOW, db })).toMatchObject({
+				ok: true,
+				changed: false
+			});
+			const json = '{"heat":"cold","earliest":"2027-01-12T16:45:00Z","latest":null}';
+			expect(notices()).toEqual([{ at: json, told: json }]);
+		});
+
+		it('books with the fresh notice and says changed when the form showed another one', () => {
+			// The form for 18:15 showed a cold start (17:35–17:45); then 17:00–18:00 was booked.
+			const shown: Notice = { heat: 'cold', earliest: '2027-01-12T16:35:00Z', latest: '2027-01-12T16:45:00Z' };
+			expect(createBooking(lena({ start: at('17:00'), durationMin: 60 }), { now: NOW, db }).ok).toBe(true);
+			const result = createBooking(lena({ start: at('18:15'), displayedNotice: shown }), { now: NOW, db });
+			expect(result).toMatchObject({ ok: true, changed: true });
+			const hot = '{"heat":"hot","earliest":null,"latest":null}';
+			expect(notices()[1]).toEqual({ at: hot, told: hot });
+		});
+
+		it('says changed when only the arrival window moved', () => {
+			// A block ending 17:25 moves the earliest arrival for 18:00 from 17:20 to 17:25.
+			sqlite
+				.prepare("insert into block (start_at, end_at, reason) values (?, ?, 'cleaning')")
+				.run(at('16:00'), at('17:25'));
+			expect(createBooking(lena(), { now: NOW, db })).toMatchObject({ ok: true, changed: true });
+			const json = '{"heat":"cold","earliest":"2027-01-12T16:25:00Z","latest":"2027-01-12T16:30:00Z"}';
+			expect(notices()).toEqual([{ at: json, told: json }]);
+		});
+
+		it('answers a resubmit with the same changed answer and no second row', () => {
+			const token = randomId();
+			const shown: Notice = { heat: 'cold', earliest: '2027-01-12T16:35:00Z', latest: '2027-01-12T16:45:00Z' };
+			expect(createBooking(lena({ start: at('17:00'), durationMin: 60 }), { now: NOW, db }).ok).toBe(true);
+			const first = createBooking(lena({ start: at('18:15'), displayedNotice: shown, submitToken: token }), {
+				now: NOW,
+				db
+			});
+			expect(first).toMatchObject({ ok: true, changed: true });
+			const again = createBooking(lena({ start: at('18:15'), displayedNotice: shown, submitToken: token }), {
+				now: NOW,
+				db
+			});
+			expect(again).toEqual({ ok: true, publicId: first.ok ? first.publicId : '', changed: true });
+			// A retry that shows the stored notice is unchanged.
+			expect(
+				createBooking(lena({ start: at('18:15'), displayedNotice: HOT, submitToken: token }), { now: NOW, db })
+			).toMatchObject({ ok: true, changed: false });
+			expect(rows()).toHaveLength(2);
+		});
+
+		it('answers a resubmit of a booking without a stored notice with changed false', () => {
+			const token = randomId();
+			expect(createBooking(lena({ submitToken: token }), { now: NOW, db }).ok).toBe(true);
+			// Old development data: no notice stored (the trigger allows setting a NULL notice only).
+			sqlite.exec('drop trigger booking_notice_at_booking_immutable');
+			sqlite.prepare('update booking set notice_at_booking = null').run();
+			expect(createBooking(lena({ submitToken: token, displayedNotice: HOT }), { now: NOW, db })).toMatchObject({
+				ok: true,
+				changed: false
+			});
+		});
 	});
 
 	it('lets exactly one of two connections book conflicting times', () => {

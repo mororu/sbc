@@ -39,7 +39,8 @@ const fields = {
 	mobile: '079 123 45 67',
 	duration: '90',
 	partySize: '3',
-	submitToken: 'AAAAAAAAAAAAAAAAAAAAAA'
+	submitToken: 'AAAAAAAAAAAAAAAAAAAAAA',
+	notice: '{"heat":"hot","earliest":null,"latest":null}'
 };
 const values = { name: 'Lena', email: 'lena@example.ch', mobile: '079 123 45 67', duration: '90', partySize: '3' };
 

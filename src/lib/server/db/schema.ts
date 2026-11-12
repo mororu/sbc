@@ -34,7 +34,9 @@ export const setting = sqliteTable(
 		horizonDays: integer().notNull(),
 		/** Operating hours as minutes after local midnight (600 = 10:00). */
 		openMinute: integer().notNull(),
-		closeMinute: integer().notNull()
+		closeMinute: integer().notNull(),
+		/** The admin contact address guests write to, e.g. to cancel. Seeded with a placeholder. */
+		adminContact: text()
 	},
 	(t) => [
 		check('setting_single_row', sql`${t.id} = 1`),
@@ -73,7 +75,11 @@ export const booking = sqliteTable(
 		/** The confirmation URL's id: random, URL-safe, 128 bits (AD-13). */
 		publicId: text().notNull(),
 		/** The form's one-time token: a resubmit returns the same booking (idempotent submit). */
-		submitToken: text().notNull()
+		submitToken: text().notNull(),
+		/** The notice at booking (AD-24): canonical JSON from `serializeNotice`, never updated after insert. */
+		noticeAtBooking: text(),
+		/** The notice the guest was last told (AD-24): canonical JSON; starts as the notice at booking. */
+		lastToldNotice: text()
 	},
 	(t) => [
 		index('booking_start_at').on(t.startAt),
