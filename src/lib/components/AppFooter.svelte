@@ -1,7 +1,13 @@
-<!-- Footer (UX-DR43): muted links, stacked on phones, each 44 px high. Story 1.9 adds the admin contact. -->
+<!--
+	Footer (UX-DR43): muted links, stacked on phones, each 44 px high. The admin contact comes last, as
+	a mailto: link with the address as its text (screen readers hear "Kontakt: " first); with no
+	address set there is no contact link.
+-->
 <script lang="ts">
 	import { resolve } from '$app/paths';
 	import { m } from '#lib/paraglide/messages.js';
+
+	let { contact = null }: { contact?: { address: string; href: string } | null } = $props();
 </script>
 
 <footer class="app-footer">
@@ -9,6 +15,15 @@
 		<li><a href={resolve('/(guest)/info')}>{m.footer_info()}</a></li>
 		<li><a href={resolve('/(guest)/privacy')}>{m.footer_privacy()}</a></li>
 		<li><a href={resolve('/(guest)/imprint')}>{m.footer_imprint()}</a></li>
+		{#if contact}
+			<!-- eslint-disable svelte/no-navigation-without-resolve -- a mailto: link, not a page of the app -->
+			<li>
+				<a class="contact" href={contact.href}
+					><span class="visually-hidden">{`${m.footer_contact_label()} `}</span>{contact.address}</a
+				>
+			</li>
+			<!-- eslint-enable svelte/no-navigation-without-resolve -->
+		{/if}
 	</ul>
 </footer>
 
@@ -33,6 +48,9 @@
 		color: var(--muted);
 		font-size: var(--type-body-sm-size);
 		font-weight: var(--type-body-sm-weight);
+	}
+	.contact {
+		overflow-wrap: anywhere;
 	}
 	@media (min-width: 600px) {
 		ul {

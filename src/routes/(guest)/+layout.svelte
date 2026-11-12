@@ -7,7 +7,7 @@
 	import { skipTarget } from '#lib/day-nav.ts';
 	import type { LayoutProps } from './$types';
 
-	let { children }: LayoutProps = $props();
+	let { children, data }: LayoutProps = $props();
 
 	// A day view puts the start-time list (#times) after the date strip; skip straight to it.
 	const target = $derived(skipTarget(page.data));
@@ -19,7 +19,7 @@
 	<main id="main" tabindex="-1">
 		{@render children()}
 	</main>
-	<AppFooter />
+	<AppFooter contact={data.adminContact} />
 </div>
 
 <style>
