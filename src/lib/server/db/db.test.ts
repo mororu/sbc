@@ -61,7 +61,8 @@ describe('applyMigrations', () => {
 				preheat_max_min: 40,
 				horizon_days: 14,
 				open_minute: 600,
-				close_minute: 1320
+				close_minute: 1320,
+				admin_contact: 'platzhalter@sauna-luegisee.ch'
 			}
 		]);
 		expect(sqlite.prepare('select * from season').all()).toEqual([
@@ -136,13 +137,13 @@ describe('applyMigrations', () => {
 	it('fills the new booking columns of rows made before migration 0002', () => {
 		const folder = join(dir, 'migrations');
 		cpSync(MIGRATIONS_FOLDER, folder, { recursive: true });
-		// Migrate to 0001 only, insert an old-style row, then apply 0002.
+		// Migrate to 0001 only, insert an old-style row, then apply 0002 and later.
 		const journalPath = join(folder, 'meta', '_journal.json');
 		const journal = JSON.parse(readFileSync(journalPath, 'utf8')) as { entries: { tag: string }[] };
 		const full = JSON.stringify(journal);
 		writeFileSync(
 			journalPath,
-			JSON.stringify({ ...journal, entries: journal.entries.filter((e) => !e.tag.startsWith('0002')) })
+			JSON.stringify({ ...journal, entries: journal.entries.filter((e) => e.tag < '0002') })
 		);
 		const sqlite = openDatabase(join(dir, 'old.sqlite'));
 		const db = createDb(sqlite);
@@ -159,6 +160,67 @@ describe('applyMigrations', () => {
 		expect(row.public_id).toMatch(/^[0-9a-f]{32}$/);
 		expect(row.submit_token).toMatch(/^[0-9a-f]{32}$/);
 		expect(row.public_id).not.toBe(row.submit_token);
+		sqlite.close();
+	});
+
+	it('adds nullable notice columns and seeds the admin contact idempotently (Story 1.8)', () => {
+		const sqlite = openDatabase(':memory:');
+		applyMigrations(createDb(sqlite), MIGRATIONS_FOLDER);
+		const columns = (table: string) =>
+			(sqlite.prepare(`pragma table_info(${table})`).all() as { name: string; notnull: number }[]).map((c) => [
+				c.name,
+				c.notnull
+			]);
+		expect(columns('booking')).toEqual(
+			expect.arrayContaining([
+				['notice_at_booking', 0],
+				['last_told_notice', 0]
+			])
+		);
+		expect(columns('setting')).toEqual(expect.arrayContaining([['admin_contact', 0]]));
+		// Re-running the seed keeps a value the admins have set (Epic 3) and fills only an empty one.
+		const seed = readFileSync(join(MIGRATIONS_FOLDER, '0003_booking_notice.sql'), 'utf8')
+			.split('--> statement-breakpoint')
+			.find((s) => s.includes('UPDATE'));
+		expect(seed).toBeDefined();
+		sqlite.prepare("update setting set admin_contact = 'sauna@example.ch' where id = 1").run();
+		sqlite.exec(seed!);
+		expect(sqlite.prepare('select admin_contact from setting').get()).toEqual({ admin_contact: 'sauna@example.ch' });
+		for (const empty of [null, '', '   ']) {
+			sqlite.prepare('update setting set admin_contact = ? where id = 1').run(empty);
+			sqlite.exec(seed!);
+			sqlite.exec(seed!);
+			expect(sqlite.prepare('select admin_contact from setting').get()).toEqual({
+				admin_contact: 'platzhalter@sauna-luegisee.ch'
+			});
+		}
+		sqlite.close();
+	});
+
+	it('never lets notice_at_booking change once set, but fills it on an old row (Story 1.8)', () => {
+		const sqlite = openDatabase(':memory:');
+		applyMigrations(createDb(sqlite), MIGRATIONS_FOLDER);
+		const insert = (notice: string | null, id: string) =>
+			sqlite
+				.prepare(
+					"insert into booking (start_at, duration_min, changeover_min, created_at, season_id, party_size, locale, public_id, submit_token, notice_at_booking, last_told_notice) values ('2027-01-12T16:00:00Z', 60, 15, '2027-01-05T08:00:00Z', 1, 2, 'de', ?, ?, ?, ?)"
+				)
+				.run(id, id, notice, notice);
+		const hot = '{"heat":"hot","earliest":null,"latest":null}';
+		const cold = '{"heat":"cold","earliest":"2027-01-12T15:20:00Z","latest":"2027-01-12T15:30:00Z"}';
+		insert(hot, 'set');
+		insert(null, 'old');
+		const update = (id: string, value: string | null) => () =>
+			sqlite.prepare('update booking set notice_at_booking = ? where public_id = ?').run(value, id);
+		expect(update('set', cold)).toThrow(/notice_at_booking is immutable/);
+		expect(update('set', null)).toThrow(/notice_at_booking is immutable/);
+		// Other columns, including the last-told notice, stay writable.
+		expect(sqlite.prepare("update booking set last_told_notice = ?, deleted_at = '2027-01-06T08:00:00Z' where public_id = 'set'").run(cold).changes).toBe(1);
+		expect(update('old', cold)().changes).toBe(1);
+		expect(sqlite.prepare('select public_id, notice_at_booking from booking order by public_id').all()).toEqual([
+			{ public_id: 'old', notice_at_booking: cold },
+			{ public_id: 'set', notice_at_booking: hot }
+		]);
 		sqlite.close();
 	});
 

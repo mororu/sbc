@@ -1,6 +1,8 @@
 <!--
 	State badge (DESIGN.md state-badge): the heat state as a bordered tag, icon + uppercase label.
-	Solid border for hot, dashed for cold start. Never interactive. `large` is the confirmation size.
+	Solid border for hot, dashed for cold start. Never interactive. `large` is the confirmation size
+	(DESIGN.md confirmation badge-type and badge-padding): it carries the whole notice sentence
+	("Schon heiss um 18:15."), so it is not uppercased and may wrap.
 -->
 <script lang="ts">
 	import Icon from './Icon.svelte';
@@ -34,9 +36,17 @@
 		color: var(--cold-start);
 	}
 	.large {
+		align-items: flex-start;
 		padding: 10px 14px;
 		font-size: var(--type-button-size);
 		font-weight: var(--type-button-weight);
 		letter-spacing: var(--type-button-tracking);
+		line-height: 1.4;
+		text-transform: none;
+	}
+	.large :global(.icon) {
+		flex: none;
+		/* Centres the 20 px icon on the first line of text. */
+		margin-top: calc((1.4em - 20px) / 2);
 	}
 </style>

@@ -231,6 +231,7 @@
 	{/key}
 
 	<input type="hidden" name="submitToken" value={view.submitToken} />
+	<input type="hidden" name="notice" value={view.noticeToken} />
 
 	<SegmentedControl
 		id="book-duration"

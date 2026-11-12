@@ -116,7 +116,6 @@
 	"submit_slow": "Das dauert gerade länger. Bitte warte noch, wir buchen nicht doppelt.",
 	"booked_title": "Gebucht",
 	"booked_heading": "Gebucht!",
-	"booked_minutes": "{minutes} Min.",
 	"booked_people": [
 		{
 			"declarations": [
@@ -139,5 +138,18 @@
 	"error_page_heading": "Das hat nicht geklappt.",
 	"error_page_home": "Zum Kalender",
 	"duration_unavailable": "{range} Min. nicht möglich.",
-	"name_invalid": "Im Namen steckt ein unsichtbares Zeichen, z. B. ein Tabulator. Bitte entfern es."
+	"name_invalid": "Im Namen steckt ein unsichtbares Zeichen, z. B. ein Tabulator. Bitte entfern es.",
+	"booked_badge_hot": "Schon heiss um {time}.",
+	"booked_badge_cold": "Kaltstart: komm zwischen {earliest} und {latest} und heiz ein.",
+	"booked_badge_cold_other": "Kaltstart: {notice}",
+	"booked_changed": "Das hat sich gerade geändert.",
+	"booked_revisit": "So stand es bei der Buchung. Änderungen schicken wir dir per Mail.",
+	"booked_keybox": "Den Schlüsselcode bekommst du am {at}.",
+	"booked_keybox_sent": "Der Schlüsselcode ist schon unterwegs in dein Postfach.",
+	"booked_keybox_at": "{date} um {time}",
+	"booked_when": "Wann",
+	"booked_when_value": "{date}, {start}–{end}",
+	"booked_people_term": "Personen",
+	"booked_cancel_term": "Absagen",
+	"booked_cancel": "Schreib an {address}."
 }

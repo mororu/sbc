@@ -74,6 +74,7 @@ const submit = (date: string, time: string, fields: Record<string, string>) => {
 	const request = new Request(`http://x/book/${date}/${time}`, { method: 'POST', body });
 	return run(() => (actions.default as (e: unknown) => unknown)({ params: { date, time }, request }));
 };
+const HOT_JSON = '{"heat":"hot","earliest":null,"latest":null}';
 const lena = (over: Record<string, string> = {}) => ({
 	name: 'Lena',
 	email: 'lena@example.ch ',
@@ -81,24 +82,61 @@ const lena = (over: Record<string, string> = {}) => ({
 	duration: '90',
 	partySize: '3',
 	submitToken: token(),
+	notice: HOT_JSON,
 	...over
 });
+/** The notice token the form for `date`/`time` carries right now. */
+const formNotice = async (date: string, time: string) => {
+	const form = await openForm(date, time);
+	if (!('data' in form)) throw new Error('no form');
+	return (form.data as { page: { noticeToken: string } }).page.noticeToken;
+};
+const BOOKED = /^\/booked\/([A-Za-z0-9_-]{22})\?new=1(&changed=1)?$/;
+const publicIdOf = (outcome: Outcome) => {
+	if (!('redirect' in outcome)) throw new Error('not booked');
+	return new URL(outcome.redirect.location, 'http://x').pathname.split('/').pop() as string;
+};
+const openBooked = (location: string) => {
+	const url = new URL(location, 'http://x');
+	const publicId = url.pathname.split('/').pop();
+	return run(() => (loadBooked as (e: unknown) => unknown)({ params: { publicId }, url, ...headers }));
+};
 const GUEST_DATA = /Lena|lena|example|079|\+41|123/;
 
 describe('book flow', () => {
-	it('opens the form, books, and lands on the minimal confirmation', async () => {
+	it('opens the form, books, and lands on the confirmation with the notice at booking', async () => {
+		// Thursday 7 January, 09:00: Tuesday 12 January 18:00 has nothing before it.
+		clock.now = '2027-01-07T08:00:00Z';
 		const form = await openForm('2027-01-12', '1800', '?d=90&p=3');
-		expect(form).toMatchObject({ data: { page: { kind: 'form', title: '18:00 buchen', duration: 90, partySize: 3 } } });
+		expect(form).toMatchObject({
+			data: {
+				page: {
+					kind: 'form',
+					title: '18:00 buchen',
+					duration: 90,
+					partySize: 3,
+					noticeToken: '{"heat":"cold","earliest":"2027-01-12T16:20:00Z","latest":"2027-01-12T16:30:00Z"}'
+				}
+			}
+		});
 		expect(sentHeaders['cache-control']).toBe('private, no-store');
 		sentHeaders = {};
+		if (!('data' in form)) return;
+		const notice = (form.data as { page: { noticeToken: string } }).page.noticeToken;
 
-		const booked = await submit('2027-01-12', '1800', lena());
-		expect(booked).toEqual({ redirect: { status: 303, location: expect.stringMatching(/^\/booked\/[A-Za-z0-9_-]{22}$/) } });
+		const fields = lena({ notice });
+		const booked = await submit('2027-01-12', '1800', fields);
+		expect(booked).toEqual({ redirect: { status: 303, location: expect.stringMatching(BOOKED) } });
 		if (!('redirect' in booked)) return;
+		expect(booked.redirect.location).toMatch(/\?new=1$/);
 		expect(booked.redirect.location).not.toMatch(GUEST_DATA);
 
-		const publicId = booked.redirect.location.split('/').pop();
-		const confirmation = await run(() => (loadBooked as (e: unknown) => unknown)({ params: { publicId }, ...headers }));
+		const row = getDb()
+			.$client.prepare('select notice_at_booking, last_told_notice from booking where submit_token = ?')
+			.get(fields.submitToken);
+		expect(row).toEqual({ notice_at_booking: notice, last_told_notice: notice });
+
+		const confirmation = await openBooked(booked.redirect.location);
 		expect(sentHeaders['cache-control']).toBe('private, no-store');
 		expect(confirmation).toEqual({
 			data: {
@@ -106,19 +144,140 @@ describe('book flow', () => {
 					title: 'Gebucht',
 					date: 'Dienstag, 12. Januar',
 					heading: 'Gebucht!',
-					time: '18:00',
-					datetime: '2027-01-12T17:00:00Z',
-					duration: '90 Min.',
-					people: '3 Personen',
-					another: { href: '/day/2027-01-12', text: 'Weitere Zeit buchen' }
+					badge: { heat: 'cold', text: 'Kaltstart: komm zwischen 17:20 und 17:30 und heiz ein.' },
+					changed: null,
+					revisit: null,
+					keybox: 'Den Schlüsselcode bekommst du am Mo 11. Januar um 18:00.',
+					details: {
+						when: { term: 'Wann', before: 'Di 12. Januar, ', start: '18:00', datetime: '2027-01-12T17:00:00Z', after: '–19:30' },
+						people: { term: 'Personen', value: '3 Personen' },
+						cancel: {
+							term: 'Absagen',
+							before: 'Schreib an ',
+							address: 'platzhalter@sauna-luegisee.ch',
+							href: 'mailto:platzhalter@sauna-luegisee.ch',
+							after: '.'
+						}
+					},
+					another: { href: '/day/2027-01-12', text: 'Weitere Zeit buchen' },
+					info: { href: '/info', text: "So funktioniert's" }
+				}
+			}
+		});
+
+		// A revisit (no flags): the same badge plus the revisit line.
+		const revisit = await openBooked(`/booked/${publicIdOf(booked)}`);
+		expect(revisit).toMatchObject({
+			data: {
+				view: {
+					badge: { heat: 'cold', text: 'Kaltstart: komm zwischen 17:20 und 17:30 und heiz ein.' },
+					changed: null,
+					revisit: 'So stand es bei der Buchung. Änderungen schicken wir dir per Mail.'
+				}
+			}
+		});
+
+		// The page data holds no guest data and no row id.
+		const serialised = JSON.stringify(confirmation);
+		expect(serialised).not.toMatch(GUEST_DATA);
+		expect(serialised).not.toMatch(/"id"|_id"|submit|token|created/i);
+		expect(serialised).not.toContain(publicIdOf(booked));
+	});
+
+	it('shows a hot booking in English', async () => {
+		clock.locale = 'en';
+		expect(await submit('2027-01-16', '1700', lena({ duration: '60', notice: await formNotice('2027-01-16', '1700') }))).toMatchObject({
+			redirect: { status: 303 }
+		});
+		const booked = await submit('2027-01-16', '1815', lena({ notice: await formNotice('2027-01-16', '1815') }));
+		expect(booked).toEqual({ redirect: { status: 303, location: expect.stringMatching(/\?new=1$/) } });
+		if (!('redirect' in booked)) return;
+		expect(await openBooked(booked.redirect.location)).toMatchObject({
+			data: {
+				view: {
+					title: 'Booked',
+					heading: 'Booked!',
+					badge: { heat: 'hot', text: 'Already hot at 18:15.' },
+					changed: null,
+					revisit: null,
+					keybox: "You'll get the keybox code on Fri 15 January at 18:15.",
+					details: {
+						when: { term: 'When', before: 'Sat 16 January, ', start: '18:15', datetime: '2027-01-16T17:15:00Z', after: '–19:45' },
+						people: { term: 'People', value: '3 people' },
+						cancel: { term: 'To cancel', before: 'Email ', after: '.' }
+					}
 				}
 			}
 		});
 	});
 
+	it('books with the fresh notice and flags the change when the form showed another one', async () => {
+		// A booking at 20:00 makes 18:15 a start time (90 min, one changeover before it): a cold start.
+		expect(await submit('2027-01-17', '2000', lena({ duration: '60', notice: await formNotice('2027-01-17', '2000') }))).toMatchObject({
+			redirect: { status: 303 }
+		});
+		const shown = await formNotice('2027-01-17', '1815');
+		expect(JSON.parse(shown)).toMatchObject({ heat: 'cold' });
+		// Someone books 17:00–18:00 while the form is open.
+		expect(await submit('2027-01-17', '1700', lena({ duration: '60', notice: await formNotice('2027-01-17', '1700') }))).toMatchObject({
+			redirect: { status: 303 }
+		});
+		const fields = lena({ notice: shown });
+		const booked = await submit('2027-01-17', '1815', fields);
+		expect(booked).toEqual({ redirect: { status: 303, location: expect.stringMatching(/\?new=1&changed=1$/) } });
+		if (!('redirect' in booked)) return;
+		expect(await openBooked(booked.redirect.location)).toMatchObject({
+			data: { view: { badge: { heat: 'hot', text: 'Schon heiss um 18:15.' }, changed: 'Das hat sich gerade geändert.', revisit: null } }
+		});
+		// A resubmit (a retry after a lost response) returns the same booking with the same answer,
+		// and no second row.
+		const again = await submit('2027-01-17', '1815', fields);
+		expect(again).toEqual({ redirect: { status: 303, location: `/booked/${publicIdOf(booked)}?new=1&changed=1` } });
+		const count = getDb()
+			.$client.prepare('select count(*) as n from booking where submit_token = ?')
+			.get(fields.submitToken);
+		expect(count).toEqual({ n: 1 });
+		// `changed` without `new` is no fresh visit: a revisit, no changed line.
+		expect(await openBooked(`/booked/${publicIdOf(booked)}?changed=1`)).toMatchObject({
+			data: { view: { changed: null, revisit: 'So stand es bei der Buchung. Änderungen schicken wir dir per Mail.' } }
+		});
+	});
+
+	it('says the keybox code is on its way when booked after the cutoff', async () => {
+		// Booked 12 January 09:00 for 21:00 the same day.
+		const booked = await submit('2027-01-12', '2100', lena({ duration: '60', notice: await formNotice('2027-01-12', '2100') }));
+		if (!('redirect' in booked)) throw new Error('not booked');
+		expect(await openBooked(booked.redirect.location)).toMatchObject({
+			data: { view: { keybox: 'Der Schlüsselcode ist schon unterwegs in dein Postfach.' } }
+		});
+	});
+
+	it.each([
+		['missing', ''],
+		['not JSON', 'cold'],
+		['not a notice', '{"heat":"warm","earliest":null,"latest":null}'],
+		['a hot notice with an arrival', '{"heat":"hot","earliest":"2027-01-14T16:20:00Z","latest":null}']
+	])('refuses a notice token that is %s with 400 form_invalid, input kept, nothing booked', async (_name, notice) => {
+		const fields = lena({ notice });
+		expect(await submit('2027-01-14', '1800', fields)).toEqual({
+			failure: {
+				status: 400,
+				data: {
+					errors: { notice: 'form_invalid' },
+					values: { name: 'Lena', email: 'lena@example.ch ', mobile: '079 123 45 67', duration: '90', partySize: '3' }
+				}
+			}
+		});
+		const count = getDb()
+			.$client.prepare('select count(*) as n from booking where submit_token = ?')
+			.get(fields.submitToken);
+		expect(count).toEqual({ n: 0 });
+	});
+
 	it('returns the same confirmation for a resubmit with the same token', async () => {
-		const fields = lena();
+		const fields = lena({ notice: await formNotice('2027-01-12', '1300') });
 		const first = await submit('2027-01-12', '1300', fields);
+		expect(first).toEqual({ redirect: { status: 303, location: expect.stringMatching(/\?new=1$/) } });
 		const again = await submit('2027-01-12', '1300', fields);
 		expect(again).toEqual(first);
 	});
@@ -198,19 +357,14 @@ describe('book flow', () => {
 
 	it('answers a deleted booking\'s confirmation with 404', async () => {
 		const booked = await submit('2027-01-15', '1100', lena());
-		if (!('redirect' in booked)) throw new Error('not booked');
-		const publicId = booked.redirect.location.split('/').pop();
+		const publicId = publicIdOf(booked);
 		getDb().$client.prepare("update booking set deleted_at = '2027-01-12T08:30:00Z' where public_id = ?").run(publicId);
-		expect(await run(() => (loadBooked as (e: unknown) => unknown)({ params: { publicId }, ...headers }))).toEqual({
-			error: { status: 404 }
-		});
+		expect(await openBooked(`/booked/${publicId}?new=1`)).toEqual({ error: { status: 404 } });
 	});
 
 	it('answers an unknown confirmation id with 404', async () => {
 		for (const publicId of ['xyz', 'AAAAAAAAAAAAAAAAAAAAAA']) {
-			expect(await run(() => (loadBooked as (e: unknown) => unknown)({ params: { publicId }, ...headers }))).toEqual({
-				error: { status: 404 }
-			});
+			expect(await openBooked(`/booked/${publicId}`)).toEqual({ error: { status: 404 } });
 		}
 	});
 });

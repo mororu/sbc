@@ -116,7 +116,6 @@
 	"submit_slow": "This is taking longer. Please wait, we won't book twice.",
 	"booked_title": "Booked",
 	"booked_heading": "Booked!",
-	"booked_minutes": "{minutes} min",
 	"booked_people": [
 		{
 			"declarations": [
@@ -139,5 +138,18 @@
 	"error_page_heading": "That didn't work.",
 	"error_page_home": "To the calendar",
 	"duration_unavailable": "{range} min not possible.",
-	"name_invalid": "There's an invisible character in the name, such as a tab. Please remove it."
+	"name_invalid": "There's an invisible character in the name, such as a tab. Please remove it.",
+	"booked_badge_hot": "Already hot at {time}.",
+	"booked_badge_cold": "Cold start: come between {earliest} and {latest} and light the fire.",
+	"booked_badge_cold_other": "Cold start: {notice}",
+	"booked_changed": "That just changed.",
+	"booked_revisit": "This is how it stood when you booked. We'll email you about any changes.",
+	"booked_keybox": "You'll get the keybox code on {at}.",
+	"booked_keybox_sent": "The keybox code is already on its way to your inbox.",
+	"booked_keybox_at": "{date} at {time}",
+	"booked_when": "When",
+	"booked_when_value": "{date}, {start}–{end}",
+	"booked_people_term": "People",
+	"booked_cancel_term": "To cancel",
+	"booked_cancel": "Email {address}."
 }

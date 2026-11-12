@@ -10,6 +10,8 @@ export const NAME_MAX = 100;
 export const EMAIL_MAX = 254;
 /** Generous for any written form of a phone number; the stored E.164 has at most 16 characters. */
 export const MOBILE_MAX = 32;
+/** The longest canonical notice is about 90 characters; anything far longer is crafted. */
+export const NOTICE_MAX = 200;
 /** Submit tokens (and public ids): 16 random bytes as base64url, exactly 22 characters. */
 export const RANDOM_ID = /^[A-Za-z0-9_-]{22}$/;
 
@@ -24,7 +26,7 @@ export type BookingErrorKey =
 
 export const CONTACT_FIELDS = ['name', 'email', 'mobile'] as const;
 export type ContactField = (typeof CONTACT_FIELDS)[number];
-export const BOOKING_FIELDS = [...CONTACT_FIELDS, 'duration', 'partySize', 'submitToken'] as const;
+export const BOOKING_FIELDS = [...CONTACT_FIELDS, 'duration', 'partySize', 'submitToken', 'notice'] as const;
 export type BookingField = (typeof BOOKING_FIELDS)[number];
 export type BookingErrors = Partial<Record<BookingField, BookingErrorKey>>;
 
@@ -105,7 +107,12 @@ export const bookingSchema = v.object({
 	duration: choice(BOOKING_DURATIONS),
 	partySize: choice(PARTY_SIZES),
 	/** 128 bits, base64url (22 characters). */
-	submitToken: v.pipe(v.string('form_invalid'), v.regex(RANDOM_ID, 'form_invalid'))
+	submitToken: v.pipe(v.string('form_invalid'), v.regex(RANDOM_ID, 'form_invalid')),
+	/**
+	 * The notice the form displayed, as canonical notice JSON (AD-24). Only checked for presence here
+	 * (schemas may not import the domain); the action parses it with `parseNotice`.
+	 */
+	notice: v.pipe(v.string('form_invalid'), v.nonEmpty('form_invalid'), v.maxLength(NOTICE_MAX, 'form_invalid'))
 });
 
 export type BookingInput = v.InferOutput<typeof bookingSchema>;

@@ -5,6 +5,7 @@ import {
 	DURATIONS,
 	isBookableDay,
 	offeredStartTimes,
+	serializeNotice,
 	type Block,
 	type Booking,
 	type Duration,
@@ -71,6 +72,8 @@ export type BookView = {
 	partySize: number;
 	/** Fresh for every form: a resubmit with it never books twice. */
 	submitToken: string;
+	/** The displayed notice as canonical JSON (AD-24), posted back so the command can tell a change. */
+	noticeToken: string;
 };
 
 export type BookPage = BookView | { kind: 'redirect'; to: string };
@@ -94,6 +97,14 @@ export function invalidUrlTarget(date: string): string {
 /** Where a refused booking goes: the refreshed day with the message (no guest data). */
 export function dayErrorHref(date: LocalDate, hhmm: string, code: DayError): string {
 	return `/day/${date}?error=${code}&time=${hhmm}`;
+}
+
+/**
+ * Where a booking goes: its confirmation with the one-time flags `?new=1` and, when the notice
+ * changed since the form loaded, `&changed=1`. The flags are no guest data, only how it was reached.
+ */
+export function bookedHref(publicId: string, changed: boolean): string {
+	return `/booked/${publicId}?new=1${changed ? '&changed=1' : ''}`;
 }
 
 /** "120–180", or "180" when only the longest is out. */
@@ -219,7 +230,8 @@ export function buildBookView(input: {
 		duration: preselectDuration(offer.durations, input.d ?? null),
 		partySizes: PARTY_SIZES,
 		partySize: preselectPartySize(input.p ?? null),
-		submitToken: input.submitToken
+		submitToken: input.submitToken,
+		noticeToken: serializeNotice(offer.notice)
 	};
 }
 

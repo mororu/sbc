@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { isDayPath, pendingDay, shouldAnnounce, skipTarget, withoutDayError, type NavView } from './day-nav.ts';
+import { isDayPath, pendingDay, shouldAnnounce, skipTarget, withoutBookedFlags, withoutDayError, type NavView } from './day-nav.ts';
 
 const view: NavView = {
 	home: '2027-01-12',
@@ -64,6 +64,22 @@ describe('skipTarget', () => {
 		expect(skipTarget({ page: { kind: 'season' } })).toBe('main');
 		expect(skipTarget({})).toBe('main');
 		expect(skipTarget(null)).toBe('main');
+	});
+});
+
+describe('withoutBookedFlags', () => {
+	it('drops new and changed, keeps everything else', () => {
+		const id = 'AAAAAAAAAAAAAAAAAAAAAA';
+		expect(withoutBookedFlags(new URL(`http://x/booked/${id}?new=1&changed=1`))?.href).toBe(`http://x/booked/${id}`);
+		expect(withoutBookedFlags(new URL(`http://x/booked/${id}?new=1`))?.href).toBe(`http://x/booked/${id}`);
+		expect(withoutBookedFlags(new URL(`http://x/booked/${id}?a=1&new=1#main`))?.href).toBe(
+			`http://x/booked/${id}?a=1#main`
+		);
+	});
+
+	it('returns null when there is nothing to drop', () => {
+		expect(withoutBookedFlags(new URL('http://x/booked/AAAAAAAAAAAAAAAAAAAAAA'))).toBeNull();
+		expect(withoutBookedFlags(new URL('http://x/booked/AAAAAAAAAAAAAAAAAAAAAA?a=1'))).toBeNull();
 	});
 });
 
