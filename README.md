@@ -19,9 +19,9 @@ npm run dev
 | Script | What it does |
 | --- | --- |
 | `npm run dev` | Dev server; applies migrations to `DATABASE_PATH` on boot |
-| `npm run build` | Production build (adapter-node) into `build/` |
+| `npm run build` | Production build (adapter-node) into `build/`; fails if `src/lib/time` reaches a client chunk |
 | `npm start` | Runs the production build (`node build`); needs the production env |
-| `npm test` | Vitest, once (env parsing, db setup and migrations, layer boundary rules) |
+| `npm test` | Vitest, once (env parsing, db and queries, time and core, day view, layer rules, build guard) |
 | `npm run check` | Generates Paraglide types, then svelte-check |
 | `npm run lint` | ESLint, including the layer boundary rules |
 | `npm run i18n:types` | Compiles `messages/` into `src/lib/paraglide` (also run by `check` and `lint`) |
@@ -72,8 +72,6 @@ These strings are not in the UX catalogue yet. They were drafted under the voice
 | `footer_info`, `info_title` | So funktioniert's | How it works |
 | `footer_privacy`, `privacy_title` | Datenschutz | Privacy |
 | `footer_imprint`, `imprint_title` | Impressum | Imprint |
-| `home_title` (until the calendar exists) | Kalender | Calendar |
-| `home_body` (until the calendar exists) | Hier entsteht der Buchungskalender für den Saunawagen. | The booking calendar for the sauna wagon is coming here. |
 | `stub_body` (until Story 1.9) | Dieser Text folgt bald. | This text is coming soon. |
 
 ## Time and start-time core
@@ -94,6 +92,45 @@ npm run db:fixtures -- 2027-01-12
 ```
 
 This inserts three bookings and a cleaning block into the dev database, using the current changeover. It refuses to run with `NODE_ENV=production`, for a date outside every season, and for a day that already has bookings or blocks. Start the app once first, so the database exists.
+
+## Calendar day view
+
+- `/` shows today, or the first selectable day when today is not selectable (with the note "Die Saison beginnt am … Hier sind die ersten Tage." when today is in no season), or the season notice before and after the season. `/day/{yyyy-mm-dd}` shows a selectable day; any other date (past, beyond the horizon, outside a season, impossible, malformed) redirects with 302 to the nearest selectable day, or to `/` when there is none. Never an error page.
+- `src/lib/domain/calendar.ts` derives the season state (`calendarState`) and the redirect target (`nearestSelectableDay`). `src/lib/server/day-view.ts` builds the view model (`buildDayView`, pure) and loads it (`loadDayView`, with the guest queries in `src/lib/server/db/queries/calendar.ts` and the clock). The page data holds only that view model: pre-formatted times and strings, durations, heat state and taken start/end. No row ids, `created_at`, names or block reasons; the guest queries never select a block's `reason`.
+- Taken rows: one per live booking or block that overlaps the day's operating hours, clipped to them. Bookings and blocks look the same.
+- Free rows are not links yet; Story 1.7 adds the booking form. Cold starts get their arrival time in Story 1.6.
+
+### The one clock and `DEV_NOW`
+
+`src/lib/server/clock.ts` is the only code that reads the current time. In development you can set `DEV_NOW` to a UTC ISO instant to try the season states, for example:
+
+```bash
+npm run db:fixtures -- 2027-01-12
+DEV_NOW=2027-01-12T09:00:00Z npm run dev   # inside the season, 10:00 on 12 January
+DEV_NOW=2026-12-20T09:00:00Z npm run dev   # before booking opens
+DEV_NOW=2026-12-28T09:00:00Z npm run dev   # booking open, season not begun
+DEV_NOW=2027-05-01T09:00:00Z npm run dev   # after the season
+```
+
+`DEV_NOW` is fixed (time does not move) and is refused when `NODE_ENV=production`.
+
+### Client time guard
+
+`src/lib/time` uses Temporal, which iOS Safari lacks, so it must never reach the browser: the view model carries every date and time pre-formatted. `scripts/client-time-guard.ts` is a Vite plugin that fails the client build if any client chunk includes a module from `src/lib/time` or the string `Europe/Zurich`. It does not search for the word `Temporal`, because SvelteKit's devalue names `Temporal.Instant` and friends in its own client code. Tested by `scripts/client-time-guard.test.ts`, and once by hand: importing `#lib/time` into `DayView.svelte` fails `npm run build`.
+
+### Drafted copy for operator review (Story 1.4)
+
+| Key | DE | EN |
+| --- | --- | --- |
+| `calendar_title` (`<title>` of the season notice) | Kalender | Calendar |
+| `day_today` (date eyebrow) | Heute | Today |
+| `row_sr_hot` (screen reader, row start) | {time}, schon heiss. | {time}, already hot. |
+| `row_sr_cold` (screen reader, row start) | {time}, Kaltstart. | {time}, cold start. |
+| `row_sr_taken` (screen reader) | {start} bis {end}, belegt | {start} to {end}, taken |
+| `duration_only` / `duration_up_to` | Nur {minutes} Min. / Bis {minutes} Min. | {minutes} min only / Up to {minutes} min |
+| `season_before_heading` / `season_after_heading` (season notice `h1`: the first sentence of the EXPERIENCE.md copy) | Die Saison beginnt am {date}. / Die Saison ist vorbei. | Season opens {date}. / The season is over. |
+
+The EN day title follows the DE pattern: "Tue, 12 January". "Nur" is used for exactly one duration, "Bis" for fewer than five, and nothing for all five. Screen readers hear the limit and the notice as sentences: "18:15, schon heiss. Bis 90 Min. Ofen läuft. Komm um 18:15." (the visible notice joins them with " · ").
 
 ## Scaffold decisions
 

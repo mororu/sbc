@@ -27,7 +27,8 @@ export function openDatabase(path: string): Database.Database {
 }
 
 export function createDb(sqlite: Database.Database): Db {
-	return drizzle(sqlite, { schema });
+	// Same casing as drizzle.config.ts: camelCase keys in schema.ts map to snake_case columns.
+	return drizzle(sqlite, { schema, casing: 'snake_case' });
 }
 
 let cached: Db | undefined;
