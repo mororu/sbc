@@ -142,3 +142,13 @@ export function formatTime(value: Instant): string {
 	const z = zoned(value);
 	return `${String(z.hour).padStart(2, '0')}:${String(z.minute).padStart(2, '0')}`;
 }
+
+/** "Mi" / "Wed": the date strip's weekday. */
+export function formatWeekdayShort(date: LocalDate, locale: Locale): string {
+	return dateParts(date, locale, 'short').weekday;
+}
+
+/** "13": the date strip's day number, no leading zero. */
+export function formatDayNumber(date: LocalDate, locale: Locale): string {
+	return dateParts(date, locale, 'short').day;
+}

@@ -9,6 +9,30 @@
 	"footer_imprint": "Imprint",
 	"calendar_title": "Calendar",
 	"day_today": "Today",
+	"strip_name": "Choose a day",
+	"strip_day_unavailable": "{date}, not bookable",
+	"day_prev": "Previous day",
+	"day_next": "Next day",
+	"today_link": "Today",
+	"day_loading": "Loading…",
+	"empty_taken": "Nothing free this day. Try another day.",
+	"empty_past": "Today's times are over. See you tomorrow.",
+	"day_status": [
+		{
+			"declarations": [
+				"input date",
+				"input count",
+				"local countPlural = count: plural"
+			],
+			"selectors": [
+				"countPlural"
+			],
+			"match": {
+				"countPlural=one": "{date}: {count} free time",
+				"countPlural=*": "{date}: {count} free times"
+			}
+		}
+	],
 	"heat_hot_label": "Already hot",
 	"heat_cold_label": "Cold start",
 	"taken_label": "Taken",

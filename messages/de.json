@@ -9,6 +9,30 @@
 	"footer_imprint": "Impressum",
 	"calendar_title": "Kalender",
 	"day_today": "Heute",
+	"strip_name": "Tag wählen",
+	"strip_day_unavailable": "{date}, nicht buchbar",
+	"day_prev": "Vorheriger Tag",
+	"day_next": "Nächster Tag",
+	"today_link": "Heute",
+	"day_loading": "Lädt …",
+	"empty_taken": "An diesem Tag ist alles belegt. Schau dir einen anderen Tag an.",
+	"empty_past": "Für heute sind alle Zeiten vorbei. Morgen geht's weiter.",
+	"day_status": [
+		{
+			"declarations": [
+				"input date",
+				"input count",
+				"local countPlural = count: plural"
+			],
+			"selectors": [
+				"countPlural"
+			],
+			"match": {
+				"countPlural=one": "{date}: {count} freie Zeit",
+				"countPlural=*": "{date}: {count} freie Zeiten"
+			}
+		}
+	],
 	"heat_hot_label": "Schon heiss",
 	"heat_cold_label": "Kaltstart",
 	"taken_label": "Belegt",
