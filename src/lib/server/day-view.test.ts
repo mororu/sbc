@@ -9,7 +9,7 @@ import { createDb, openDatabase, type Db } from './db/index.ts';
 import { applyMigrations, MIGRATIONS_FOLDER } from './db/migrate.ts';
 import { buildDayView, buildSeasonView, loadDayView, type DayView, type FreeRow } from './day-view.ts';
 
-const settings: Settings = { changeoverMin: 15, openMinute: 600, closeMinute: 1320, horizonDays: 14 };
+const settings: Settings = { changeoverMin: 15, openMinute: 600, closeMinute: 1320, horizonDays: 14, preheatMinMin: 30, preheatMaxMin: 40 };
 const seasons = [{ startDate: '2027-01-09', endDate: '2027-04-30' }];
 const DAY = '2027-01-12';
 /** 10:00 in Zurich on 12 January. */
@@ -65,8 +65,8 @@ describe('buildDayView', () => {
 		expect(free(v, '15:45')).toMatchObject({
 			heat: 'cold',
 			label: 'Kaltstart',
-			notice: 'Nur 60 Min.',
-			srText: '15:45, Kaltstart. Nur 60 Min.',
+			notice: 'Nur 60 Min. · Niemand vor dir: komm zwischen 15:05 und 15:15 und heiz ein.',
+			srText: '15:45, Kaltstart. Nur 60 Min. Niemand vor dir: komm zwischen 15:05 und 15:15 und heiz ein.',
 			durations: [60]
 		});
 	});
@@ -90,8 +90,8 @@ describe('buildDayView', () => {
 		});
 		expect(free(v, '15:45')).toMatchObject({
 			label: 'Cold start',
-			notice: '60 min only',
-			srText: '15:45, cold start. 60 min only.'
+			notice: '60 min only · Nobody before you: come between 15:05 and 15:15 and light the fire.',
+			srText: '15:45, cold start. 60 min only. Nobody before you: come between 15:05 and 15:15 and light the fire.'
 		});
 		const limitedHot = view({ locale: 'en', bookings: [booking('17:00', 60), booking('20:00', 60)] });
 		expect(free(limitedHot, '18:15')).toMatchObject({
@@ -114,10 +114,11 @@ describe('buildDayView', () => {
 	it('prefixes limited durations with "Bis" or "Nur" and leaves all five alone', () => {
 		// A booking at 20:00: 18:00 still fits 60 and 90 (ends 19:30, + 15 = 19:45).
 		const v = view({ bookings: [booking('20:00', 60)] });
-		expect(free(v, '18:00')).toMatchObject({ durations: [60, 90], notice: 'Bis 90 Min.' });
-		expect(free(v, '18:30')).toMatchObject({ durations: [60], notice: 'Nur 60 Min.' });
-		expect(free(v, '11:00')).toMatchObject({ durations: [60, 90, 120, 150, 180], notice: null });
-		expect(free(v, '11:00')?.srText).toBe('11:00, Kaltstart.');
+		const between = (from: string, to: string) => `Niemand vor dir: komm zwischen ${from} und ${to} und heiz ein.`;
+		expect(free(v, '18:00')).toMatchObject({ durations: [60, 90], notice: `Bis 90 Min. · ${between('17:20', '17:30')}` });
+		expect(free(v, '18:30')).toMatchObject({ durations: [60], notice: `Nur 60 Min. · ${between('17:50', '18:00')}` });
+		expect(free(v, '11:00')).toMatchObject({ durations: [60, 90, 120, 150, 180], notice: between('10:20', '10:30') });
+		expect(free(v, '11:00')?.srText).toBe(`11:00, Kaltstart. ${between('10:20', '10:30')}`);
 	});
 
 	it('joins the limit and the hot notice', () => {
@@ -127,6 +128,138 @@ describe('buildDayView', () => {
 			durations: [60, 90],
 			notice: 'Bis 90 Min. · Ofen läuft. Komm um 18:15.',
 			srText: '18:15, schon heiss. Bis 90 Min. Ofen läuft. Komm um 18:15.'
+		});
+	});
+
+	describe('cold-start notices (Story 1.6)', () => {
+		it('tells the arrival window in DE and EN, also to screen readers', () => {
+			expect(free(view(), '18:00')).toMatchObject({
+				heat: 'cold',
+				label: 'Kaltstart',
+				notice: 'Niemand vor dir: komm zwischen 17:20 und 17:30 und heiz ein.',
+				srText: '18:00, Kaltstart. Niemand vor dir: komm zwischen 17:20 und 17:30 und heiz ein.'
+			});
+			expect(free(view({ locale: 'en' }), '18:00')).toMatchObject({
+				notice: 'Nobody before you: come between 17:20 and 17:30 and light the fire.',
+				srText: '18:00, cold start. Nobody before you: come between 17:20 and 17:30 and light the fire.'
+			});
+		});
+
+		it('moves the window to the end of a block', () => {
+			expect(free(view({ blocks: [block('16:00', '17:25')] }), '18:00')?.notice).toBe(
+				'Niemand vor dir: komm zwischen 17:25 und 17:30 und heiz ein.'
+			);
+		});
+
+		it('gives a single arrival time when there is too little time to heat', () => {
+			// 16:30–17:30, then 18:00: earliest 17:45 is after latest 17:30.
+			const v = view({ bookings: [booking('16:30', 60)] });
+			expect(free(v, '18:00')).toMatchObject({
+				heat: 'cold',
+				label: 'Kaltstart',
+				notice: 'Nur 15 Minuten zum Einheizen: komm um 17:45. Die Sauna wärmt dann noch auf.'
+			});
+			expect(free(view({ locale: 'en', bookings: [booking('16:30', 60)] }), '18:00')?.notice).toBe(
+				'Only 15 minutes to heat: come at 17:45. It will still be warming up.'
+			);
+		});
+
+		it('collapses when earliest equals latest (equal ends)', () => {
+			const blocks = [block('16:00', '17:30')];
+			expect(free(view({ blocks }), '18:00')).toMatchObject({
+				heat: 'cold',
+				label: 'Kaltstart',
+				notice: 'Nur 30 Minuten zum Einheizen: komm um 17:30. Die Sauna wärmt dann noch auf.',
+				srText: '18:00, Kaltstart. Nur 30 Minuten zum Einheizen: komm um 17:30. Die Sauna wärmt dann noch auf.'
+			});
+			expect(free(view({ locale: 'en', blocks }), '18:00')).toMatchObject({
+				notice: 'Only 30 minutes to heat: come at 17:30. It will still be warming up.',
+				srText: '18:00, cold start. Only 30 minutes to heat: come at 17:30. It will still be warming up.'
+			});
+		});
+
+		it('says "Nur 0 Minuten" for a cold start right at the end of a block (kept per the PRD)', () => {
+			const blocks = [block('17:00', '18:00')];
+			expect(free(view({ blocks }), '18:00')).toMatchObject({
+				heat: 'cold',
+				notice: 'Nur 0 Minuten zum Einheizen: komm um 18:00. Die Sauna wärmt dann noch auf.'
+			});
+			expect(free(view({ locale: 'en', blocks }), '18:00')?.notice).toBe(
+				'Only 0 minutes to heat: come at 18:00. It will still be warming up.'
+			);
+		});
+
+		it('says "Nur 0 Minuten" when a recorded changeover is longer than the gap', () => {
+			// 16:40–17:40 made with changeover 25; the current 15 offers 18:00, cold.
+			const bookings: Booking[] = [{ ...booking('16:40', 60), changeoverMin: 25 }];
+			expect(free(view({ bookings }), '18:00')).toMatchObject({
+				heat: 'cold',
+				label: 'Kaltstart',
+				notice: 'Nur 0 Minuten zum Einheizen: komm um 18:00. Die Sauna wärmt dann noch auf.'
+			});
+			expect(free(view({ locale: 'en', bookings }), '18:00')?.notice).toBe(
+				'Only 0 minutes to heat: come at 18:00. It will still be warming up.'
+			);
+		});
+
+		it('uses the singular for one minute', () => {
+			// A block ending 17:59 leaves one minute before 18:00.
+			const v = view({ blocks: [block('17:00', '17:59')] });
+			expect(free(v, '18:00')?.notice).toBe(
+				'Nur 1 Minute zum Einheizen: komm um 17:59. Die Sauna wärmt dann noch auf.'
+			);
+			expect(free(view({ locale: 'en', blocks: [block('17:00', '17:59')] }), '18:00')?.notice).toBe(
+				'Only 1 minute to heat: come at 17:59. It will still be warming up.'
+			);
+		});
+
+		it('says "as soon as you can" once the arrival time is past, and still offers the time', () => {
+			const now = at('17:35');
+			const v = view({ now });
+			expect(free(v, '18:00')).toMatchObject({
+				kind: 'free',
+				heat: 'cold',
+				label: 'Kaltstart',
+				notice: 'Komm so bald wie möglich und heiz ein. Zum Start ist die Sauna noch nicht ganz heiss.',
+				srText: '18:00, Kaltstart. Komm so bald wie möglich und heiz ein. Zum Start ist die Sauna noch nicht ganz heiss.'
+			});
+			expect(free(view({ now, locale: 'en' }), '18:00')?.notice).toBe(
+				"Come as soon as you can and light the fire. It won't be fully hot at the start."
+			);
+			// At exactly 17:30 the latest arrival is not yet past.
+			expect(free(view({ now: at('17:30') }), '18:00')?.notice).toBe(
+				'Niemand vor dir: komm zwischen 17:20 und 17:30 und heiz ein.'
+			);
+		});
+
+		it('says "as soon as you can" after a single arrival time has passed', () => {
+			const bookings = [booking('16:30', 60)];
+			expect(free(view({ bookings, now: at('17:46') }), '18:00')?.notice).toBe(
+				'Komm so bald wie möglich und heiz ein. Zum Start ist die Sauna noch nicht ganz heiss.'
+			);
+			expect(free(view({ bookings, now: at('17:45') }), '18:00')?.notice).toBe(
+				'Nur 15 Minuten zum Einheizen: komm um 17:45. Die Sauna wärmt dann noch auf.'
+			);
+		});
+
+		it('gives an arrival time before operating hours', () => {
+			expect(free(view({ now: '2027-01-11T09:00:00Z' }), '10:00')?.notice).toBe(
+				'Niemand vor dir: komm zwischen 09:20 und 09:30 und heiz ein.'
+			);
+		});
+
+		it('leaves hot rows unchanged', () => {
+			expect(free(view({ bookings: [booking('17:00', 60)] }), '18:15')).toMatchObject({
+				heat: 'hot',
+				notice: 'Ofen läuft. Komm um 18:15.',
+				srText: '18:15, schon heiss. Ofen läuft. Komm um 18:15.'
+			});
+		});
+
+		it('prefixes a limited cold start', () => {
+			expect(free(view({ bookings: [booking('17:00', 60)] }), '15:45')?.notice).toBe(
+				'Nur 60 Min. · Niemand vor dir: komm zwischen 15:05 und 15:15 und heiz ein.'
+			);
 		});
 	});
 

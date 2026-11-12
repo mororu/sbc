@@ -28,7 +28,7 @@ const insertBlock = (start: string, end: string) =>
 
 describe('getSettings and getSeasons', () => {
 	it('read the seeded setting and season', () => {
-		expect(getSettings(db)).toEqual({ changeoverMin: 15, openMinute: 600, closeMinute: 1320, horizonDays: 14 });
+		expect(getSettings(db)).toEqual({ changeoverMin: 15, openMinute: 600, closeMinute: 1320, horizonDays: 14, preheatMinMin: 30, preheatMaxMin: 40 });
 		expect(getSeasons(db)).toEqual([{ startDate: '2027-01-09', endDate: '2027-04-30' }]);
 	});
 

@@ -1,4 +1,4 @@
-// Start times and heat state (PRD §4 Glossary, FR-2, FR-4, FR-8, FR-19; AD-1, AD-8).
+// Start times (PRD §4 Glossary, FR-2, FR-4, FR-8, FR-19; AD-1, AD-8).
 // Pure: every input, including `now`, is a parameter. The calendar and the book command both call
 // `offeredStartTimes`, so the calendar never offers a time the command would refuse.
 import {
@@ -8,38 +8,27 @@ import {
 	isValidDate,
 	lastBookableDay,
 	localDate,
-	minutesBetween,
 	toInstant,
 	today,
 	type Instant,
 	type LocalDate
 } from '#lib/time/index.ts';
+import { bookingEnd, live, type Block, type Booking, type HeatState, type Settings } from './heat.ts';
+import { freeNotice, type Notice } from './notice.ts';
+
+// The shared types and heat state live in heat.ts, so notice.ts can use them without a cycle.
+export {
+	bookingEnd,
+	bookingHeat,
+	freeHeat,
+	type Block,
+	type Booking,
+	type HeatState,
+	type Settings
+} from './heat.ts';
 
 export const DURATIONS = [60, 90, 120, 150, 180] as const;
 export type Duration = (typeof DURATIONS)[number];
-export type HeatState = 'hot' | 'cold';
-
-export type Booking = {
-	id: number;
-	start: Instant;
-	durationMin: number;
-	/** The changeover in force when the booking was made (AD-8). */
-	changeoverMin: number;
-	createdAt: Instant;
-	deletedAt?: Instant | null;
-};
-
-export type Block = { start: Instant; end: Instant };
-
-export type Settings = {
-	/** The current changeover: applies to new bookings and to free start times. */
-	changeoverMin: number;
-	/** Operating hours as minutes after local midnight, e.g. 600 = 10:00, 1320 = 22:00. */
-	openMinute: number;
-	closeMinute: number;
-	horizonDays: number;
-};
-
 export type Season = { startDate: LocalDate; endDate: LocalDate };
 
 export type StartTimeKind = 1 | 2 | 3;
@@ -49,15 +38,9 @@ export type OfferedStartTime = {
 	kinds: StartTimeKind[];
 	durations: Duration[];
 	heat: HeatState;
+	/** The canonical notice (AD-24), shared by the calendar and the book command. */
+	notice: Notice;
 };
-
-export function bookingEnd(booking: Booking): Instant {
-	return addMinutes(booking.start, booking.durationMin);
-}
-
-function live(bookings: Booking[]): Booking[] {
-	return bookings.filter((b) => !b.deletedAt);
-}
 
 /** True if `date` lies in a season and between today and the end of the booking horizon. */
 export function isBookableDay(
@@ -72,73 +55,6 @@ export function isBookableDay(
 	return seasons.some(
 		(s) => compareDates(s.startDate, date) <= 0 && compareDates(date, s.endDate) <= 0
 	);
-}
-
-/**
- * The booking or block that ends last at or before `start` (a block wins a tie: it never heats).
- * A block that is still running at `start` counts as the last item too, so it can never be hot.
- */
-function lastBefore(
-	start: Instant,
-	bookings: Booking[],
-	blocks: Block[],
-	exclude?: Booking
-): { kind: 'booking'; booking: Booking; end: Instant } | { kind: 'block'; end: Instant } | null {
-	let best: ReturnType<typeof lastBefore> = null;
-	for (const booking of live(bookings)) {
-		if (booking === exclude || (exclude && booking.id === exclude.id)) continue;
-		const end = bookingEnd(booking);
-		if (compareInstants(end, start) > 0) continue;
-		if (!best || compareInstants(end, best.end) > 0) best = { kind: 'booking', booking, end };
-	}
-	for (const block of blocks) {
-		const runningAtStart =
-			compareInstants(block.start, start) < 0 && compareInstants(block.end, start) > 0;
-		if (runningAtStart) return { kind: 'block', end: block.end };
-		if (compareInstants(block.end, start) > 0) continue;
-		if (!best || compareInstants(block.end, best.end) >= 0) best = { kind: 'block', end: block.end };
-	}
-	return best;
-}
-
-/**
- * Heat state of a free start time: hot only if the last booking or block before it is a booking
- * ending exactly one current changeover earlier. A block in between, any longer gap, or nothing
- * before it makes it a cold start.
- */
-export function freeHeat(
-	start: Instant,
-	bookings: Booking[],
-	blocks: Block[],
-	changeoverMin: number
-): HeatState {
-	const previous = lastBefore(start, bookings, blocks);
-	if (previous?.kind !== 'booking') return 'cold';
-	return gapMinutes(previous.end, start) === changeoverMin ? 'hot' : 'cold';
-}
-
-/** Whole minutes between two instants; stray seconds never turn a back-to-back pair cold. */
-function gapMinutes(from: Instant, to: Instant): number {
-	return Math.round(minutesBetween(from, to));
-}
-
-/** Whichever of two bookings was made later: by `createdAt`, then by row id. */
-function laterMade(a: Booking, b: Booking): Booking {
-	const order = compareInstants(a.createdAt, b.createdAt);
-	if (order !== 0) return order > 0 ? a : b;
-	return a.id > b.id ? a : b;
-}
-
-/**
- * Heat state of an existing booking: hot only if the last booking or block before it is a booking
- * that is back to back with it, i.e. the gap equals the changeover recorded on the later-made of
- * the two (AD-8).
- */
-export function bookingHeat(booking: Booking, bookings: Booking[], blocks: Block[]): HeatState {
-	const previous = lastBefore(booking.start, bookings, blocks, booking);
-	if (previous?.kind !== 'booking') return 'cold';
-	const changeover = laterMade(previous.booking, booking).changeoverMin;
-	return gapMinutes(previous.end, booking.start) === changeover ? 'hot' : 'cold';
 }
 
 /** True if a new booking [start, end) keeps one current changeover to every booking and overlaps no block. */
@@ -167,7 +83,7 @@ function fits(
  * before, the day itself and the day after (a booking ending near midnight still needs a changeover).
  *
  * Every start time a guest may book on `date`, in time order, each with the durations that fit and
- * its heat state. Kind 1: every full and half hour. Kind 2: a booking's end plus the current
+ * its heat state and notice. Kind 1: every full and half hour. Kind 2: a booking's end plus the current
  * changeover. Kind 3: a time from which a booking would end exactly one changeover before an
  * existing booking; offered only with those durations unless it is also of kind 1 or 2.
  */
@@ -219,11 +135,13 @@ export function offeredStartTimes(input: {
 		});
 		if (durations.length === 0) continue;
 
+		const notice = freeNotice(start, bookings, blocks, settings);
 		offered.push({
 			start,
 			kinds: [...kindSet].sort((a, b) => a - b),
 			durations,
-			heat: freeHeat(start, bookings, blocks, changeover)
+			heat: notice.heat,
+			notice
 		});
 	}
 	return offered.sort((a, b) => compareInstants(a.start, b.start));

@@ -13,7 +13,9 @@ export function getSettings(db: Db = getDb()): Settings {
 			changeoverMin: setting.changeoverMin,
 			openMinute: setting.openMinute,
 			closeMinute: setting.closeMinute,
-			horizonDays: setting.horizonDays
+			horizonDays: setting.horizonDays,
+			preheatMinMin: setting.preheatMinMin,
+			preheatMaxMin: setting.preheatMaxMin
 		})
 		.from(setting)
 		.get();

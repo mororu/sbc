@@ -14,7 +14,7 @@ import {
 
 const DAY = '2027-01-12';
 const NOW = '2027-01-05T08:00:00Z';
-const settings: Settings = { changeoverMin: 15, openMinute: 600, closeMinute: 1320, horizonDays: 14 };
+const settings: Settings = { changeoverMin: 15, openMinute: 600, closeMinute: 1320, horizonDays: 14, preheatMinMin: 30, preheatMaxMin: 40 };
 const seasons = [{ startDate: '2027-01-09', endDate: '2027-04-30' }];
 
 const minutes = (hhmm: string) => {

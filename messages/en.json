@@ -37,6 +37,24 @@
 	"heat_cold_label": "Cold start",
 	"taken_label": "Taken",
 	"hot_notice": "The stove's going. Come at {time}.",
+	"cold_notice": "Nobody before you: come between {earliest} and {latest} and light the fire.",
+	"cold_notice_short": [
+		{
+			"declarations": [
+				"input minutes",
+				"input time",
+				"local minutesPlural = minutes: plural"
+			],
+			"selectors": [
+				"minutesPlural"
+			],
+			"match": {
+				"minutesPlural=one": "Only {minutes} minute to heat: come at {time}. It will still be warming up.",
+				"minutesPlural=*": "Only {minutes} minutes to heat: come at {time}. It will still be warming up."
+			}
+		}
+	],
+	"cold_notice_past": "Come as soon as you can and light the fire. It won't be fully hot at the start.",
 	"duration_only": "{minutes} min only",
 	"duration_up_to": "Up to {minutes} min",
 	"taken_until": "until {time}",

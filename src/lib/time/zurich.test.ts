@@ -14,6 +14,7 @@ import {
 	formatDayNumber,
 	hoursInDay,
 	isValidDate,
+	isValidInstant,
 	lastBookableDay,
 	localDate,
 	localMinuteOfDay,
@@ -97,6 +98,26 @@ describe('calendar days', () => {
 		['', false]
 	])('isValidDate(%s) is %s', (value, expected) => {
 		expect(isValidDate(value)).toBe(expected);
+	});
+});
+
+describe('isValidInstant', () => {
+	it.each([
+		['2027-01-12T16:45:00Z', true],
+		['2027-03-28T07:20:00Z', true],
+		['2027-01-12T16:45Z', false],
+		['2027-01-12T16:45:00.000Z', false],
+		['2027-01-12T16:45:00+01:00', false],
+		['2027-02-30T16:45:00Z', false],
+		['2027-01-12T24:00:00Z', false],
+		['2027-01-12T16:45:60Z', false],
+		['2027-01-12T16:45:00z', false],
+		[' 2027-01-12T16:45:00Z', false],
+		['2027-01-12T16:45:00Z ', false],
+		['\n2027-01-12T16:45:00Z\n', false],
+		['', false]
+	])('isValidInstant(%s) is %s', (value, expected) => {
+		expect(isValidInstant(value)).toBe(expected);
 	});
 });
 

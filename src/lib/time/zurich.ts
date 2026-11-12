@@ -34,6 +34,16 @@ export function isValidDate(value: string): value is LocalDate {
 	}
 }
 
+/** True for an instant in the canonical form `yyyy-mm-ddThh:mm:ssZ` (UTC, seconds, no fraction). */
+export function isValidInstant(value: string): value is Instant {
+	if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/.test(value)) return false;
+	try {
+		return text(instantOf(value)) === value;
+	} catch {
+		return false;
+	}
+}
+
 /**
  * The instant of a Zurich wall-clock time: `minuteOfDay` minutes after local midnight of `date`
  * (1440 is the next midnight). A time skipped by the spring switch resolves to the later offset.
