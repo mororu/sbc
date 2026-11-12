@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { calendarState, nearestSelectableDay, selectableDays } from './calendar.ts';
 import type { Season, Settings } from './start-times.ts';
 
-const settings: Settings = { changeoverMin: 15, openMinute: 600, closeMinute: 1320, horizonDays: 14 };
+const settings: Settings = { changeoverMin: 15, openMinute: 600, closeMinute: 1320, horizonDays: 14, preheatMinMin: 30, preheatMaxMin: 40 };
 const season: Season = { startDate: '2027-01-09', endDate: '2027-04-30' };
 const seasons = [season];
 /** 10:00 in Zurich (UTC+1 in winter). */

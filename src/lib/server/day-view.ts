@@ -15,6 +15,7 @@ import {
 	type CalendarState,
 	type Duration,
 	type HeatState,
+	type Notice,
 	type Season,
 	type Settings
 } from '#lib/domain/index.ts';
@@ -33,6 +34,7 @@ import {
 	formatWeekday,
 	formatWeekdayShort,
 	lastBookableDay,
+	minutesBetween,
 	toInstant,
 	today,
 	type Instant,
@@ -149,6 +151,23 @@ function sentence(text: string | null): string | null {
 	return /[.!?]$/.test(text) ? text : `${text}.`;
 }
 
+/**
+ * The cold-start notice text. "Already past" and "too little time" are derived here from the
+ * notice, the start and `now`; they are never part of the notice itself. Neither is an error:
+ * the time stays bookable.
+ */
+function coldNoticeText(notice: Notice, start: Instant, now: Instant, locale: Locale): string {
+	const earliest = notice.earliest;
+	if (earliest === null) throw new Error('A cold notice without an earliest arrival');
+	const lastArrival = notice.latest ?? earliest;
+	if (compareInstants(now, lastArrival) > 0) return m.cold_notice_past({}, { locale });
+	if (notice.latest === null) {
+		const minutes = Math.floor(minutesBetween(earliest, start));
+		return m.cold_notice_short({ minutes, time: formatTime(earliest) }, { locale });
+	}
+	return m.cold_notice({ earliest: formatTime(earliest), latest: formatTime(notice.latest) }, { locale });
+}
+
 /** Pure: builds the day's view model. `bookings` and `blocks` cover the day before to the day after. */
 export function buildDayView(input: {
 	date: LocalDate;
@@ -184,7 +203,7 @@ export function buildDayView(input: {
 					srText: [m.row_sr_hot({ time }, { locale }), sentence(limit), heatNotice].filter(Boolean).join(' ')
 				};
 			}
-			// The arrival time for cold starts arrives with Story 1.6.
+			const coldNotice = coldNoticeText(offer.notice, offer.start, now, locale);
 			return {
 				kind: 'free',
 				time,
@@ -192,8 +211,8 @@ export function buildDayView(input: {
 				durations: offer.durations,
 				heat: 'cold',
 				label: m.heat_cold_label({}, { locale }),
-				notice: limit,
-				srText: [m.row_sr_cold({ time }, { locale }), sentence(limit)].filter(Boolean).join(' ')
+				notice: limit ? `${limit} · ${coldNotice}` : coldNotice,
+				srText: [m.row_sr_cold({ time }, { locale }), sentence(limit), coldNotice].filter(Boolean).join(' ')
 			};
 		}
 	);

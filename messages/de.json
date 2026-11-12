@@ -37,6 +37,24 @@
 	"heat_cold_label": "Kaltstart",
 	"taken_label": "Belegt",
 	"hot_notice": "Ofen läuft. Komm um {time}.",
+	"cold_notice": "Niemand vor dir: komm zwischen {earliest} und {latest} und heiz ein.",
+	"cold_notice_short": [
+		{
+			"declarations": [
+				"input minutes",
+				"input time",
+				"local minutesPlural = minutes: plural"
+			],
+			"selectors": [
+				"minutesPlural"
+			],
+			"match": {
+				"minutesPlural=one": "Nur {minutes} Minute zum Einheizen: komm um {time}. Die Sauna wärmt dann noch auf.",
+				"minutesPlural=*": "Nur {minutes} Minuten zum Einheizen: komm um {time}. Die Sauna wärmt dann noch auf."
+			}
+		}
+	],
+	"cold_notice_past": "Komm so bald wie möglich und heiz ein. Zum Start ist die Sauna noch nicht ganz heiss.",
 	"duration_only": "Nur {minutes} Min.",
 	"duration_up_to": "Bis {minutes} Min.",
 	"taken_until": "bis {time}",
