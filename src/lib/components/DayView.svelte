@@ -8,23 +8,34 @@
 -->
 <script lang="ts">
 	import { tick } from 'svelte';
-	import { afterNavigate } from '$app/navigation';
-	import { navigating } from '$app/state';
+	import { afterNavigate, goto } from '$app/navigation';
+	import { navigating, page } from '$app/state';
 	import DateStrip from './DateStrip.svelte';
 	import Icon from './Icon.svelte';
+	import InlineMessage from './InlineMessage.svelte';
 	import PageTitle from './PageTitle.svelte';
 	import StartTimeRow from './StartTimeRow.svelte';
-	import { isDayPath, pendingDay, shouldAnnounce } from '#lib/day-nav.ts';
+	import { isDayPath, pendingDay, shouldAnnounce, withoutDayError } from '#lib/day-nav.ts';
 	import type { DayView } from '#lib/server/day-view.ts';
 
 	let { view }: { view: DayView } = $props();
 
 	const SLOW_MS = 1000;
 
+	// Once a refusal message is shown, drop `?error=&time=` from the address (shallow, replacing the
+	// entry), so a reload, a bookmark or the language switch does not show it again. After the
+	// navigation has finished, so the message keeps its focus and the title its "Fehler: ".
+	afterNavigate(() => {
+		const clean = withoutDayError(new URL((page.shallow?.url ?? page.url).href));
+		// eslint-disable-next-line svelte/no-navigation-without-resolve -- the current page, less its query
+		if (clean) void goto(clean, { shallow: true, replace: true, state: {} });
+	});
+
 	// While a day loads, the list is busy; the strip selects the target at once if it is a
 	// selectable cell, otherwise the current selection stays.
 	const target = $derived(navigating.to?.url.pathname);
-	const busy = $derived(isDayPath(target));
+	// A shallow URL update (dropping `?error=`) loads nothing: the list stays as it is.
+	const busy = $derived(isDayPath(target) && !(navigating.to && 'shallow' in navigating && navigating.shallow));
 	const selected = $derived(pendingDay(target, view) ?? view.date);
 
 	// Empty on first render, so nothing is announced on page load. `navId` lets only the latest
@@ -65,6 +76,13 @@
 </script>
 
 <PageTitle title={view.title} />
+
+{#if view.error}
+	<!-- A refused booking (FR-6): first in main, focused on load, the title prefixed "Fehler: ". -->
+	<div class="error">
+		{#key view.error.text}<InlineMessage text={view.error.text} focus />{/key}
+	</div>
+{/if}
 
 {#if view.note}
 	<p class="note">{view.note}</p>
@@ -133,6 +151,9 @@
 </div>
 
 <style>
+	.error {
+		margin-bottom: var(--space-5);
+	}
 	.note {
 		margin-bottom: var(--space-5);
 		font-size: var(--type-notice-size);

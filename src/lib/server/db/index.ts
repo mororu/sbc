@@ -10,7 +10,8 @@ import * as schema from './schema.ts';
 /** How long a writer waits for the lock before SQLITE_BUSY (AD-18). */
 export const BUSY_TIMEOUT_MS = 5000;
 
-export type Db = BetterSQLite3Database<typeof schema>;
+/** The drizzle database, with the raw connection for BEGIN IMMEDIATE transactions (AD-3). */
+export type Db = BetterSQLite3Database<typeof schema> & { $client: Database.Database };
 
 /** Opens a SQLite file in WAL mode with a busy timeout and foreign keys on. */
 export function openDatabase(path: string): Database.Database {

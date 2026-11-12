@@ -47,6 +47,8 @@ export type FreeRow = {
 	kind: 'free';
 	/** "18:15" */
 	time: string;
+	/** The booking form: `/book/{date}/{hhmm}`. */
+	href: ResolvedPathname;
 	/** The start instant, for `<time datetime>`. */
 	datetime: Instant;
 	durations: Duration[];
@@ -55,7 +57,7 @@ export type FreeRow = {
 	label: string;
 	/** "Bis 90 Min. · Ofen läuft. Komm um 18:15." or null when there is nothing to say. */
 	notice: string | null;
-	/** "18:15, schon heiss. Ofen läuft. Komm um 18:15." */
+	/** "18:15, schon heiss. Ofen läuft. Komm um 18:15. Buchen." */
 	srText: string;
 };
 
@@ -93,10 +95,12 @@ export type DayView = {
 	date: LocalDate;
 	/** The day `/` shows: today, or the first selectable day. Lets the client select it while `/` loads. */
 	home: LocalDate;
-	/** `<title>` without the suffix: "Di, 12. Januar". */
+	/** `<title>` without the suffix: "Di, 12. Januar", or "Fehler: Di, 12. Januar" with an error. */
 	title: string;
 	/** `h1`: eyebrow "Heute" or "Dienstag", then "12. Januar". */
 	heading: { eyebrow: string; date: string };
+	/** A refused booking (`?error=conflict|past&time=hhmm`): shown first in `main`, focused on load. */
+	error: { text: string } | null;
 	/** "Die Saison beginnt am 9. Januar. Hier sind die ersten Tage." when today is in no season. */
 	note: string | null;
 	rows: DayRow[];
@@ -136,6 +140,40 @@ function dayHref(date: LocalDate): ResolvedPathname {
 	return `/day/${date}` as ResolvedPathname;
 }
 
+/** `/book/{date}/{hhmm}` for a start instant. */
+export function bookHref(date: LocalDate, start: Instant): ResolvedPathname {
+	return `/book/${date}/${formatTime(start).replace(':', '')}` as ResolvedPathname;
+}
+
+/** A URL time `hhmm` ("1800") as its clock text and minute of the day, or null. */
+export function parseHhmm(hhmm: string | null): { clock: string; minute: number } | null {
+	const match = /^([01]\d|2[0-3])([0-5]\d)$/.exec(hhmm ?? '');
+	if (!match) return null;
+	return { clock: `${match[1]}:${match[2]}`, minute: Number(match[1]) * 60 + Number(match[2]) };
+}
+
+/** True for a valid refusal query: `?error=conflict|past&time=hhmm`. */
+function isDayErrorQuery(error: string | null, time: string | null): error is DayError {
+	return parseHhmm(time) !== null && (DAY_ERRORS as readonly (string | null)[]).includes(error);
+}
+
+/** The refusals the book form sends back to the day (FR-6). */
+export const DAY_ERRORS = ['conflict', 'past'] as const;
+export type DayError = (typeof DAY_ERRORS)[number];
+
+/** The day's error message for `?error=…&time=hhmm`, or null for anything else. No guest data. */
+export function dayError(error: string | null, time: string | null, locale: Locale): { text: string } | null {
+	const parsed = parseHhmm(time);
+	if (!parsed || !isDayErrorQuery(error, time)) return null;
+	const clock = parsed.clock;
+	return {
+		text:
+			error === 'conflict'
+				? m.error_conflict({ time: clock }, { locale })
+				: m.error_past({ time: clock }, { locale })
+	};
+}
+
 /** "Nur 60 Min." for one duration, "Bis 90 Min." for a shorter prefix, null for all of them. */
 function durationLimit(durations: Duration[], locale: Locale): string | null {
 	if (durations.length === 1) return m.duration_only({ minutes: durations[0] }, { locale });
@@ -156,7 +194,7 @@ function sentence(text: string | null): string | null {
  * notice, the start and `now`; they are never part of the notice itself. Neither is an error:
  * the time stays bookable.
  */
-function coldNoticeText(notice: Notice, start: Instant, now: Instant, locale: Locale): string {
+export function coldNoticeText(notice: Notice, start: Instant, now: Instant, locale: Locale): string {
 	const earliest = notice.earliest;
 	if (earliest === null) throw new Error('A cold notice without an earliest arrival');
 	const lastArrival = notice.latest ?? earliest;
@@ -166,6 +204,17 @@ function coldNoticeText(notice: Notice, start: Instant, now: Instant, locale: Lo
 		return m.cold_notice_short({ minutes, time: formatTime(earliest) }, { locale });
 	}
 	return m.cold_notice({ earliest: formatTime(earliest), latest: formatTime(notice.latest) }, { locale });
+}
+
+/** The heat notice of a free start time, as the row and the booking form show it. */
+export function offerNoticeText(
+	offer: { start: Instant; heat: HeatState; notice: Notice },
+	now: Instant,
+	locale: Locale
+): string {
+	return offer.heat === 'hot'
+		? m.hot_notice({ time: formatTime(offer.start) }, { locale })
+		: coldNoticeText(offer.notice, offer.start, now, locale);
 }
 
 /** Pure: builds the day's view model. `bookings` and `blocks` cover the day before to the day after. */
@@ -181,6 +230,8 @@ export function buildDayView(input: {
 	seasonStartsOn?: LocalDate;
 	/** The day `/` shows. Defaults to `date`. */
 	home?: LocalDate;
+	/** A refused booking's message, from `dayError`. */
+	error?: { text: string } | null;
 }): DayView {
 	const { date, now, locale, settings, seasons, blocks } = input;
 	const home = input.home ?? date;
@@ -189,30 +240,34 @@ export function buildDayView(input: {
 	const free: FreeRow[] = offeredStartTimes({ date, bookings, blocks, settings, seasons, now }).map(
 		(offer) => {
 			const time = formatTime(offer.start);
+			const href = bookHref(date, offer.start);
+			const book = m.row_sr_book({}, { locale });
 			const limit = durationLimit(offer.durations, locale);
 			if (offer.heat === 'hot') {
-				const heatNotice = m.hot_notice({ time }, { locale });
+				const heatNotice = offerNoticeText(offer, now, locale);
 				return {
 					kind: 'free',
 					time,
+					href,
 					datetime: offer.start,
 					durations: offer.durations,
 					heat: 'hot',
 					label: m.heat_hot_label({}, { locale }),
 					notice: limit ? `${limit} · ${heatNotice}` : heatNotice,
-					srText: [m.row_sr_hot({ time }, { locale }), sentence(limit), heatNotice].filter(Boolean).join(' ')
+					srText: [m.row_sr_hot({ time }, { locale }), sentence(limit), heatNotice, book].filter(Boolean).join(' ')
 				};
 			}
-			const coldNotice = coldNoticeText(offer.notice, offer.start, now, locale);
+			const coldNotice = offerNoticeText(offer, now, locale);
 			return {
 				kind: 'free',
 				time,
+				href,
 				datetime: offer.start,
 				durations: offer.durations,
 				heat: 'cold',
 				label: m.heat_cold_label({}, { locale }),
 				notice: limit ? `${limit} · ${coldNotice}` : coldNotice,
-				srText: [m.row_sr_cold({ time }, { locale }), sentence(limit), coldNotice].filter(Boolean).join(' ')
+				srText: [m.row_sr_cold({ time }, { locale }), sentence(limit), coldNotice, book].filter(Boolean).join(' ')
 			};
 		}
 	);
@@ -292,11 +347,15 @@ export function buildDayView(input: {
 			: { kind: 'taken', text: m.empty_taken({}, { locale }) };
 	}
 
+	const error = input.error ?? null;
 	return {
 		kind: 'day',
 		date,
 		home,
-		title: formatDateTitle(date, locale),
+		title: error
+			? m.title_error({ title: formatDateTitle(date, locale) }, { locale })
+			: formatDateTitle(date, locale),
+		error,
 		heading: {
 			eyebrow: date === today(now) ? m.day_today({}, { locale }) : formatWeekday(date, locale),
 			date: formatDayMonth(date, locale)
@@ -353,7 +412,13 @@ export function buildSeasonView(
 export function loadDayView(
 	date: string | null,
 	locale: Locale,
-	options: { now?: Instant; db?: Parameters<typeof getSettings>[0] } = {}
+	options: {
+		now?: Instant;
+		db?: Parameters<typeof getSettings>[0];
+		/** `?error=` and `?time=` of `/day/{date}`. */
+		error?: string | null;
+		time?: string | null;
+	} = {}
 ): DayPage {
 	const { db } = options;
 	const now = options.now ?? clockNow();
@@ -372,7 +437,12 @@ export function loadDayView(
 	} else {
 		if (!isBookableDay(date, seasons, settings, now)) {
 			const nearest = nearestSelectableDay(date, { seasons, settings, now });
-			return { kind: 'redirect', to: nearest ? `/day/${nearest}` : '/' };
+			if (!nearest) return { kind: 'redirect', to: '/' };
+			// A refusal travels along, so the guest still learns why they are here.
+			const error = options.error ?? null;
+			const time = options.time ?? null;
+			const query = isDayErrorQuery(error, time) ? `?error=${error}&time=${time}` : '';
+			return { kind: 'redirect', to: `/day/${nearest}${query}` };
 		}
 		day = date;
 	}
@@ -387,6 +457,7 @@ export function loadDayView(
 		bookings,
 		blocks,
 		seasonStartsOn: state.kind === 'open' ? state.seasonStartsOn : undefined,
-		home
+		home,
+		error: date === null ? null : dayError(options.error ?? null, options.time ?? null, locale)
 	});
 }

@@ -15,6 +15,13 @@
       "when": 1794429329602,
       "tag": "0001_core_tables",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1794467946905,
+      "tag": "0002_booking_contact",
+      "breakpoints": true
     }
   ]
 }

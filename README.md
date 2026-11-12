@@ -21,7 +21,7 @@ npm run dev
 | `npm run dev` | Dev server; applies migrations to `DATABASE_PATH` on boot |
 | `npm run build` | Production build (adapter-node) into `build/`; fails if `src/lib/time` reaches a client chunk |
 | `npm start` | Runs the production build (`node build`); needs the production env |
-| `npm test` | Vitest, once (env parsing, db and queries, time and core, day view, layer rules, build guard) |
+| `npm test` | Vitest, once (env parsing, db and queries, time and core, schemas, commands, day and book views, routes, layer rules, build guard) |
 | `npm run check` | Generates Paraglide types, then svelte-check |
 | `npm run lint` | ESLint, including the layer boundary rules |
 | `npm run i18n:types` | Compiles `messages/` into `src/lib/paraglide` (also run by `check` and `lint`) |
@@ -91,14 +91,14 @@ npm run db:fixtures              # first day of the seeded season
 npm run db:fixtures -- 2027-01-12
 ```
 
-This inserts three bookings and a cleaning block into the dev database, using the current changeover. It refuses to run with `NODE_ENV=production`, for a date outside every season, and for a day that already has bookings or blocks. Start the app once first, so the database exists.
+This inserts three bookings and a cleaning block into the dev database, using the current changeover. The bookings get party size 2, locale `de`, placeholder contact data ("Testgast 1", `testgast1@example.ch`, `+41790000001`, …; the mobile is zero-padded, so it stays valid) and a random public id and submit token like the app makes. It refuses to run with `NODE_ENV=production`, for a date outside every season, and for a day that already has bookings or blocks. Start the app once first, so the database exists.
 
 ## Calendar day view
 
 - `/` shows today, or the first selectable day when today is not selectable (with the note "Die Saison beginnt am … Hier sind die ersten Tage." when today is in no season), or the season notice before and after the season. `/day/{yyyy-mm-dd}` shows a selectable day; any other date (past, beyond the horizon, outside a season, impossible, malformed) redirects with 302 to the nearest selectable day, or to `/` when there is none. Never an error page.
 - `src/lib/domain/calendar.ts` derives the season state (`calendarState`) and the redirect target (`nearestSelectableDay`). `src/lib/server/day-view.ts` builds the view model (`buildDayView`, pure) and loads it (`loadDayView`, with the guest queries in `src/lib/server/db/queries/calendar.ts` and the clock). The page data holds only that view model: pre-formatted times and strings, durations, heat state and taken start/end. No row ids, `created_at`, names or block reasons; the guest queries never select a block's `reason`.
 - Taken rows: one per live booking or block that overlaps the day's operating hours, clipped to them. Bookings and blocks look the same.
-- Free rows are not links yet; Story 1.7 adds the booking form.
+- Each free row is one link to its booking form, `/book/{date}/{hhmm}`, with a chevron; its accessible name ends in "Buchen." Taken rows are not interactive.
 
 ### Arrival time and the notice (Story 1.6, AD-24)
 
@@ -166,6 +166,68 @@ DEV_NOW=2027-05-01T09:00:00Z npm run dev   # after the season
 | `season_before_heading` / `season_after_heading` (season notice `h1`: the first sentence of the EXPERIENCE.md copy) | Die Saison beginnt am {date}. / Die Saison ist vorbei. | Season opens {date}. / The season is over. |
 
 The EN day title follows the DE pattern: "Tue, 12 January". "Nur" is used for exactly one duration, "Bis" for fewer than five, and nothing for all five. Screen readers hear the limit and the notice as sentences: "18:15, schon heiss. Bis 90 Min. Ofen läuft. Komm um 18:15." (the visible notice joins them with " · ").
+
+## Booking (Story 1.7)
+
+### Flow
+
+1. A free row links to `/book/{yyyy-mm-dd}/{hhmm}`. The form (`src/lib/server/book-view.ts`, `BookForm.svelte`) shows the booking summary (back link, start time, state badge, the row's notice), duration (60–180, each option named "90 Minuten, bis 19:30"; unavailable ones are disabled radios with one note why), party size (1–6, preselected 2), name, email and mobile with their purpose lines, the privacy link, and "18:00 buchen" last. Duration preselection: `?d=` when offered, else 60 when offered, else the shortest offered (the only one on a time only of the third kind).
+2. A stale form (the time is taken or has begun when the form loads) redirects straight to the day with the matching message. A URL that names no real time (bad `hhmm`, a time skipped by the spring clock change) goes to the day, a bad date to `/`; the action does the same for a post to such a URL.
+3. The form posts to its own `default` action. `src/lib/schemas/booking.ts` (Valibot) validates it, the same schema the client runs. Invalid fields → `fail(400, { errors, values })`: error keys plus the typed values, a summary at the top ("2 Angaben fehlen oder stimmen nicht."), focus on the first invalid field (`autofocus` without JavaScript).
+4. `createBooking` (`src/lib/server/commands/create-booking.ts`) runs in one `BEGIN IMMEDIATE` transaction on the raw connection (`db.$client.transaction(…).immediate()`). Inside it, it looks up the submit token first (a resubmit returns the existing public id), then refuses `past` when the start has begun, reads settings, seasons, bookings and blocks fresh, and accepts only a start and duration that `offeredStartTimes` offers (`conflict` otherwise). It records the current changeover, `created_at`, `season_id`, party size, the locale at submit, the normalised contact data, a fresh public id and the submit token. Malformed input → `invalid`. It never throws for these outcomes. A token whose booking an admin has since deleted gets `conflict`, never the deleted booking's id. A lock-wait timeout (`SQLITE_BUSY` after the busy timeout) is the one error the action catches: it answers `fail(503)` so the form shows "Das hat nicht geklappt …" with the input kept; any other error stays a 500.
+5. Success → 303 to `/booked/{publicId}`: the minimal confirmation (date, "Gebucht!", start, duration, party size, "Weitere Zeit buchen"). Its load selects only start, duration and party size. An unknown or malformed id is a 404 in the guest layout (`src/routes/(guest)/+error.svelte`), revealing nothing. The notice badge, the keybox sentence and the details list follow in Story 1.8.
+6. `conflict` and `past` → 303 to `/day/{date}?error=conflict|past&time=hhmm`. The day rebuilds fresh with the message first in `main` (`role="alert"`, focused on load via `autofocus`, which SvelteKit also honours after a client navigation) and `<title>` prefixed "Fehler: ". This is the same with and without JavaScript; with `use:enhance` the redirect is followed the same way. If the day is no longer selectable, its redirect to the nearest day carries `error` and `time` along. With JavaScript, once the message is shown, `error` and `time` are dropped from the address (shallow replace), so a reload, bookmark or language switch does not show it again.
+
+### Ids, guest data and privacy
+
+- Public ids and submit tokens are `crypto.randomBytes(16)` as base64url (22 characters, `src/lib/server/ids.ts`), unique in the database. The schema and the command share one pattern for them (`RANDOM_ID`). Every form load makes a fresh token. Row ids never reach a guest page.
+- Name, email and mobile never go into a URL, cookie, redirect or log. The only query parameters in the flow are `d`, `p`, `error` and `time`. The form and the confirmation are sent with `cache-control: private, no-store`; the confirmation and the error page carry `noindex`.
+- With JavaScript, name, email and mobile (only those) are kept in `sessionStorage` under `sauna-booking.contact`, written on input and on submit and read to prefill empty fields, so a conflict, a language switch or a second booking does not re-ask. Nothing else is stored.
+
+### Validation (AD-16)
+
+- Name: trimmed, 1–100 characters, no control characters (U+0000–U+001F, U+007F). Email: trimmed, checked as an email, at most 254 characters. The inputs carry matching `maxlength` (100, 254, and 32 for the mobile). Mobile: at most 32 characters as typed; separators (spaces, hyphens, dots, slashes) are dropped, then `079 123 45 67`, `+41 79 …`, `0041 79 …` and `+41 079 …` become `+41791234567`; another `+`/`00` international number is accepted as 8–15 digits and stored as `+…`. Duration, party size and the token outside their allowed values are `form_invalid` (crafted input).
+- Errors are message keys (`field_required`, `name_too_long`, `email_invalid`, `mobile_invalid`, `form_invalid`). The server result is authoritative.
+- On the client, a field with content is checked on blur; an error clears as soon as the field is right again. Field errors are not announced live; they are tied to the input with `aria-describedby` and `aria-invalid`. Pressing the button skips the blur check, so an error line appearing under the last field cannot move the button away and swallow the tap; the submit checks everything anyway.
+
+### Submitting with JavaScript
+
+- One tap submits. While sending, the button reads "Wird gebucht …" with `aria-disabled="true"` and keeps focus, further taps are ignored, and a polite status says the same. After 15 s it says "Das dauert gerade länger. Bitte warte noch, wir buchen nicht doppelt."
+- A repeated failure shows its message again, refocused and announced anew.
+- A network or server failure shows "Das hat nicht geklappt, die Buchung ist nicht gespeichert. Versuch es bitte nochmal." at the top of the form, focused, with "Fehler: " in the title. The submit token stays, so a retry after a lost response returns the booking that did go through instead of booking twice.
+- Changing duration or party size mirrors them into `?d=&p=` with a shallow `goto(…, { shallow: true, replace: true })` (SvelteKit 3's replacement for the deprecated `replaceState`). In SvelteKit 3 a shallow update leaves `page.url` alone and sets `page.shallow.url`, so the language switch reads `page.shallow?.url ?? page.url` and keeps them.
+
+### Schema
+
+Migration `0002_booking_contact.sql` adds `party_size` (1–6), `locale` (`de`/`en`), nullable `name`, `email` and `mobile`, and unique `public_id` and `submit_token` to `booking`. drizzle-kit rebuilds the table; the copy statement was edited by hand so rows from before the migration (development data only) get party size 1, locale `de`, no contact data and random 128-bit hex ids. Keep that edit if the migration is ever regenerated.
+
+### Drafted copy for operator review (Story 1.7)
+
+| Key | DE | EN |
+| --- | --- | --- |
+| `row_sr_book` (end of a free row's accessible name) | Buchen. | Book. |
+| `title_error` (`<title>` prefix) | Fehler: {title} | Error: {title} |
+| `book_title` (EN of "18:00 buchen": title and button) | – | Book {time} |
+| `book_back_name` (back link name) | Zurück zu {date} | Back to {date} |
+| `duration_end_note` (EN of "Minuten · bis 19:30") | – | minutes · until {time} |
+| `duration_option` (EN of "90 Minuten, bis 19:30") | – | {minutes} minutes, until {time} |
+| `duration_unavailable_booking` (EN of the UX note) | – | {range} min not possible: next booking at {time}. |
+| `duration_unavailable_block` (a block, never named) | {range} Min. nicht möglich: ab {time} belegt. | {range} min not possible: taken from {time}. |
+| `duration_unavailable_hours` | {range} Min. nicht möglich: Betrieb bis {time}. | {range} min not possible: open until {time}. |
+| `duration_unavailable` (fallback when no specific reason is found) | {range} Min. nicht möglich. | {range} min not possible. |
+| `duration_only_possible` (time only of the third kind) | Nur {durations} Min. möglich: nächste Buchung um {time}. | {durations} min only: next booking at {time}. |
+| `field_required` (empty name or email; the UX settings string) | Bitte ausfüllen. | Please fill this in. |
+| `name_too_long` | Bitte höchstens 100 Zeichen. | Please use at most 100 characters. |
+| `name_invalid` (a control character such as a tab in the name) | Im Namen steckt ein unsichtbares Zeichen, z. B. ein Tabulator. Bitte entfern es. | There's an invisible character in the name, such as a tab. Please remove it. |
+| `error_summary` singular | 1 Angabe fehlt oder stimmt nicht. | 1 detail is missing or wrong. |
+| `submit_busy` (EN of "Wird gebucht …") | – | Booking … |
+| `booked_title` (`<title>`) | Gebucht | Booked |
+| `booked_minutes` / `booked_people` (confirmation line) | {minutes} Min. / 1 Person, {count} Personen | {minutes} min / 1 person, {count} people |
+| `not_found_title` / `not_found_heading` (guest 404) | Nicht gefunden / Diese Seite gibt es nicht. | Not found / This page doesn't exist. |
+| `error_page_title` / `error_page_heading` (other errors) | Fehler / Das hat nicht geklappt. | Error / That didn't work. |
+| `error_page_home` (link on the error page) | Zum Kalender | To the calendar |
+
+The empty mobile field gets the UX mobile message ("Bitte gib eine Handynummer an …"), which reads as a request. A crafted or stale field (`form_invalid`) and a command `invalid` show the UX network-failure message, since nothing was booked.
 
 ## Scaffold decisions
 

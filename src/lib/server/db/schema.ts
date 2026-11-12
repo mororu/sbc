@@ -1,7 +1,7 @@
 // Drizzle schema. Importable only by src/lib/server/commands and src/lib/server/db/queries (AD-2).
 // Instants are UTC ISO 8601 text with seconds and `Z`; dates are `yyyy-mm-dd`; durations whole minutes.
 import { sql } from 'drizzle-orm';
-import { check, index, integer, sqliteTable, text, type AnySQLiteColumn } from 'drizzle-orm/sqlite-core';
+import { check, index, integer, sqliteTable, text, uniqueIndex, type AnySQLiteColumn } from 'drizzle-orm/sqlite-core';
 
 /** Instants are canonical ISO text, e.g. 2027-01-12T17:00:00Z, so text comparison orders them. */
 const INSTANT_GLOB = '[0-9][0-9][0-9][0-9]-[01][0-9]-[0-3][0-9]T[0-2][0-9]:[0-5][0-9]:[0-5][0-9]Z';
@@ -45,7 +45,9 @@ export const setting = sqliteTable(
 	]
 );
 
-/** A booking. Contact, party size, locale and public id columns arrive with Story 1.7. */
+export const LOCALES = ['de', 'en'] as const;
+
+/** A booking. Row ids are admin-only; guests only ever see `public_id`. */
 export const booking = sqliteTable(
 	'booking',
 	{
@@ -59,12 +61,28 @@ export const booking = sqliteTable(
 			.notNull()
 			.references(() => season.id),
 		/** Soft delete (AD-20). */
-		deletedAt: text()
+		deletedAt: text(),
+		partySize: integer().notNull(),
+		/** The language active at submit; every guest email goes out in it (FR-27). */
+		locale: text({ enum: LOCALES }).notNull(),
+		/** Contact data, normalised. Nullable so it can be erased after the retention period. */
+		name: text(),
+		email: text(),
+		/** E.164, e.g. +41791234567. */
+		mobile: text(),
+		/** The confirmation URL's id: random, URL-safe, 128 bits (AD-13). */
+		publicId: text().notNull(),
+		/** The form's one-time token: a resubmit returns the same booking (idempotent submit). */
+		submitToken: text().notNull()
 	},
 	(t) => [
 		index('booking_start_at').on(t.startAt),
+		uniqueIndex('booking_public_id').on(t.publicId),
+		uniqueIndex('booking_submit_token').on(t.submitToken),
 		check('booking_duration', sql`${t.durationMin} IN (60, 90, 120, 150, 180)`),
 		check('booking_changeover', sql`${t.changeoverMin} BETWEEN 0 AND 60`),
+		check('booking_party_size', sql`${t.partySize} BETWEEN 1 AND 6`),
+		check('booking_locale', sql`${t.locale} IN ('de', 'en')`),
 		check(
 			'booking_instants',
 			sql`${isInstant(t.startAt)} AND ${isInstant(t.createdAt)} AND (${t.deletedAt} IS NULL OR ${isInstant(t.deletedAt)})`

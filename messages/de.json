@@ -69,5 +69,75 @@
 	"info_title": "So funktioniert's",
 	"privacy_title": "Datenschutz",
 	"imprint_title": "Impressum",
-	"stub_body": "Dieser Text folgt bald."
+	"stub_body": "Dieser Text folgt bald.",
+	"row_sr_book": "Buchen.",
+	"title_error": "Fehler: {title}",
+	"error_conflict": "{time} ist gerade weggegangen. So sieht der Tag jetzt aus. Deine Angaben sind noch da.",
+	"error_past": "{time} hat schon angefangen. Wähl bitte eine andere Zeit.",
+	"book_title": "{time} buchen",
+	"book_back_name": "Zurück zu {date}",
+	"section_duration": "Dauer",
+	"section_people": "Personen",
+	"section_contact": "Kontakt",
+	"duration_option": "{minutes} Minuten, bis {time}",
+	"duration_end_note": "Minuten · bis {time}",
+	"duration_unavailable_booking": "{range} Min. nicht möglich: nächste Buchung um {time}.",
+	"duration_unavailable_block": "{range} Min. nicht möglich: ab {time} belegt.",
+	"duration_unavailable_hours": "{range} Min. nicht möglich: Betrieb bis {time}.",
+	"duration_only_possible": "Nur {durations} Min. möglich: nächste Buchung um {time}.",
+	"field_name": "Name",
+	"field_name_purpose": "Damit wir die Buchung an der Sauna zuordnen können.",
+	"field_email": "E-Mail",
+	"field_email_purpose": "Für die Bestätigung und den Schlüsselcode.",
+	"field_mobile": "Handy",
+	"field_mobile_purpose": "Nur falls wir dich kurzfristig anrufen müssen.",
+	"privacy_more": "Mehr dazu im Datenschutz.",
+	"field_required": "Bitte ausfüllen.",
+	"name_too_long": "Bitte höchstens 100 Zeichen.",
+	"email_invalid": "Diese E-Mail-Adresse stimmt so nicht. Bitte prüf sie, z. B. name@beispiel.ch.",
+	"mobile_invalid": "Bitte gib eine Handynummer an, unter der wir dich erreichen, z. B. 079 123 45 67.",
+	"submit_failed": "Das hat nicht geklappt, die Buchung ist nicht gespeichert. Versuch es bitte nochmal.",
+	"error_summary": [
+		{
+			"declarations": [
+				"input count",
+				"local countPlural = count: plural"
+			],
+			"selectors": [
+				"countPlural"
+			],
+			"match": {
+				"countPlural=one": "1 Angabe fehlt oder stimmt nicht.",
+				"countPlural=*": "{count} Angaben fehlen oder stimmen nicht."
+			}
+		}
+	],
+	"submit_busy": "Wird gebucht …",
+	"submit_slow": "Das dauert gerade länger. Bitte warte noch, wir buchen nicht doppelt.",
+	"booked_title": "Gebucht",
+	"booked_heading": "Gebucht!",
+	"booked_minutes": "{minutes} Min.",
+	"booked_people": [
+		{
+			"declarations": [
+				"input count",
+				"local countPlural = count: plural"
+			],
+			"selectors": [
+				"countPlural"
+			],
+			"match": {
+				"countPlural=one": "{count} Person",
+				"countPlural=*": "{count} Personen"
+			}
+		}
+	],
+	"book_another": "Weitere Zeit buchen",
+	"not_found_title": "Nicht gefunden",
+	"not_found_heading": "Diese Seite gibt es nicht.",
+	"error_page_title": "Fehler",
+	"error_page_heading": "Das hat nicht geklappt.",
+	"error_page_home": "Zum Kalender",
+	"duration_unavailable": "{range} Min. nicht möglich.",
+	"name_invalid": "Im Namen steckt ein unsichtbares Zeichen, z. B. ein Tabulator. Bitte entfern es."
 }

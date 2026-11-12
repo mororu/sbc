@@ -20,7 +20,7 @@ afterEach(() => {
 const insertBooking = (start: string, duration: number, deletedAt: string | null = null) =>
 	sqlite
 		.prepare(
-			"insert into booking (start_at, duration_min, changeover_min, created_at, season_id, deleted_at) values (?, ?, 15, '2027-01-05T08:00:00Z', 1, ?)"
+			"insert into booking (start_at, duration_min, changeover_min, created_at, season_id, deleted_at, party_size, locale, public_id, submit_token) values (?, ?, 15, '2027-01-05T08:00:00Z', 1, ?, 2, 'de', lower(hex(randomblob(16))), lower(hex(randomblob(16))))"
 		)
 		.run(start, duration, deletedAt);
 const insertBlock = (start: string, end: string) =>

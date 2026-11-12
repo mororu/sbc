@@ -15,3 +15,9 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-1-3-time-module-and-start-time-core.md`
   summary: Story 1.4's "no client chunk references Temporal" build check must look for real use of src/lib/time, not the bare word.
   evidence: The SvelteKit runtime's devalue already contains `Temporal.Instant` etc. in a client chunk (seen in Story 1.3's build), so a plain text search would always fail.
+- source_spec: `_bmad-output/implementation-artifacts/spec-1-7-guest-books-a-start-time.md`
+  summary: Protect the public booking action against scripted mass bookings (rate limit per client address, honeypot or similar), without a captcha.
+  evidence: Story 1.7 review; the POST action has no volume limit, so a script could book every slot with made-up contact data. Fits the security work in Epic 5 or a small follow-up story; UX bans captchas.
+- source_spec: `_bmad-output/implementation-artifacts/spec-1-7-guest-books-a-start-time.md`
+  summary: Decide whether the back link keeps the UX name "Zurück zu Dienstag, 12. Januar" while it visibly reads "‹ Di, 12. Januar" (WCAG 2.5.3 label in name).
+  evidence: Story 1.7 review; same kind of conflict as the language links (Story 1.2 deferred item). A UX decision, not a code fix.

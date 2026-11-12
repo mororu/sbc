@@ -7,13 +7,15 @@
 
 	const names: Record<string, string> = { de: 'Deutsch', en: 'English' };
 	const current = $derived(getLocale());
+	// After a shallow URL update (the booking form's `?d=&p=`), carry that URL's query.
+	const url = $derived(page.shallow?.url ?? page.url);
 </script>
 
 <div class="switch">
 	{#each locales as locale, i (locale)}
 		{#if i > 0}<span class="divider" aria-hidden="true">|</span>{/if}
 		<a
-			href={resolve(`/lang/[locale]${returnQuery(page.url.pathname, page.url.search)}`, { locale })}
+			href={resolve(`/lang/[locale]${returnQuery(url.pathname, url.search)}`, { locale })}
 			hreflang={htmlLang(locale)}
 			lang={htmlLang(locale)}
 			rel="nofollow"
