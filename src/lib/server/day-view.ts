@@ -9,6 +9,7 @@ import {
 	isBookableDay,
 	nearestSelectableDay,
 	offeredStartTimes,
+	selectableDays,
 	type Block,
 	type Booking,
 	type CalendarState,
@@ -17,15 +18,21 @@ import {
 	type Season,
 	type Settings
 } from '#lib/domain/index.ts';
+import type { ResolvedPathname } from '$app/types';
 import { m } from '#lib/paraglide/messages.js';
 import { getDayItems, getSeasons, getSettings } from '#lib/server/db/queries/index.ts';
 import {
 	addDays,
+	compareDates,
 	compareInstants,
+	formatDateLong,
 	formatDateTitle,
 	formatDayMonth,
+	formatDayNumber,
 	formatTime,
 	formatWeekday,
+	formatWeekdayShort,
+	lastBookableDay,
 	toInstant,
 	today,
 	type Instant,
@@ -67,9 +74,23 @@ export type TakenRow = {
 
 export type DayRow = FreeRow | TakenRow;
 
+export type StripDay = {
+	date: LocalDate;
+	/** `/day/{date}`, or null for a day outside every season (shown struck through). */
+	href: ResolvedPathname | null;
+	/** "Mi" / "Wed" */
+	weekday: string;
+	/** "13" */
+	day: string;
+	/** The accessible name: "Mittwoch, 13. Januar", or "Mittwoch, 13. Januar, nicht buchbar". */
+	name: string;
+};
+
 export type DayView = {
 	kind: 'day';
 	date: LocalDate;
+	/** The day `/` shows: today, or the first selectable day. Lets the client select it while `/` loads. */
+	home: LocalDate;
 	/** `<title>` without the suffix: "Di, 12. Januar". */
 	title: string;
 	/** `h1`: eyebrow "Heute" or "Dienstag", then "12. Januar". */
@@ -77,6 +98,19 @@ export type DayView = {
 	/** "Die Saison beginnt am 9. Januar. Hier sind die ersten Tage." when today is in no season. */
 	note: string | null;
 	rows: DayRow[];
+	/** Every day from today to the end of the horizon. */
+	strip: StripDay[];
+	/** The neighbouring selectable days, or null at the ends. */
+	prev: ResolvedPathname | null;
+	next: ResolvedPathname | null;
+	/** `/`, or null when this view already shows the home day. */
+	today: ResolvedPathname | null;
+	/** Why there is no free start time: all of today's are over, or the day is fully taken. */
+	empty: { kind: 'taken' | 'past'; text: string } | null;
+	/** Announced after a day switch: "Mittwoch, 13. Januar: 4 freie Zeiten", or the empty line. */
+	status: string;
+	/** Fixed copy for the day navigation. */
+	labels: { strip: string; prev: string; next: string; today: string; loading: string };
 };
 
 export type SeasonView = {
@@ -89,6 +123,16 @@ export type SeasonView = {
 };
 
 export type DayPage = DayView | SeasonView | { kind: 'redirect'; to: string };
+
+// Links in the view model are root-relative. `resolve()` from `$app/paths` would return paths
+// relative to the request URL during SSR, and a load fetched as `/day/x/__data.json` would get
+// `../../day/…`. The app has no base path, so the root-relative path is the resolved pathname.
+const HOME_HREF = '/' as ResolvedPathname;
+
+/** The link to a day: `/day/{date}`. */
+function dayHref(date: LocalDate): ResolvedPathname {
+	return `/day/${date}` as ResolvedPathname;
+}
 
 /** "Nur 60 Min." for one duration, "Bis 90 Min." for a shorter prefix, null for all of them. */
 function durationLimit(durations: Duration[], locale: Locale): string | null {
@@ -116,8 +160,11 @@ export function buildDayView(input: {
 	blocks: Block[];
 	/** Set when today is in no season (CalendarState `seasonStartsOn`). */
 	seasonStartsOn?: LocalDate;
+	/** The day `/` shows. Defaults to `date`. */
+	home?: LocalDate;
 }): DayView {
 	const { date, now, locale, settings, seasons, blocks } = input;
+	const home = input.home ?? date;
 	const bookings = input.bookings.filter((b) => !b.deletedAt);
 
 	const free: FreeRow[] = offeredStartTimes({ date, bookings, blocks, settings, seasons, now }).map(
@@ -196,9 +243,40 @@ export function buildDayView(input: {
 		(a, b) => compareInstants(a.datetime, b.datetime) || (a.kind === b.kind ? 0 : a.kind === 'taken' ? -1 : 1)
 	);
 
+	const days = selectableDays({ seasons, settings, now });
+	const selectable = new Set(days);
+	const strip: StripDay[] = [];
+	const lastDay = lastBookableDay(now, settings.horizonDays);
+	for (let day = today(now); compareDates(day, lastDay) <= 0; day = addDays(day, 1)) {
+		const long = formatDateLong(day, locale);
+		const bookable = selectable.has(day);
+		strip.push({
+			date: day,
+			href: bookable ? dayHref(day) : null,
+			weekday: formatWeekdayShort(day, locale),
+			day: formatDayNumber(day, locale),
+			name: bookable ? long : m.strip_day_unavailable({ date: long }, { locale })
+		});
+	}
+	const index = days.indexOf(date);
+	const prev = index > 0 ? dayHref(days[index - 1]) : null;
+	const next = index >= 0 && index < days.length - 1 ? dayHref(days[index + 1]) : null;
+
+	// No free start time left: on today, "past" if not even an empty day would offer one now.
+	let empty: DayView['empty'] = null;
+	if (free.length === 0) {
+		const past =
+			date === today(now) &&
+			offeredStartTimes({ date, bookings: [], blocks: [], settings, seasons, now }).length === 0;
+		empty = past
+			? { kind: 'past', text: m.empty_past({}, { locale }) }
+			: { kind: 'taken', text: m.empty_taken({}, { locale }) };
+	}
+
 	return {
 		kind: 'day',
 		date,
+		home,
 		title: formatDateTitle(date, locale),
 		heading: {
 			eyebrow: date === today(now) ? m.day_today({}, { locale }) : formatWeekday(date, locale),
@@ -207,7 +285,22 @@ export function buildDayView(input: {
 		note: input.seasonStartsOn
 			? m.season_soon_note({ date: formatDayMonth(input.seasonStartsOn, locale) }, { locale })
 			: null,
-		rows
+		rows,
+		strip,
+		prev,
+		next,
+		today: date === home ? null : HOME_HREF,
+		empty,
+		status: empty
+			? empty.text
+			: m.day_status({ date: formatDateLong(date, locale), count: free.length }, { locale }),
+		labels: {
+			strip: m.strip_name({}, { locale }),
+			prev: m.day_prev({}, { locale }),
+			next: m.day_next({}, { locale }),
+			today: m.today_link({}, { locale }),
+			loading: m.day_loading({}, { locale })
+		}
 	};
 }
 
@@ -249,11 +342,14 @@ export function loadDayView(
 	const seasons = getSeasons(db);
 	const state = calendarState({ seasons, settings, now });
 
+	if (state.kind !== 'open' && date === null) return buildSeasonView(state, locale);
+	const todayDate = today(now);
+	const home =
+		state.kind === 'open' && !isBookableDay(todayDate, seasons, settings, now) ? state.firstDay : todayDate;
+
 	let day: LocalDate;
 	if (date === null) {
-		if (state.kind !== 'open') return buildSeasonView(state, locale);
-		const todayDate = today(now);
-		day = isBookableDay(todayDate, seasons, settings, now) ? todayDate : state.firstDay;
+		day = home;
 	} else {
 		if (!isBookableDay(date, seasons, settings, now)) {
 			const nearest = nearestSelectableDay(date, { seasons, settings, now });
@@ -271,6 +367,7 @@ export function loadDayView(
 		seasons,
 		bookings,
 		blocks,
-		seasonStartsOn: state.kind === 'open' ? state.seasonStartsOn : undefined
+		seasonStartsOn: state.kind === 'open' ? state.seasonStartsOn : undefined,
+		home
 	});
 }

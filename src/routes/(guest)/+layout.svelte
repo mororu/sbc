@@ -3,12 +3,17 @@
 	import AppFooter from '#lib/components/AppFooter.svelte';
 	import AppHeader from '#lib/components/AppHeader.svelte';
 	import SkipLink from '#lib/components/SkipLink.svelte';
+	import { page } from '$app/state';
+	import { skipTarget } from '#lib/day-nav.ts';
 	import type { LayoutProps } from './$types';
 
 	let { children }: LayoutProps = $props();
+
+	// A day view puts the start-time list (#times) after the date strip; skip straight to it.
+	const target = $derived(skipTarget(page.data));
 </script>
 
-<SkipLink />
+<SkipLink {target} />
 <div class="column">
 	<AppHeader />
 	<main id="main" tabindex="-1">

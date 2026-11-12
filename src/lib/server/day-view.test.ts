@@ -224,8 +224,144 @@ describe('buildDayView', () => {
 
 	it('serialises to the view model only', () => {
 		const v = view({ bookings: [booking('17:00', 60)], blocks: [block('12:00', '13:00')] });
-		const json = JSON.stringify(v);
+		// A strip cell's `name` is its accessible name ("Mittwoch, 13. Januar"): pin the keys, then
+		// scan every value with that one key renamed.
+		for (const cell of v.strip) {
+			expect(Object.keys(cell).sort()).toEqual(['date', 'day', 'href', 'name', 'weekday']);
+		}
+		const strip = v.strip.map(({ name, ...cell }) => ({ ...cell, a11y: name }));
+		const json = JSON.stringify({ ...v, strip });
 		expect(json).not.toMatch(/"id"|createdAt|created_at|reason|changeover|name|email|phone/i);
+	});
+});
+
+// Story 1.5 matrix: today 12 January, 10:00 (NOW), horizon 14.
+describe('buildDayView: browsing days', () => {
+	const cellsOf = (v: DayView) => v.strip.map((c) => c.date);
+	const freeCount = (v: DayView) => v.rows.filter((r) => r.kind === 'free').length;
+
+	it('builds the strip from today to the end of the horizon', () => {
+		const v = view({ date: '2027-01-13' });
+		expect(v.strip).toHaveLength(15);
+		expect(v.strip[0].date).toBe('2027-01-12');
+		expect(v.strip[14].date).toBe('2027-01-26');
+		expect(v.strip[1]).toEqual({
+			date: '2027-01-13',
+			href: '/day/2027-01-13',
+			weekday: 'Mi',
+			day: '13',
+			name: 'Mittwoch, 13. Januar'
+		});
+		expect(view({ date: '2027-01-13', locale: 'en' }).strip[1]).toMatchObject({
+			weekday: 'Wed',
+			day: '13',
+			name: 'Wednesday, 13 January'
+		});
+	});
+
+	it.each([
+		['2027-01-12', null, '/day/2027-01-13'],
+		['2027-01-26', '/day/2027-01-25', null],
+		['2027-01-20', '/day/2027-01-19', '/day/2027-01-21']
+	])('links the arrows on %s', (date, prev, next) => {
+		expect(view({ date })).toMatchObject({ prev, next });
+	});
+
+	it('strikes through a gap between seasons and skips it with the arrows', () => {
+		const gap = [
+			{ startDate: '2027-01-09', endDate: '2027-01-15' },
+			{ startDate: '2027-01-20', endDate: '2027-04-30' }
+		];
+		const v = view({ date: '2027-01-15', seasons: gap });
+		const off = v.strip.filter((c) => c.href === null).map((c) => c.date);
+		expect(off).toEqual(['2027-01-16', '2027-01-17', '2027-01-18', '2027-01-19']);
+		expect(v.strip.find((c) => c.date === '2027-01-16')?.name).toBe('Samstag, 16. Januar, nicht buchbar');
+		const en = view({ date: '2027-01-15', seasons: gap, locale: 'en' });
+		expect(en.strip.find((c) => c.date === '2027-01-16')?.name).toBe('Saturday, 16 January, not bookable');
+		expect(v.next).toBe('/day/2027-01-20');
+		expect(view({ date: '2027-01-20', seasons: gap }).prev).toBe('/day/2027-01-15');
+	});
+
+	it('strikes through the days before the season while booking is open', () => {
+		const v = view({ date: '2027-01-09', now: '2026-12-28T09:00:00Z', home: '2027-01-09' });
+		expect(cellsOf(v)[0]).toBe('2026-12-28');
+		expect(cellsOf(v)[14]).toBe('2027-01-11');
+		expect(v.strip.filter((c) => c.href === null).map((c) => c.date)).toEqual(
+			cellsOf(v).filter((d) => d < '2027-01-09')
+		);
+		expect(v.strip.find((c) => c.date === '2027-01-09')?.href).toBe('/day/2027-01-09');
+		expect(v).toMatchObject({ prev: null, next: '/day/2027-01-10', today: null });
+	});
+
+	it('links "Heute" to / unless the view shows the home day', () => {
+		expect(view({ date: '2027-01-13', home: DAY }).today).toBe('/');
+		expect(view({ date: DAY, home: DAY }).today).toBeNull();
+		expect(view({ date: '2027-01-13', home: DAY }).labels).toEqual({
+			strip: 'Tag wählen',
+			prev: 'Vorheriger Tag',
+			next: 'Nächster Tag',
+			today: 'Heute',
+			loading: 'Lädt …'
+		});
+		expect(view({ locale: 'en' }).labels).toEqual({
+			strip: 'Choose a day',
+			prev: 'Previous day',
+			next: 'Next day',
+			today: 'Today',
+			loading: 'Loading…'
+		});
+	});
+
+	it('says a day is fully taken when no free start time is left', () => {
+		const date = '2027-01-13';
+		const blocks = [
+			{ start: at('10:00', date), end: at('16:00', date) },
+			{ start: at('16:00', date), end: at('22:00', date) }
+		];
+		const v = view({ date, blocks });
+		expect(freeCount(v)).toBe(0);
+		expect(v.rows.length).toBeGreaterThan(0);
+		const text = 'An diesem Tag ist alles belegt. Schau dir einen anderen Tag an.';
+		expect(v.empty).toEqual({ kind: 'taken', text });
+		expect(v.status).toBe(text);
+	});
+
+	it('says all of today is past when no start time is left even on an empty day', () => {
+		const late = '2027-01-12T20:30:00Z'; // 21:30 in Zurich
+		const v = view({ now: late, blocks: [block('20:00', '22:00')] });
+		const text = "Für heute sind alle Zeiten vorbei. Morgen geht's weiter.";
+		expect(v.empty).toEqual({ kind: 'past', text });
+		expect(v.rows.map((r) => r.kind)).toEqual(['taken']);
+		expect(v.status).toBe(text);
+		expect(view({ now: late, locale: 'en' }).empty).toEqual({
+			kind: 'past',
+			text: "Today's times are over. See you tomorrow."
+		});
+		// At 21:30 a 21:00 start is gone; at 20:30 it would still be offered, so a block makes it "taken".
+		const earlier = view({ now: '2027-01-12T19:30:00Z', blocks: [block('20:00', '22:00')] });
+		expect(earlier.empty?.kind).toBe('taken');
+		const tomorrow = '2027-01-13';
+		const fullDay = [{ start: at('10:00', tomorrow), end: at('22:00', tomorrow) }];
+		expect(view({ date: tomorrow, blocks: fullDay, locale: 'en' }).empty).toEqual({
+			kind: 'taken',
+			text: 'Nothing free this day. Try another day.'
+		});
+	});
+
+	it('has no empty line while a free start time is left', () => {
+		expect(view().empty).toBeNull();
+	});
+
+	it.each([
+		['19:30', 4, 'Mittwoch, 13. Januar: 4 freie Zeiten', 'Wednesday, 13 January: 4 free times'],
+		['21:00', 1, 'Mittwoch, 13. Januar: 1 freie Zeit', 'Wednesday, 13 January: 1 free time']
+	])('builds the status line when a block ends at %s', (until, count, de, en) => {
+		const date = '2027-01-13';
+		const blocks = [{ start: at('10:00', date), end: at(until, date) }];
+		const v = view({ date, blocks });
+		expect(freeCount(v)).toBe(count);
+		expect(v.status).toBe(de);
+		expect(view({ date, blocks, locale: 'en' }).status).toBe(en);
 	});
 });
 
@@ -293,6 +429,15 @@ describe('loadDayView', () => {
 
 	it('renders another selectable day', () => {
 		expect(load('2027-01-13')).toMatchObject({ kind: 'day', heading: { eyebrow: 'Mittwoch', date: '13. Januar' } });
+	});
+
+	it('carries the home day and links "Heute" only away from it', () => {
+		expect(load(null)).toMatchObject({ home: DAY, today: null, prev: null, next: '/day/2027-01-13' });
+		expect(load(DAY)).toMatchObject({ home: DAY, today: null });
+		expect(load('2027-01-13')).toMatchObject({ home: DAY, today: '/', prev: `/day/${DAY}` });
+		const early = '2026-12-28T09:00:00Z';
+		expect(load(null, early)).toMatchObject({ date: '2027-01-09', home: '2027-01-09', today: null });
+		expect(load('2027-01-10', early)).toMatchObject({ home: '2027-01-09', today: '/', prev: '/day/2027-01-09' });
 	});
 
 	it.each([

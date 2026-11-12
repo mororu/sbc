@@ -10,6 +10,8 @@ import {
 	formatDayMonth,
 	formatTime,
 	formatWeekday,
+	formatWeekdayShort,
+	formatDayNumber,
 	hoursInDay,
 	isValidDate,
 	lastBookableDay,
@@ -125,6 +127,16 @@ describe('formatting', () => {
 	it('formats the DST day correctly', () => {
 		expect(formatDateLong('2027-03-28', 'de')).toBe('Sonntag, 28. März');
 		expect(formatDateShort('2027-03-28', 'en')).toBe('Sun 28 March');
+	});
+
+	it.each([
+		['de', '2027-01-13', 'Mi', '13'],
+		['en', '2027-01-13', 'Wed', '13'],
+		['de', '2027-01-09', 'Sa', '9'],
+		['en', '2027-03-28', 'Sun', '28']
+	] as const)('formats strip cells in %s (%s)', (locale, date, weekday, day) => {
+		expect(formatWeekdayShort(date, locale)).toBe(weekday);
+		expect(formatDayNumber(date, locale)).toBe(day);
 	});
 
 	it('formats Zurich clock times', () => {

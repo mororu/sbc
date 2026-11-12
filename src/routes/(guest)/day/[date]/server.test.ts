@@ -43,6 +43,18 @@ describe('load /day/[date]', () => {
 		});
 	});
 
+	it('carries the strip, the arrows and the "Heute" link', () => {
+		const page = run(loadDay as Load, { date: '2027-01-13' }).data?.page as unknown as {
+			strip: { date: string; href: string | null }[];
+			prev: string | null;
+			next: string | null;
+			today: string | null;
+		};
+		expect(page.strip).toHaveLength(15);
+		expect(page.strip.map((c) => c.date)).toContain('2027-01-13');
+		expect(page).toMatchObject({ prev: '/day/2027-01-12', next: '/day/2027-01-14', today: '/' });
+	});
+
 	it.each([
 		['2026-01-01', '/day/2027-01-12'],
 		['2027-03-01', '/day/2027-01-26'],

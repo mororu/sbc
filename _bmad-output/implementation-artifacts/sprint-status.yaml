@@ -40,7 +40,7 @@ development_status:
   1-2-page-shell-with-de-en-and-light-dark: done
   1-3-time-module-and-start-time-core: done
   1-4-guest-sees-a-day-s-start-times-with-hot-cold-start: done
-  1-5-guest-browses-days: in-progress
+  1-5-guest-browses-days: review
   1-6-guest-sees-the-arrival-time-on-cold-starts: backlog
   1-7-guest-books-a-start-time: backlog
   1-8-guest-sees-the-confirmation-with-the-notice-at-booking: backlog
