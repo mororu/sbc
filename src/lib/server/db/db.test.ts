@@ -76,7 +76,7 @@ describe('applyMigrations', () => {
 		const insertBooking = (duration: number, seasonId: number) =>
 			sqlite
 				.prepare(
-					"insert into booking (start_at, duration_min, changeover_min, created_at, season_id) values ('2027-01-12T16:00:00Z', ?, 15, '2027-01-05T08:00:00Z', ?)"
+					"insert into booking (start_at, duration_min, changeover_min, created_at, season_id, party_size, locale, public_id, submit_token) values ('2027-01-12T16:00:00Z', ?, 15, '2027-01-05T08:00:00Z', ?, 2, 'de', lower(hex(randomblob(16))), lower(hex(randomblob(16))))"
 				)
 				.run(duration, seasonId);
 		expect(() => insertBooking(75, 1)).toThrow(/CHECK/);
@@ -89,12 +89,12 @@ describe('applyMigrations', () => {
 		expect(insertBlock('2027-01-12T10:00:00Z', '2027-01-12T11:00:00Z', 'private_use').changes).toBe(1);
 		expect(() =>
 			sqlite
-				.prepare("insert into booking (start_at, duration_min, changeover_min, created_at, season_id) values ('2027-01-12T16:00:00Z', 60, 75, '2027-01-05T08:00:00Z', 1)")
+				.prepare("insert into booking (start_at, duration_min, changeover_min, created_at, season_id, party_size, locale, public_id, submit_token) values ('2027-01-12T16:00:00Z', 60, 75, '2027-01-05T08:00:00Z', 1, 2, 'de', lower(hex(randomblob(16))), lower(hex(randomblob(16))))")
 				.run()
 		).toThrow(/booking_changeover/);
 		expect(() =>
 			sqlite
-				.prepare("insert into booking (start_at, duration_min, changeover_min, created_at, season_id) values ('2027-01-12T17:00:00+01:00', 60, 15, '2027-01-05T08:00:00Z', 1)")
+				.prepare("insert into booking (start_at, duration_min, changeover_min, created_at, season_id, party_size, locale, public_id, submit_token) values ('2027-01-12T17:00:00+01:00', 60, 15, '2027-01-05T08:00:00Z', 1, 2, 'de', lower(hex(randomblob(16))), lower(hex(randomblob(16))))")
 				.run()
 		).toThrow(/booking_instants/);
 		expect(() => sqlite.prepare("insert into season (start_date, end_date) values ('2027-05-01', '2027-04-01')").run()).toThrow(/season_dates/);
@@ -105,6 +105,60 @@ describe('applyMigrations', () => {
 		expect(updateSetting('horizon_days = 0')).toThrow(/setting_horizon/);
 		expect(updateSetting('open_minute = 1320, close_minute = 600')).toThrow(/setting_hours/);
 		expect(() => sqlite.prepare('insert into setting (id, changeover_min, preheat_min_min, preheat_max_min, horizon_days, open_minute, close_minute) values (2, 15, 30, 40, 14, 600, 1320)').run()).toThrow(/CHECK/);
+		sqlite.close();
+	});
+
+	it('checks party size and locale, and keeps public ids and submit tokens unique (Story 1.7)', () => {
+		const sqlite = openDatabase(':memory:');
+		applyMigrations(createDb(sqlite), MIGRATIONS_FOLDER);
+		const insert = (partySize: number, locale: string, publicId: string, token: string) => () =>
+			sqlite
+				.prepare(
+					"insert into booking (start_at, duration_min, changeover_min, created_at, season_id, party_size, locale, name, email, mobile, public_id, submit_token) values ('2027-01-12T16:00:00Z', 60, 15, '2027-01-05T08:00:00Z', 1, ?, ?, null, null, null, ?, ?)"
+				)
+				.run(partySize, locale, publicId, token);
+		expect(insert(0, 'de', 'p0', 't0')).toThrow(/booking_party_size/);
+		expect(insert(7, 'de', 'p7', 't7')).toThrow(/booking_party_size/);
+		expect(insert(2, 'fr', 'pf', 'tf')).toThrow(/booking_locale/);
+		expect(insert(6, 'en', 'p1', 't1')()).toMatchObject({ changes: 1 });
+		expect(insert(1, 'de', 'p1', 't2')).toThrow(/UNIQUE.*public_id/);
+		expect(insert(1, 'de', 'p2', 't1')).toThrow(/UNIQUE.*submit_token/);
+		expect(() =>
+			sqlite
+				.prepare(
+					"insert into booking (start_at, duration_min, changeover_min, created_at, season_id, party_size, locale) values ('2027-01-12T16:00:00Z', 60, 15, '2027-01-05T08:00:00Z', 1, 2, 'de')"
+				)
+				.run()
+		).toThrow(/NOT NULL.*public_id/);
+		sqlite.close();
+	});
+
+	it('fills the new booking columns of rows made before migration 0002', () => {
+		const folder = join(dir, 'migrations');
+		cpSync(MIGRATIONS_FOLDER, folder, { recursive: true });
+		// Migrate to 0001 only, insert an old-style row, then apply 0002.
+		const journalPath = join(folder, 'meta', '_journal.json');
+		const journal = JSON.parse(readFileSync(journalPath, 'utf8')) as { entries: { tag: string }[] };
+		const full = JSON.stringify(journal);
+		writeFileSync(
+			journalPath,
+			JSON.stringify({ ...journal, entries: journal.entries.filter((e) => !e.tag.startsWith('0002')) })
+		);
+		const sqlite = openDatabase(join(dir, 'old.sqlite'));
+		const db = createDb(sqlite);
+		applyMigrations(db, folder);
+		sqlite
+			.prepare(
+				"insert into booking (start_at, duration_min, changeover_min, created_at, season_id) values ('2027-01-12T16:00:00Z', 60, 15, '2027-01-05T08:00:00Z', 1)"
+			)
+			.run();
+		writeFileSync(journalPath, full);
+		applyMigrations(db, folder);
+		const row = sqlite.prepare('select * from booking').get() as Record<string, unknown>;
+		expect(row).toMatchObject({ start_at: '2027-01-12T16:00:00Z', party_size: 1, locale: 'de', name: null, email: null, mobile: null });
+		expect(row.public_id).toMatch(/^[0-9a-f]{32}$/);
+		expect(row.submit_token).toMatch(/^[0-9a-f]{32}$/);
+		expect(row.public_id).not.toBe(row.submit_token);
 		sqlite.close();
 	});
 

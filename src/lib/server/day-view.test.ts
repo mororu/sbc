@@ -59,14 +59,14 @@ describe('buildDayView', () => {
 			heat: 'hot',
 			label: 'Schon heiss',
 			notice: 'Ofen läuft. Komm um 18:15.',
-			srText: '18:15, schon heiss. Ofen läuft. Komm um 18:15.',
+			srText: '18:15, schon heiss. Ofen läuft. Komm um 18:15. Buchen.',
 			durations: [60, 90, 120, 150, 180]
 		});
 		expect(free(v, '15:45')).toMatchObject({
 			heat: 'cold',
 			label: 'Kaltstart',
 			notice: 'Nur 60 Min. · Niemand vor dir: komm zwischen 15:05 und 15:15 und heiz ein.',
-			srText: '15:45, Kaltstart. Nur 60 Min. Niemand vor dir: komm zwischen 15:05 und 15:15 und heiz ein.',
+			srText: '15:45, Kaltstart. Nur 60 Min. Niemand vor dir: komm zwischen 15:05 und 15:15 und heiz ein. Buchen.',
 			durations: [60]
 		});
 	});
@@ -86,17 +86,17 @@ describe('buildDayView', () => {
 		expect(free(v, '18:15')).toMatchObject({
 			label: 'Already hot',
 			notice: "The stove's going. Come at 18:15.",
-			srText: "18:15, already hot. The stove's going. Come at 18:15."
+			srText: "18:15, already hot. The stove's going. Come at 18:15. Book."
 		});
 		expect(free(v, '15:45')).toMatchObject({
 			label: 'Cold start',
 			notice: '60 min only · Nobody before you: come between 15:05 and 15:15 and light the fire.',
-			srText: '15:45, cold start. 60 min only. Nobody before you: come between 15:05 and 15:15 and light the fire.'
+			srText: '15:45, cold start. 60 min only. Nobody before you: come between 15:05 and 15:15 and light the fire. Book.'
 		});
 		const limitedHot = view({ locale: 'en', bookings: [booking('17:00', 60), booking('20:00', 60)] });
 		expect(free(limitedHot, '18:15')).toMatchObject({
 			notice: "Up to 90 min · The stove's going. Come at 18:15.",
-			srText: "18:15, already hot. Up to 90 min. The stove's going. Come at 18:15."
+			srText: "18:15, already hot. Up to 90 min. The stove's going. Come at 18:15. Book."
 		});
 		expect(v.rows.find((r) => r.kind === 'taken')).toMatchObject({
 			label: 'Taken',
@@ -118,7 +118,7 @@ describe('buildDayView', () => {
 		expect(free(v, '18:00')).toMatchObject({ durations: [60, 90], notice: `Bis 90 Min. · ${between('17:20', '17:30')}` });
 		expect(free(v, '18:30')).toMatchObject({ durations: [60], notice: `Nur 60 Min. · ${between('17:50', '18:00')}` });
 		expect(free(v, '11:00')).toMatchObject({ durations: [60, 90, 120, 150, 180], notice: between('10:20', '10:30') });
-		expect(free(v, '11:00')?.srText).toBe(`11:00, Kaltstart. ${between('10:20', '10:30')}`);
+		expect(free(v, '11:00')?.srText).toBe(`11:00, Kaltstart. ${between('10:20', '10:30')} Buchen.`);
 	});
 
 	it('joins the limit and the hot notice', () => {
@@ -127,7 +127,7 @@ describe('buildDayView', () => {
 		expect(free(v, '18:15')).toMatchObject({
 			durations: [60, 90],
 			notice: 'Bis 90 Min. · Ofen läuft. Komm um 18:15.',
-			srText: '18:15, schon heiss. Bis 90 Min. Ofen läuft. Komm um 18:15.'
+			srText: '18:15, schon heiss. Bis 90 Min. Ofen läuft. Komm um 18:15. Buchen.'
 		});
 	});
 
@@ -137,11 +137,11 @@ describe('buildDayView', () => {
 				heat: 'cold',
 				label: 'Kaltstart',
 				notice: 'Niemand vor dir: komm zwischen 17:20 und 17:30 und heiz ein.',
-				srText: '18:00, Kaltstart. Niemand vor dir: komm zwischen 17:20 und 17:30 und heiz ein.'
+				srText: '18:00, Kaltstart. Niemand vor dir: komm zwischen 17:20 und 17:30 und heiz ein. Buchen.'
 			});
 			expect(free(view({ locale: 'en' }), '18:00')).toMatchObject({
 				notice: 'Nobody before you: come between 17:20 and 17:30 and light the fire.',
-				srText: '18:00, cold start. Nobody before you: come between 17:20 and 17:30 and light the fire.'
+				srText: '18:00, cold start. Nobody before you: come between 17:20 and 17:30 and light the fire. Book.'
 			});
 		});
 
@@ -170,11 +170,11 @@ describe('buildDayView', () => {
 				heat: 'cold',
 				label: 'Kaltstart',
 				notice: 'Nur 30 Minuten zum Einheizen: komm um 17:30. Die Sauna wärmt dann noch auf.',
-				srText: '18:00, Kaltstart. Nur 30 Minuten zum Einheizen: komm um 17:30. Die Sauna wärmt dann noch auf.'
+				srText: '18:00, Kaltstart. Nur 30 Minuten zum Einheizen: komm um 17:30. Die Sauna wärmt dann noch auf. Buchen.'
 			});
 			expect(free(view({ locale: 'en', blocks }), '18:00')).toMatchObject({
 				notice: 'Only 30 minutes to heat: come at 17:30. It will still be warming up.',
-				srText: '18:00, cold start. Only 30 minutes to heat: come at 17:30. It will still be warming up.'
+				srText: '18:00, cold start. Only 30 minutes to heat: come at 17:30. It will still be warming up. Book.'
 			});
 		});
 
@@ -221,7 +221,7 @@ describe('buildDayView', () => {
 				heat: 'cold',
 				label: 'Kaltstart',
 				notice: 'Komm so bald wie möglich und heiz ein. Zum Start ist die Sauna noch nicht ganz heiss.',
-				srText: '18:00, Kaltstart. Komm so bald wie möglich und heiz ein. Zum Start ist die Sauna noch nicht ganz heiss.'
+				srText: '18:00, Kaltstart. Komm so bald wie möglich und heiz ein. Zum Start ist die Sauna noch nicht ganz heiss. Buchen.'
 			});
 			expect(free(view({ now, locale: 'en' }), '18:00')?.notice).toBe(
 				"Come as soon as you can and light the fire. It won't be fully hot at the start."
@@ -252,7 +252,7 @@ describe('buildDayView', () => {
 			expect(free(view({ bookings: [booking('17:00', 60)] }), '18:15')).toMatchObject({
 				heat: 'hot',
 				notice: 'Ofen läuft. Komm um 18:15.',
-				srText: '18:15, schon heiss. Ofen läuft. Komm um 18:15.'
+				srText: '18:15, schon heiss. Ofen läuft. Komm um 18:15. Buchen.'
 			});
 		});
 
@@ -533,7 +533,7 @@ describe('loadDayView', () => {
 		db = createDb(sqlite);
 		applyMigrations(db, MIGRATIONS_FOLDER);
 		const insertBooking = sqlite.prepare(
-			"insert into booking (start_at, duration_min, changeover_min, created_at, season_id) values (?, 60, 15, '2027-01-05T08:00:00Z', 1)"
+			"insert into booking (start_at, duration_min, changeover_min, created_at, season_id, party_size, locale, public_id, submit_token) values (?, 60, 15, '2027-01-05T08:00:00Z', 1, 2, 'de', lower(hex(randomblob(16))), lower(hex(randomblob(16))))"
 		);
 		insertBooking.run(at('17:00'));
 		insertBooking.run(at('21:30', '2027-01-11')); // the day before: needs no row today
@@ -546,7 +546,11 @@ describe('loadDayView', () => {
 		sqlite.close();
 	});
 
-	const load = (date: string | null, now = NOW) => loadDayView(date, 'de', { db, now });
+	const load = (
+		date: string | null,
+		now = NOW,
+		query: { error?: string | null; time?: string | null } = {}
+	) => loadDayView(date, 'de', { db, now, ...query });
 
 	it('renders today on / from the database', () => {
 		const page = load(null);
@@ -558,6 +562,52 @@ describe('loadDayView', () => {
 		]);
 		expect(free(v, '18:15')?.heat).toBe('hot');
 		expect(JSON.stringify(v)).not.toMatch(/private_use|"id"|createdAt/);
+	});
+
+	it('links every free row to its booking form', () => {
+		const v = load(DAY) as DayView;
+		expect(free(v, '18:15')?.href).toBe('/book/2027-01-12/1815');
+		expect(free(v, '10:30')?.href).toBe('/book/2027-01-12/1030');
+		expect(v.error).toBeNull();
+		expect(v.title).toBe('Di, 12. Januar');
+	});
+
+	it('shows a refused booking first, with the title prefixed (FR-6)', () => {
+		expect(load(DAY, undefined, { error: 'conflict', time: '1800' })).toMatchObject({
+			title: 'Fehler: Di, 12. Januar',
+			error: { text: '18:00 ist gerade weggegangen. So sieht der Tag jetzt aus. Deine Angaben sind noch da.' }
+		});
+		expect(load(DAY, undefined, { error: 'past', time: '1800' })).toMatchObject({
+			error: { text: '18:00 hat schon angefangen. Wähl bitte eine andere Zeit.' }
+		});
+		expect(loadDayView(DAY, 'en', { now: NOW, db, error: 'conflict', time: '1800' })).toMatchObject({
+			title: 'Error: Tue, 12 January',
+			error: { text: "Someone just took 18:00. Here's the day as it is now. Your details are still filled in." }
+		});
+	});
+
+	it('carries a refusal onto the redirect when the day is no longer selectable', () => {
+		expect(load('2026-01-01', undefined, { error: 'past', time: '2330' })).toEqual({
+			kind: 'redirect',
+			to: '/day/2027-01-12?error=past&time=2330'
+		});
+		expect(load('2026-01-01', undefined, { error: 'oops', time: '2330' })).toEqual({
+			kind: 'redirect',
+			to: '/day/2027-01-12'
+		});
+		expect(load('2027-01-09', '2026-12-20T09:00:00Z', { error: 'past', time: '1800' })).toEqual({
+			kind: 'redirect',
+			to: '/'
+		});
+	});
+
+	it.each([
+		['an unknown error', 'oops', '1800'],
+		['a malformed time', 'conflict', '18:00'],
+		['an impossible time', 'conflict', '2500'],
+		['no time', 'conflict', null]
+	])('ignores %s', (_label, error, time) => {
+		expect(load(DAY, undefined, { error, time })).toMatchObject({ error: null, title: 'Di, 12. Januar' });
 	});
 
 	it('renders another selectable day', () => {

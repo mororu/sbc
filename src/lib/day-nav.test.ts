@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { isDayPath, pendingDay, shouldAnnounce, skipTarget, type NavView } from './day-nav.ts';
+import { isDayPath, pendingDay, shouldAnnounce, skipTarget, withoutDayError, type NavView } from './day-nav.ts';
 
 const view: NavView = {
 	home: '2027-01-12',
@@ -64,5 +64,21 @@ describe('skipTarget', () => {
 		expect(skipTarget({ page: { kind: 'season' } })).toBe('main');
 		expect(skipTarget({})).toBe('main');
 		expect(skipTarget(null)).toBe('main');
+	});
+});
+
+describe('withoutDayError', () => {
+	it('drops error and time, keeps everything else', () => {
+		expect(withoutDayError(new URL('http://x/day/2027-01-12?error=conflict&time=1800'))?.href).toBe(
+			'http://x/day/2027-01-12'
+		);
+		expect(withoutDayError(new URL('http://x/day/2027-01-12?a=1&error=past&time=1800#times'))?.href).toBe(
+			'http://x/day/2027-01-12?a=1#times'
+		);
+	});
+
+	it('returns null when there is nothing to drop', () => {
+		expect(withoutDayError(new URL('http://x/day/2027-01-12'))).toBeNull();
+		expect(withoutDayError(new URL('http://x/day/2027-01-12?a=1'))).toBeNull();
 	});
 });

@@ -3,6 +3,7 @@
 //   npm run db:fixtures -- 2027-01-12
 // Writes directly to the dev database (not through commands): it is a test-data tool, never app code.
 // Wall-clock to instant conversion goes through src/lib/time like everywhere else.
+import { randomBytes } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import Database from 'better-sqlite3';
 import { isValidDate, toInstant } from '#lib/time/index.ts';
@@ -55,9 +56,34 @@ const at = (hhmm: string) => {
 const createdAt = Temporal.Now.instant().toString({ smallestUnit: 'second' });
 const changeover = setting.changeover_min;
 
-const insertBooking = db.prepare(
-	'insert into booking (start_at, duration_min, changeover_min, created_at, season_id) values (?, ?, ?, ?, ?)'
+const insertBookingRow = db.prepare(
+	`insert into booking (start_at, duration_min, changeover_min, created_at, season_id,
+	   party_size, locale, name, email, mobile, public_id, submit_token)
+	 values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 );
+/** Public id and submit token as the app makes them: 128 random bits, base64url. */
+const randomId = () => randomBytes(16).toString('base64url');
+let guest = 0;
+const insertBooking = {
+	run(start: string, duration: number, changeoverMin: number, created: string, seasonId: number) {
+		guest += 1;
+		insertBookingRow.run(
+			start,
+			duration,
+			changeoverMin,
+			created,
+			seasonId,
+			2,
+			'de',
+			`Testgast ${guest}`,
+			`testgast${guest}@example.ch`,
+			// +41 79 and seven digits: a valid Swiss mobile for any guest count up to 9 999 999.
+			`+4179${String(guest).padStart(7, '0')}`,
+			randomId(),
+			randomId()
+		);
+	}
+};
 const insertBlock = db.prepare('insert into block (start_at, end_at, reason) values (?, ?, ?)');
 
 db.transaction(() => {

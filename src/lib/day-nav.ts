@@ -33,6 +33,15 @@ export function shouldAnnounce(nav: { type: string; from?: NavTarget; to?: NavTa
 	return nav.from.url.pathname !== nav.to.url.pathname;
 }
 
+/** The URL without the refusal query (`error`, `time`), or null when it has neither. */
+export function withoutDayError(url: URL): URL | null {
+	if (!url.searchParams.has('error') && !url.searchParams.has('time')) return null;
+	const clean = new URL(url.href);
+	clean.searchParams.delete('error');
+	clean.searchParams.delete('time');
+	return clean;
+}
+
 /** The skip link's target: the start-time list on a day page, otherwise `main`. */
 export function skipTarget(pageData: unknown): 'times' | 'main' {
 	const page = (pageData as { page?: { kind?: unknown } } | null | undefined)?.page;

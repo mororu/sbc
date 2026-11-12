@@ -42,7 +42,7 @@ development_status:
   1-4-guest-sees-a-day-s-start-times-with-hot-cold-start: done
   1-5-guest-browses-days: done
   1-6-guest-sees-the-arrival-time-on-cold-starts: done
-  1-7-guest-books-a-start-time: in-progress
+  1-7-guest-books-a-start-time: review
   1-8-guest-sees-the-confirmation-with-the-notice-at-booking: backlog
   1-9-so-funktioniert-s-privacy-statement-and-impressum-pages: backlog
   epic-1-retrospective: optional

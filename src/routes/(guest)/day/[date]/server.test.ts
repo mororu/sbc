@@ -27,7 +27,7 @@ type Load = (event: unknown) => unknown;
 
 function run(load: Load, params: Record<string, string> = {}) {
 	try {
-		return { data: load({ params }) as { page: { kind: string; date?: string } } };
+		return { data: load({ params, url: new URL(`http://x/day/${params.date}`) }) as { page: { kind: string; date?: string } } };
 	} catch (e) {
 		if (isRedirect(e)) return { redirect: { status: e.status, location: e.location } };
 		throw e;

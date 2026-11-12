@@ -1,9 +1,9 @@
 <!--
-	One start-time row (UX-DR15, DESIGN.md start-time-row): time · state · (chevron, from Story 1.7),
-	the notice below spanning columns 2–3. Hot: solid border + flame. Cold start: dashed border +
-	snowflake. Taken: line border, lock, struck-through time, hatch only in the left band.
-	Screen readers hear one sentence (srText); the visible parts are hidden from them.
-	Not a link yet: Story 1.7 adds the booking form.
+	One start-time row (UX-DR15, DESIGN.md start-time-row): time · state · chevron, the notice below
+	spanning columns 2–3. Hot: solid border + flame. Cold start: dashed border + snowflake. Taken:
+	line border, lock, struck-through time, hatch only in the left band, no chevron.
+	A free row is one link to the booking form; its name is one sentence (srText, ending "Buchen.").
+	The visible parts are hidden from screen readers. A taken row is not interactive.
 -->
 <script lang="ts">
 	import Icon from './Icon.svelte';
@@ -16,18 +16,27 @@
 	const notice = $derived(row.kind === 'taken' ? row.until : row.notice);
 </script>
 
+{#snippet content()}
+	<span class="visually-hidden">{row.srText}</span>
+	<time class="time" datetime={row.datetime} aria-hidden="true">{row.time}</time>
+	<span class="label" aria-hidden="true">
+		<Icon name={icon} size="row" />
+		<span>{row.label}</span>
+	</span>
+	{#if row.kind === 'free'}
+		<span class="chevron" aria-hidden="true"><Icon name="chevron-right" size="row" /></span>
+	{/if}
+	{#if notice}
+		<span class="notice" aria-hidden="true">{notice}</span>
+	{/if}
+{/snippet}
+
 <div class="slot">
-	<div class="row {state}">
-		<span class="visually-hidden">{row.srText}</span>
-		<time class="time" datetime={row.datetime} aria-hidden="true">{row.time}</time>
-		<span class="label" aria-hidden="true">
-			<Icon name={icon} size="row" />
-			<span>{row.label}</span>
-		</span>
-		{#if notice}
-			<span class="notice" aria-hidden="true">{notice}</span>
-		{/if}
-	</div>
+	{#if row.kind === 'free'}
+		<a class="row {state}" href={row.href}>{@render content()}</a>
+	{:else}
+		<div class="row {state}">{@render content()}</div>
+	{/if}
 </div>
 
 <style>
@@ -45,6 +54,15 @@
 		padding: 16px 14px;
 		border-radius: var(--radius);
 		background: var(--background);
+		color: inherit;
+		text-decoration: none;
+	}
+	a.row {
+		min-height: var(--target-min);
+		-webkit-tap-highlight-color: transparent;
+	}
+	a.row:active {
+		background: var(--line-subtle);
 	}
 	.hot {
 		border: var(--border-hot);
@@ -84,7 +102,7 @@
 		text-decoration: line-through;
 	}
 	.label {
-		grid-column: 2 / span 2;
+		grid-column: 2;
 		grid-row: 1;
 		display: inline-flex;
 		align-items: center;
@@ -95,6 +113,15 @@
 		letter-spacing: var(--type-state-label-tracking);
 		text-transform: uppercase;
 		overflow-wrap: anywhere;
+	}
+	.taken .label {
+		grid-column: 2 / span 2;
+	}
+	.chevron {
+		grid-column: 3;
+		grid-row: 1;
+		display: inline-flex;
+		color: var(--muted);
 	}
 	.hot .label {
 		color: var(--hot);
@@ -121,9 +148,13 @@
 		}
 		.time,
 		.label,
+		.taken .label,
 		.notice {
 			grid-column: 1;
 			grid-row: auto;
+		}
+		.chevron {
+			display: none;
 		}
 	}
 	@media (forced-colors: active) {

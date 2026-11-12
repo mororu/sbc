@@ -69,5 +69,75 @@
 	"info_title": "How it works",
 	"privacy_title": "Privacy",
 	"imprint_title": "Imprint",
-	"stub_body": "This text is coming soon."
+	"stub_body": "This text is coming soon.",
+	"row_sr_book": "Book.",
+	"title_error": "Error: {title}",
+	"error_conflict": "Someone just took {time}. Here's the day as it is now. Your details are still filled in.",
+	"error_past": "{time} has already started. Please pick another time.",
+	"book_title": "Book {time}",
+	"book_back_name": "Back to {date}",
+	"section_duration": "Duration",
+	"section_people": "People",
+	"section_contact": "Contact",
+	"duration_option": "{minutes} minutes, until {time}",
+	"duration_end_note": "minutes · until {time}",
+	"duration_unavailable_booking": "{range} min not possible: next booking at {time}.",
+	"duration_unavailable_block": "{range} min not possible: taken from {time}.",
+	"duration_unavailable_hours": "{range} min not possible: open until {time}.",
+	"duration_only_possible": "{durations} min only: next booking at {time}.",
+	"field_name": "Name",
+	"field_name_purpose": "So we know whose booking it is at the wagon.",
+	"field_email": "Email",
+	"field_email_purpose": "For your confirmation and the keybox code.",
+	"field_mobile": "Mobile",
+	"field_mobile_purpose": "Only in case we need to call you at short notice.",
+	"privacy_more": "More in our privacy statement.",
+	"field_required": "Please fill this in.",
+	"name_too_long": "Please use at most 100 characters.",
+	"email_invalid": "That email address doesn't look right. Please check it, e.g. name@example.ch.",
+	"mobile_invalid": "Please enter a mobile number we can reach you on, e.g. +41 79 123 45 67.",
+	"submit_failed": "That didn't work, so nothing is booked yet. Please try again.",
+	"error_summary": [
+		{
+			"declarations": [
+				"input count",
+				"local countPlural = count: plural"
+			],
+			"selectors": [
+				"countPlural"
+			],
+			"match": {
+				"countPlural=one": "1 detail is missing or wrong.",
+				"countPlural=*": "{count} details are missing or wrong."
+			}
+		}
+	],
+	"submit_busy": "Booking …",
+	"submit_slow": "This is taking longer. Please wait, we won't book twice.",
+	"booked_title": "Booked",
+	"booked_heading": "Booked!",
+	"booked_minutes": "{minutes} min",
+	"booked_people": [
+		{
+			"declarations": [
+				"input count",
+				"local countPlural = count: plural"
+			],
+			"selectors": [
+				"countPlural"
+			],
+			"match": {
+				"countPlural=one": "{count} person",
+				"countPlural=*": "{count} people"
+			}
+		}
+	],
+	"book_another": "Book another time",
+	"not_found_title": "Not found",
+	"not_found_heading": "This page doesn't exist.",
+	"error_page_title": "Error",
+	"error_page_heading": "That didn't work.",
+	"error_page_home": "To the calendar",
+	"duration_unavailable": "{range} min not possible.",
+	"name_invalid": "There's an invisible character in the name, such as a tab. Please remove it."
 }
