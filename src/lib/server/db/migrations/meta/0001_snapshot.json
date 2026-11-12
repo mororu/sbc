@@ -1,0 +1,291 @@
+{
+  "version": "6",
+  "dialect": "sqlite",
+  "id": "8172a71a-aec5-44ec-8de2-60ab53e89b70",
+  "prevId": "2a97d1b3-f951-4659-a936-da951a64d135",
+  "tables": {
+    "block": {
+      "name": "block",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "integer",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "start_at": {
+          "name": "start_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "end_at": {
+          "name": "end_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "reason": {
+          "name": "reason",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "block_start_at": {
+          "name": "block_start_at",
+          "columns": [
+            "start_at"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "block_reason": {
+          "name": "block_reason",
+          "value": "\"block\".\"reason\" IN ('cleaning', 'maintenance', 'private_use')"
+        },
+        "block_instants": {
+          "name": "block_instants",
+          "value": "\"block\".\"start_at\" GLOB '[0-9][0-9][0-9][0-9]-[01][0-9]-[0-3][0-9]T[0-2][0-9]:[0-5][0-9]:[0-5][0-9]Z' AND \"block\".\"end_at\" GLOB '[0-9][0-9][0-9][0-9]-[01][0-9]-[0-3][0-9]T[0-2][0-9]:[0-5][0-9]:[0-5][0-9]Z'"
+        },
+        "block_range": {
+          "name": "block_range",
+          "value": "\"block\".\"start_at\" < \"block\".\"end_at\""
+        }
+      }
+    },
+    "booking": {
+      "name": "booking",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "integer",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "start_at": {
+          "name": "start_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "duration_min": {
+          "name": "duration_min",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "changeover_min": {
+          "name": "changeover_min",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "season_id": {
+          "name": "season_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "deleted_at": {
+          "name": "deleted_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "booking_start_at": {
+          "name": "booking_start_at",
+          "columns": [
+            "start_at"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "booking_season_id_season_id_fk": {
+          "name": "booking_season_id_season_id_fk",
+          "tableFrom": "booking",
+          "tableTo": "season",
+          "columnsFrom": [
+            "season_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "booking_duration": {
+          "name": "booking_duration",
+          "value": "\"booking\".\"duration_min\" IN (60, 90, 120, 150, 180)"
+        },
+        "booking_changeover": {
+          "name": "booking_changeover",
+          "value": "\"booking\".\"changeover_min\" BETWEEN 0 AND 60"
+        },
+        "booking_instants": {
+          "name": "booking_instants",
+          "value": "\"booking\".\"start_at\" GLOB '[0-9][0-9][0-9][0-9]-[01][0-9]-[0-3][0-9]T[0-2][0-9]:[0-5][0-9]:[0-5][0-9]Z' AND \"booking\".\"created_at\" GLOB '[0-9][0-9][0-9][0-9]-[01][0-9]-[0-3][0-9]T[0-2][0-9]:[0-5][0-9]:[0-5][0-9]Z' AND (\"booking\".\"deleted_at\" IS NULL OR \"booking\".\"deleted_at\" GLOB '[0-9][0-9][0-9][0-9]-[01][0-9]-[0-3][0-9]T[0-2][0-9]:[0-5][0-9]:[0-5][0-9]Z')"
+        }
+      }
+    },
+    "season": {
+      "name": "season",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "integer",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "start_date": {
+          "name": "start_date",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "end_date": {
+          "name": "end_date",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "season_date_format": {
+          "name": "season_date_format",
+          "value": "\"season\".\"start_date\" GLOB '[0-9][0-9][0-9][0-9]-[01][0-9]-[0-3][0-9]' AND \"season\".\"end_date\" GLOB '[0-9][0-9][0-9][0-9]-[01][0-9]-[0-3][0-9]'"
+        },
+        "season_dates": {
+          "name": "season_dates",
+          "value": "\"season\".\"start_date\" <= \"season\".\"end_date\""
+        }
+      }
+    },
+    "setting": {
+      "name": "setting",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "integer",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "changeover_min": {
+          "name": "changeover_min",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "preheat_min_min": {
+          "name": "preheat_min_min",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "preheat_max_min": {
+          "name": "preheat_max_min",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "horizon_days": {
+          "name": "horizon_days",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "open_minute": {
+          "name": "open_minute",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "close_minute": {
+          "name": "close_minute",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "setting_single_row": {
+          "name": "setting_single_row",
+          "value": "\"setting\".\"id\" = 1"
+        },
+        "setting_changeover": {
+          "name": "setting_changeover",
+          "value": "\"setting\".\"changeover_min\" BETWEEN 0 AND 60"
+        },
+        "setting_preheat": {
+          "name": "setting_preheat",
+          "value": "\"setting\".\"preheat_min_min\" BETWEEN 15 AND 90 AND \"setting\".\"preheat_max_min\" BETWEEN 15 AND 90 AND \"setting\".\"preheat_min_min\" <= \"setting\".\"preheat_max_min\""
+        },
+        "setting_horizon": {
+          "name": "setting_horizon",
+          "value": "\"setting\".\"horizon_days\" BETWEEN 1 AND 60"
+        },
+        "setting_hours": {
+          "name": "setting_hours",
+          "value": "\"setting\".\"open_minute\" >= 0 AND \"setting\".\"open_minute\" < \"setting\".\"close_minute\" AND \"setting\".\"close_minute\" <= 1440"
+        }
+      }
+    }
+  },
+  "views": {},
+  "enums": {},
+  "_meta": {
+    "schemas": {},
+    "tables": {},
+    "columns": {}
+  },
+  "internal": {
+    "indexes": {}
+  }
+}

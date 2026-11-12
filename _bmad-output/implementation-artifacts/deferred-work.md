@@ -12,3 +12,6 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-1-2-page-shell-with-de-en-and-light-dark.md`
   summary: Put the inline theme script's hash (pinned in src/app-html.test.ts) into the production Content-Security-Policy.
   evidence: Story 1.2 review; the script is required before first paint, and Epic 5 sets the security headers.
+- source_spec: `_bmad-output/implementation-artifacts/spec-1-3-time-module-and-start-time-core.md`
+  summary: Story 1.4's "no client chunk references Temporal" build check must look for real use of src/lib/time, not the bare word.
+  evidence: The SvelteKit runtime's devalue already contains `Temporal.Instant` etc. in a client chunk (seen in Story 1.3's build), so a plain text search would always fail.

@@ -22,7 +22,8 @@
 		"lint": "npm run i18n:types && eslint .",
 		"test:unit": "vitest",
 		"test": "npm run test:unit -- --run",
-		"db:generate": "drizzle-kit generate"
+		"db:generate": "drizzle-kit generate",
+		"db:fixtures": "node scripts/dev-fixtures.ts"
 	},
 	"dependencies": {
 		"better-sqlite3": "13.0.3",
