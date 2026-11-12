@@ -29,7 +29,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 # - Retrospective appends its action items to action_items; the status view surfaces open ones
 generated: 11-09-2026 19:44
-last_updated: 11-12-2026 18:30
+last_updated: 11-12-2026 19:00
 project: sauna-booking
 project_key: NOKEY
 tracking_system: file-system
@@ -45,7 +45,7 @@ development_status:
   1-7-guest-books-a-start-time: done
   1-8-guest-sees-the-confirmation-with-the-notice-at-booking: done
   1-9-so-funktioniert-s-privacy-statement-and-impressum-pages: done
-  epic-1-retrospective: optional
+  epic-1-retrospective: done
 
   epic-2: backlog
   2-1-guest-receives-a-confirmation-email: backlog
@@ -82,3 +82,118 @@ development_status:
   6-1-analytics-page-with-season-selector-when-to-clean-and-how-mu: backlog
   6-2-is-it-worth-repeating-and-do-cold-starts-stay-empty: backlog
   epic-6-retrospective: optional
+action_items:
+  - id: "epic-1-retro-item-1-a1-keep-the-submit-token-per-start-time"
+    epic: 1
+    action: "A1: Keep the submit token per start time in sessionStorage so a reload
+      or language switch after a lost response reaches the guest own confirmation"
+    owner: "dev"
+    status: open
+    ref: "_bmad-output/implementation-artifacts/epic-1-retro-2026-11-12.md"
+  - id: "epic-1-retro-item-2-a2-add-a-root-error-svelte-in-the-guest"
+    epic: 1
+    action: "A2: Add a root +error.svelte in the guest shell (DE/EN) and a favicon"
+    owner: "dev"
+    status: open
+    ref: "_bmad-output/implementation-artifacts/epic-1-retro-2026-11-12.md"
+  - id: "epic-1-retro-item-3-a3-read-the-confirmation-admin-contact-t"
+    epic: 1
+    action: "A3: Read the confirmation admin contact through getAdminContact (trimmed,
+      id 1, blank is null) and test it"
+    owner: "dev"
+    status: open
+    ref: "_bmad-output/implementation-artifacts/epic-1-retro-2026-11-12.md"
+  - id: "epic-1-retro-item-4-a4-drop-or-adapt-the-refusal-query-when"
+    epic: 1
+    action: "A4: Drop or adapt the refusal query when the redirect lands on another
+      day"
+    owner: "dev"
+    status: open
+    ref: "_bmad-output/implementation-artifacts/epic-1-retro-2026-11-12.md"
+  - id: "epic-1-retro-item-5-a5-generic-skip-link-label-on-pages-with"
+    epic: 1
+    action: "A5: Generic skip-link label on pages without start times"
+    owner: "dev + operators"
+    status: open
+    ref: "_bmad-output/implementation-artifacts/epic-1-retro-2026-11-12.md"
+  - id: "epic-1-retro-item-6-a6-clear-contact-details-from-sessionsto"
+    epic: 1
+    action: "A6: Clear contact details from sessionStorage after a successful booking
+      and name sessionStorage in the privacy draft"
+    owner: "dev + operators"
+    status: open
+    ref: "_bmad-output/implementation-artifacts/epic-1-retro-2026-11-12.md"
+  - id: "epic-1-retro-item-7-a7-before-epic-2-move-the-24-h-keybox-cu"
+    epic: 1
+    action: "A7: Before Epic 2 move the 24 h keybox cutoff into src/lib/domain, share
+      the day-data loading, split day-view.ts by concern"
+    owner: "dev"
+    status: open
+    ref: "_bmad-output/implementation-artifacts/epic-1-retro-2026-11-12.md"
+  - id: "epic-1-retro-item-8-a8-decide-the-message-for-a-resubmit-aft"
+    epic: 1
+    action: "A8: Decide the message for a resubmit after an admin deleted the booking
+      and align AD-3 or the code"
+    owner: "Manuel"
+    status: open
+    ref: "_bmad-output/implementation-artifacts/epic-1-retro-2026-11-12.md"
+  - id: "epic-1-retro-item-9-a9-past-booking-wording-on-the-confirmat"
+    epic: 1
+    action: "A9: Past-booking wording on the confirmation (with Epic 2 mail wording)"
+    owner: "dev"
+    status: open
+    ref: "_bmad-output/implementation-artifacts/epic-1-retro-2026-11-12.md"
+  - id: "epic-1-retro-item-10-a10-dev-fixtures-follow-dev_now-and-incl"
+    epic: 1
+    action: "A10: Dev fixtures follow DEV_NOW and include a free hot row; share test
+      fixtures and env mocks"
+    owner: "dev"
+    status: open
+    ref: "_bmad-output/implementation-artifacts/epic-1-retro-2026-11-12.md"
+  - id: "epic-1-retro-item-11-s1-reconcile-the-architecture-spine-view"
+    epic: 1
+    action: "S1: Reconcile the architecture spine (view-model layer, clock, ids, /lang
+      route, 303 conflict, collapse at >=, admin contact in AD-26)"
+    owner: "Manuel"
+    status: open
+    ref: "_bmad-output/implementation-artifacts/epic-1-retro-2026-11-12.md"
+  - id: "epic-1-retro-item-12-s2-reconcile-epics-md-merged-taken-rows"
+    epic: 1
+    action: "S2: Reconcile epics.md (merged taken rows, 303 conflict, confirmation
+      fields, kit.paths.origin wording)"
+    owner: "Manuel"
+    status: open
+    ref: "_bmad-output/implementation-artifacts/epic-1-retro-2026-11-12.md"
+  - id: "epic-1-retro-item-13-s3-move-the-drafted-copy-from-the-readme"
+    epic: 1
+    action: "S3: Move the drafted copy from the README into EXPERIENCE.md or the epics
+      copy section for operator review"
+    owner: "Manuel + operators"
+    status: open
+    ref: "_bmad-output/implementation-artifacts/epic-1-retro-2026-11-12.md"
+  - id: "epic-1-retro-item-14-p1-check-that-a-story-pr-is-merged-gh-pr"
+    epic: 1
+    action: "P1: Check that a story PR is merged (gh pr view) before marking the story
+      done"
+    owner: "build workflow"
+    status: open
+    ref: "_bmad-output/implementation-artifacts/epic-1-retro-2026-11-12.md"
+  - id: "epic-1-retro-item-15-p2-split-stories-whose-spec-exceeds-abou"
+    epic: 1
+    action: "P2: Split stories whose spec exceeds about 2000 tokens"
+    owner: "planning"
+    status: open
+    ref: "_bmad-output/implementation-artifacts/epic-1-retro-2026-11-12.md"
+  - id: "epic-1-retro-item-16-p3-decide-the-browser-test-layer-before"
+    epic: 1
+    action: "P3: Decide the browser test layer before the Epic 3 admin UI"
+    owner: "Manuel"
+    status: open
+    ref: "_bmad-output/implementation-artifacts/epic-1-retro-2026-11-12.md"
+  - id: "epic-1-retro-item-17-p4-self-check-specs-for-internal-consist"
+    epic: 1
+    action: "P4: Self-check specs for internal consistency (counts, matrix vs tasks,
+      tests that can fail)"
+    owner: "build workflow"
+    status: open
+    ref: "_bmad-output/implementation-artifacts/epic-1-retro-2026-11-12.md"
