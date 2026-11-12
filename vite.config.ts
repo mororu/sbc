@@ -2,6 +2,7 @@ import { paraglideVitePlugin } from '@inlang/paraglide-js';
 import { defineConfig } from 'vitest/config';
 import adapter from '@sveltejs/adapter-node';
 import { sveltekit } from '@sveltejs/kit/vite';
+import { clientTimeGuard } from './scripts/client-time-guard.ts';
 
 export default defineConfig(({ command }) => ({
 	plugins: [
@@ -26,7 +27,10 @@ export default defineConfig(({ command }) => ({
 			// Cookie first, then the browser's preferred language, then German. No URL prefixes.
 			// Keep in sync with the `i18n:types` script in package.json.
 			strategy: ['cookie', 'preferredLanguage', 'baseLocale']
-		})
+		}),
+
+		// Fails the build if src/lib/time (Temporal) ends up in a client chunk (AD-9).
+		clientTimeGuard()
 	],
 	test: {
 		expect: { requireAssertions: true },
@@ -36,7 +40,7 @@ export default defineConfig(({ command }) => ({
 				test: {
 					name: 'server',
 					environment: 'node',
-					include: ['src/**/*.{test,spec}.{js,ts}'],
+					include: ['src/**/*.{test,spec}.{js,ts}', 'scripts/**/*.{test,spec}.{js,ts}'],
 					exclude: ['src/**/*.svelte.{test,spec}.{js,ts}']
 				}
 			}

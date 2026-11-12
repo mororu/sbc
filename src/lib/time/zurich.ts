@@ -120,6 +120,23 @@ export function formatDateShort(date: LocalDate, locale: Locale): string {
 	return locale === 'de' ? `${weekday} ${day}. ${month}` : `${weekday} ${day} ${month}`;
 }
 
+/** "12. Januar" / "12 January": the date heading without the weekday. */
+export function formatDayMonth(date: LocalDate, locale: Locale): string {
+	const { day, month } = dateParts(date, locale, 'long');
+	return locale === 'de' ? `${day}. ${month}` : `${day} ${month}`;
+}
+
+/** "Dienstag" / "Tuesday": the date heading's eyebrow. */
+export function formatWeekday(date: LocalDate, locale: Locale): string {
+	return dateParts(date, locale, 'long').weekday;
+}
+
+/** "Di, 12. Januar" / "Tue, 12 January": the day view's `<title>`. */
+export function formatDateTitle(date: LocalDate, locale: Locale): string {
+	const { weekday, day, month } = dateParts(date, locale, 'short');
+	return locale === 'de' ? `${weekday}, ${day}. ${month}` : `${weekday}, ${day} ${month}`;
+}
+
 /** Zurich clock time "18:15" (24-hour, both languages). */
 export function formatTime(value: Instant): string {
 	const z = zoned(value);

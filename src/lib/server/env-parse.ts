@@ -32,7 +32,18 @@ export type Env = {
 	/** Production sends over SMTP; everything else goes to the local sink, even with SMTP values set. */
 	mailTransport: 'smtp' | 'sink';
 	smtp: Smtp | null;
+	/** Development only: a fixed "now" (UTC ISO instant) for trying season states. Null otherwise. */
+	devNow: string | null;
 };
+
+/** Parses DEV_NOW into canonical instant text (seconds and `Z`), or throws. */
+function parseDevNow(raw: string): string {
+	try {
+		return Temporal.Instant.from(raw).toString({ smallestUnit: 'second' });
+	} catch {
+		throw new Error(`DEV_NOW must be an ISO 8601 instant such as 2027-01-12T09:00:00Z, not "${raw}".`);
+	}
+}
 
 export function parseEnv(source: Record<string, string | undefined>, nodeEnv: string | undefined): Env {
 	const production = nodeEnv === 'production';
@@ -52,6 +63,12 @@ export function parseEnv(source: Record<string, string | undefined>, nodeEnv: st
 					: 'Copy .env.example to .env for development.')
 		);
 	}
+
+	const rawDevNow = value('DEV_NOW');
+	if (production && rawDevNow !== undefined) {
+		throw new Error('DEV_NOW is for development only; remove it from the production env.');
+	}
+	const devNow = rawDevNow === undefined ? null : parseDevNow(rawDevNow);
 
 	let smtp: Smtp | null = null;
 	if (production) {
@@ -80,6 +97,7 @@ export function parseEnv(source: Record<string, string | undefined>, nodeEnv: st
 		databasePath: value('DATABASE_PATH')!,
 		guestKeySecret: value('GUEST_KEY_SECRET')!,
 		mailTransport: production ? 'smtp' : 'sink',
-		smtp
+		smtp,
+		devNow
 	};
 }

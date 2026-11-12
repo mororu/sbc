@@ -1,19 +1,13 @@
 <script lang="ts">
-	import PageTitle from '#lib/components/PageTitle.svelte';
-	import { m } from '#lib/paraglide/messages.js';
+	import DayView from '#lib/components/DayView.svelte';
+	import SeasonNotice from '#lib/components/SeasonNotice.svelte';
+	import type { PageProps } from './$types';
+
+	let { data }: PageProps = $props();
 </script>
 
-<PageTitle title={m.home_title()} />
-
-<h1>{m.home_heading()}</h1>
-<p>{m.home_body()}</p>
-
-<style>
-	h1 {
-		font-size: var(--type-date-heading-size);
-		font-weight: var(--type-date-heading-weight);
-		line-height: var(--type-date-heading-leading);
-		letter-spacing: var(--type-date-heading-tracking);
-		margin-bottom: var(--space-4);
-	}
-</style>
+{#if data.page.kind === 'day'}
+	<DayView view={data.page} />
+{:else}
+	<SeasonNotice notice={data.page} />
+{/if}

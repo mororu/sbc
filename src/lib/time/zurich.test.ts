@@ -6,7 +6,10 @@ import {
 	compareInstants,
 	formatDateLong,
 	formatDateShort,
+	formatDateTitle,
+	formatDayMonth,
 	formatTime,
+	formatWeekday,
 	hoursInDay,
 	isValidDate,
 	lastBookableDay,
@@ -102,6 +105,21 @@ describe('formatting', () => {
 	] as const)('formats dates in %s', (locale, long, short) => {
 		expect(formatDateLong('2027-01-12', locale)).toBe(long);
 		expect(formatDateShort('2027-01-12', locale)).toBe(short);
+	});
+
+	it.each([
+		['de', '12. Januar', 'Dienstag', 'Di, 12. Januar'],
+		['en', '12 January', 'Tuesday', 'Tue, 12 January']
+	] as const)('formats heading and title parts in %s', (locale, dayMonth, weekday, title) => {
+		expect(formatDayMonth('2027-01-12', locale)).toBe(dayMonth);
+		expect(formatWeekday('2027-01-12', locale)).toBe(weekday);
+		expect(formatDateTitle('2027-01-12', locale)).toBe(title);
+	});
+
+	it('formats single-digit days and other months', () => {
+		expect(formatDayMonth('2027-01-09', 'de')).toBe('9. Januar');
+		expect(formatDayMonth('2026-12-26', 'en')).toBe('26 December');
+		expect(formatDateTitle('2027-03-28', 'de')).toBe('So, 28. März');
 	});
 
 	it('formats the DST day correctly', () => {

@@ -24,7 +24,8 @@ describe('parseEnv', () => {
 			databasePath: './data/test.sqlite',
 			guestKeySecret: 'test-only-secret',
 			mailTransport: 'sink',
-			smtp: null
+			smtp: null,
+			devNow: null
 		});
 	});
 
@@ -89,5 +90,31 @@ describe('parseEnv', () => {
 		expect(() =>
 			parseEnv({ ...devMinimal, ...smtp, GUEST_KEY_SECRET: secret }, 'production')
 		).toThrow(/GUEST_KEY_SECRET/);
+	});
+
+	it('reads DEV_NOW in development as canonical instant text', () => {
+		expect(parseEnv({ ...devMinimal, DEV_NOW: '2027-01-12T09:00Z' }, 'development').devNow).toBe(
+			'2027-01-12T09:00:00Z'
+		);
+		expect(parseEnv({ ...devMinimal, DEV_NOW: '2027-01-12T10:00:00+01:00' }, undefined).devNow).toBe(
+			'2027-01-12T09:00:00Z'
+		);
+	});
+
+	it.each(['2027-01-12', 'tomorrow', '2027-01-12T09:00:00'])('rejects DEV_NOW %s', (devNow) => {
+		expect(() => parseEnv({ ...devMinimal, DEV_NOW: devNow }, 'development')).toThrow(/DEV_NOW/);
+	});
+
+	it('refuses DEV_NOW in production', () => {
+		expect(() =>
+			parseEnv(
+				{ ...devMinimal, ...smtp, ...prodSecret, DEV_NOW: '2027-01-12T09:00:00Z' },
+				'production'
+			)
+		).toThrow(/DEV_NOW/);
+	});
+
+	it('ignores a blank DEV_NOW', () => {
+		expect(parseEnv({ ...devMinimal, DEV_NOW: ' ' }, 'development').devNow).toBeNull();
 	});
 });
