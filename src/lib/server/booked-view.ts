@@ -5,6 +5,7 @@
 import { parseNotice, type HeatState, type Notice } from '#lib/domain/index.ts';
 import type { ResolvedPathname } from '$app/types';
 import { m } from '#lib/paraglide/messages.js';
+import { mailtoHref } from '#lib/mailto.ts';
 import { getConfirmation, type Confirmation } from '#lib/server/db/queries/index.ts';
 import {
 	addMinutes,
@@ -108,7 +109,7 @@ function cancelLine(address: string, locale: Locale) {
 		term: m.booked_cancel_term({}, { locale }),
 		...around(m.booked_cancel({ address: MARKER }, { locale })),
 		address,
-		href: `mailto:${encodeURIComponent(address).replace(/%40/g, '@')}`
+		href: mailtoHref(address)
 	};
 }
 

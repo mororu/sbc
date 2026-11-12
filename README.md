@@ -21,7 +21,7 @@ npm run dev
 | `npm run dev` | Dev server; applies migrations to `DATABASE_PATH` on boot |
 | `npm run build` | Production build (adapter-node) into `build/`; fails if `src/lib/time` reaches a client chunk |
 | `npm start` | Runs the production build (`node build`); needs the production env |
-| `npm test` | Vitest, once (env parsing, db and queries, time and core, schemas, commands, day and book views, routes, layer rules, build guard) |
+| `npm test` | Vitest, once (env parsing, db and queries, time and core, schemas, commands, day and book views, content pages, routes, layer rules, build guard) |
 | `npm run check` | Generates Paraglide types, then svelte-check |
 | `npm run lint` | ESLint, including the layer boundary rules |
 | `npm run i18n:types` | Compiles `messages/` into `src/lib/paraglide` (also run by `check` and `lint`) |
@@ -72,7 +72,6 @@ These strings are not in the UX catalogue yet. They were drafted under the voice
 | `footer_info`, `info_title` | So funktioniert's | How it works |
 | `footer_privacy`, `privacy_title` | Datenschutz | Privacy |
 | `footer_imprint`, `imprint_title` | Impressum | Imprint |
-| `stub_body` (until Story 1.9) | Dieser Text folgt bald. | This text is coming soon. |
 
 ## Time and start-time core
 
@@ -265,6 +264,76 @@ The badge texts, "Das hat sich gerade geändert.", the revisit line, the "schon 
 | `booked_when` / `booked_people_term` / `booked_cancel_term` (details terms) | Wann / Personen / Absagen | When / People / To cancel |
 | `booked_when_value` (the start is a `<time>`) | {date}, {start}–{end} ("Di 12. Januar, 18:00–19:30") | {date}, {start}–{end} ("Tue 12 January, 18:00–19:30") |
 | `booked_cancel` (the cancel line; the address is a `mailto:` link) | Schreib an {address}. | Email {address}. |
+
+## Content pages: So funktioniert's, Datenschutz, Impressum (Story 1.9)
+
+### The pages
+
+- `/info`, `/privacy` and `/imprint` render `ContentPage.svelte`: the unique `<title>` ("So funktioniert's · Sauna Luegisee", "Datenschutz · Sauna Luegisee", "Impressum · Sauna Luegisee"; EN "How it works", "Privacy", "Imprint"), one `h1` and per slot an `h2` with its text. No guest data and no third-party embeds.
+- Text layout: the text is trimmed; a blank line starts a new paragraph (runs of blank lines count once); a single newline is a line break, so a postal address keeps its lines.
+- `src/lib/content/pages.ts` is the one source of the page structure: `PAGES` lists each page's slots in order, `contentPage(id, locale)` builds them, and `placeholderSlots()` lists every slot key whose DE or EN heading or text still starts with `[PLATZHALTER]` or contains any bracketed gap such as `[Frist]` / `[period]` (for the launch readiness check, Story 5.5).
+
+### Slots
+
+Each slot has two messages in `messages/de.json` and `messages/en.json`: `{slot}_heading` and `{slot}_body`.
+
+| Page | Slots, in order |
+| --- | --- |
+| `/info` | `info_location`, `info_heating` (hot vs cold start, lighting the fire), `info_keybox`, `info_cancelling` (by email to the admins), `info_contact` |
+| `/privacy` | `privacy_operator`, `privacy_contact`, `privacy_purposes` (name, email, mobile), `privacy_retention`, `privacy_backups` (period from Story 5.3), `privacy_tracking` |
+| `/imprint` | `imprint_operator`, `imprint_address`, `imprint_contact`, `imprint_responsible` |
+
+### For the operators: filling a slot
+
+- **Every text that starts with `[PLATZHALTER]` is a placeholder** and must be replaced before launch. Any other bracketed gap (`[Frist]`, `[period]`) is also still open.
+- **The drafted facts after the marker must be checked before you remove it:** the cookies (only the language cookie for guests; the theme stays in the browser), the retention (deletion 30 days after the season ends), the keybox timing (code by email 24 hours before the start), the backups (nightly, in Switzerland; the period comes from Story 5.3) and the field purposes. Keep only what is true.
+- To fill a slot, edit its `_body` value (and, if needed, its `_heading`) in `messages/de.json` and `messages/en.json` and delete the marker. Nothing else changes: no code, no test. There is no CMS and no admin editing for these texts.
+- **No English yet?** Set the English `_body` to `""`. English mode then shows the German text, marked `lang="de"` so screen readers pronounce it as German. German is never empty, and headings are never empty in either language.
+- `npm test` fails if a slot lacks a DE or EN entry, if a German entry or an English heading is empty, if `PLATZHALTER` appears anywhere but as the exact `[PLATZHALTER] ` prefix, or if a heading or text is a placeholder in one language but not in the other. So remove the marker in both languages at once (or set the English body to `""`).
+
+### Footer contact
+
+- The footer shows the admin contact after Impressum: a `mailto:` link with the address as its visible text, 44 px high and muted like the other links. Screen readers hear "Kontakt: " / "Contact: " first (a visually hidden label inside the link).
+- The guest layout load (`src/routes/(guest)/+layout.server.ts`) reads it with `getAdminContact`, which selects only `setting.admin_contact` of row 1. A missing or blank address shows no contact link. If the read fails, the error is logged and the footer shows no contact link, so every guest page still renders.
+- `src/lib/mailto.ts` (`mailtoHref`) encodes the address for the href (keeping the `@`); the confirmation's cancel line uses the same helper.
+
+### Drafted copy for operator review (Story 1.9)
+
+The headings and the footer label are drafted copy. The bodies are placeholders: everything after `[PLATZHALTER]` is a draft to check (see above).
+
+| Key | DE | EN |
+| --- | --- | --- |
+| `footer_contact_label` (hidden for screen readers before the footer address) | Kontakt: | Contact: |
+| `info_location_heading` | Wo der Wagen steht | Where the wagon is |
+| `info_location_body` | [PLATZHALTER] Wo der Saunawagen steht und wie du hinkommst. | [PLATZHALTER] Where the sauna wagon stands and how to get there. |
+| `info_heating_heading` | Einheizen | Heating |
+| `info_heating_body` | [PLATZHALTER] Schon heiss: Vor dir war jemand da, der Ofen läuft schon. Kaltstart: Niemand ist vor dir, du heizt selbst ein. Komm dann zur angegebenen Zeit, damit die Sauna zum Start warm ist. Wie du das Feuer anzündest, steht hier. | [PLATZHALTER] Already hot: someone was there before you and the stove is running. Cold start: nobody is before you, so you light the fire yourself. Come at the time shown, so the sauna is warm when your time starts. How to light the fire goes here. |
+| `info_keybox_heading` | Schlüsselbox | Keybox |
+| `info_keybox_body` | [PLATZHALTER] Den Code für die Schlüsselbox bekommst du 24 Stunden vor deinem Start per E-Mail. Wo die Box ist und wohin der Schlüssel danach kommt, steht hier. | [PLATZHALTER] You get the keybox code by email 24 hours before your start. Where the box is and where the key goes afterwards goes here. |
+| `info_cancelling_heading` | Absagen | Cancelling |
+| `info_cancelling_body` | [PLATZHALTER] Wenn du nicht kommen kannst, schreib uns eine E-Mail. Die Adresse steht unten auf jeder Seite. | [PLATZHALTER] If you can't come, send us an email. The address is at the bottom of every page. |
+| `info_contact_heading` | Kontakt | Contact |
+| `info_contact_body` | [PLATZHALTER] Wie du uns erreichst. | [PLATZHALTER] How to reach us. |
+| `privacy_operator_heading` | Verantwortlich | Who is responsible |
+| `privacy_operator_body` | [PLATZHALTER] Wer die Sauna betreibt und für deine Angaben verantwortlich ist. | [PLATZHALTER] Who runs the sauna and is responsible for your details. |
+| `privacy_contact_heading` | Kontakt | Contact |
+| `privacy_contact_body` | [PLATZHALTER] Wie du uns bei Fragen zu deinen Angaben erreichst. | [PLATZHALTER] How to reach us with questions about your details. |
+| `privacy_purposes_heading` | Wofür wir deine Angaben brauchen | What we use your details for |
+| `privacy_purposes_body` | [PLATZHALTER] Name: damit wir die Buchung an der Sauna zuordnen können. E-Mail: für die Bestätigung und den Schlüsselcode. Handy: nur falls wir dich kurzfristig anrufen müssen. | [PLATZHALTER] Name: so we can match the booking at the sauna. Email: for the confirmation and the keybox code. Mobile: only in case we need to call you at short notice. |
+| `privacy_retention_heading` | Wie lange wir sie behalten | How long we keep them |
+| `privacy_retention_body` | [PLATZHALTER] Wir löschen deine Angaben 30 Tage nach dem Ende der Saison. | [PLATZHALTER] We delete your details 30 days after the season ends. |
+| `privacy_backups_heading` | Sicherungen | Backups |
+| `privacy_backups_body` | [PLATZHALTER] Wir sichern die Daten jede Nacht in der Schweiz. Gelöschte Angaben können in diesen Sicherungen noch bis zu [Frist] bleiben, dann sind sie auch dort weg. | [PLATZHALTER] We back up the data every night in Switzerland. Deleted details can stay in these backups for up to [period], then they are gone there too. |
+| `privacy_tracking_heading` | Kein Tracking | No tracking |
+| `privacy_tracking_body` | [PLATZHALTER] Es gibt kein Tracking und keine Analyse-Dienste von Dritten. Die Seite setzt nur ein Cookie, für deine Sprache. Ob du das helle oder dunkle Design gewählt hast, bleibt in deinem Browser. | [PLATZHALTER] There is no tracking and no third-party analytics. The site sets only one cookie, for your language. Whether you chose the light or dark design stays in your browser. |
+| `imprint_operator_heading` | Betreiber | Operator |
+| `imprint_operator_body` | [PLATZHALTER] Name der Betreiber. | [PLATZHALTER] Name of the operators. |
+| `imprint_address_heading` | Adresse | Address |
+| `imprint_address_body` | [PLATZHALTER] Postadresse. | [PLATZHALTER] Postal address. |
+| `imprint_contact_heading` | Kontakt | Contact |
+| `imprint_contact_body` | [PLATZHALTER] E-Mail-Adresse. | [PLATZHALTER] Email address. |
+| `imprint_responsible_heading` | Verantwortlich für den Inhalt | Responsible for the content |
+| `imprint_responsible_body` | [PLATZHALTER] Name der verantwortlichen Person. | [PLATZHALTER] Name of the responsible person. |
 
 ## Scaffold decisions
 

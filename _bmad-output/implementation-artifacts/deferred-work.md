@@ -24,3 +24,6 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-1-8-guest-sees-the-confirmation-with-the-notice-at-booking.md`
   summary: Add a browser-level test layer (Vitest browser mode or a small Playwright flow) for client behaviour that server tests cannot reach: day switching state, BookForm busy/slow/failure handling, sessionStorage prefill, shallow URL cleanups, focus management.
   evidence: Raised by the verification-gap review in Stories 1.5, 1.7 and 1.8; the repo has only a node test project, so these behaviours are checked by hand only. Needs a new dev dependency, so it is a decision of its own.
+- source_spec: `_bmad-output/implementation-artifacts/spec-1-9-so-funktioniert-s-privacy-statement-and-impressum-pages.md`
+  summary: Have the operators (or a legal check) confirm the privacy and Impressum slots fit Swiss law (revDSG, UWG). Possibly missing slots are guest rights (access, correction, deletion), recipients and processors (hosting, mail provider), transfers abroad, server logs, and a UID/register entry in the Impressum.
+  evidence: Story 1.9 review; the slots follow the epic's list and partly a German model ("Verantwortlich für den Inhalt"). Adding slots is cheap once the operators say what they need; the content is theirs.
