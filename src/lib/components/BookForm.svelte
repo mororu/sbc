@@ -6,8 +6,12 @@
 	- one tap submits: the button reads "Wird gebucht …" with aria-disabled, further taps are ignored,
 	  a polite status says the same, and after 15 s the "dauert gerade länger" line;
 	- a network or server failure shows the error at the top, focused, with "Fehler: " in the title;
-	- name, email and mobile are kept in sessionStorage for this browser session (never in a URL or
-	  cookie), so a conflict or a second booking does not re-ask;
+	- name, email and mobile are kept in sessionStorage (never in a URL or cookie), so a conflict
+	  does not re-ask; they are removed once a booking succeeds, so a shared device does not prefill
+	  the next guest's form;
+	- the submit token it sends is kept in sessionStorage with the form's path (pending). A reload of
+	  this form reuses it, and after a lost response the day page looks it up and goes on to the
+	  confirmation (see day-nav.ts). Cleared once the server answers the submit with a redirect;
 	- duration and party size are mirrored into `?d=&p=` (shallow, replacing the entry), so the
 	  language switch keeps them.
 -->
@@ -18,6 +22,15 @@
 	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
 	import { m } from '#lib/paraglide/messages.js';
+	import {
+		afterFormRedirect,
+		CONTACT_KEY,
+		formToken,
+		readPending,
+		sessionStore,
+		writePending,
+		type Pending
+	} from '#lib/day-nav.ts';
 	import {
 		BOOKING_FIELDS,
 		CONTACT_FIELDS,
@@ -46,7 +59,6 @@
 
 	let { view, failure }: { view: BookView; failure: Failure | null } = $props();
 
-	const STORAGE_KEY = 'sauna-booking.contact';
 	const SLOW_MS = 15_000;
 
 	const messages: Record<BookingErrorKey, () => string> = {
@@ -79,6 +91,10 @@
 	let errors: BookingErrors = $state(start.errors);
 	/** Set by a submit with errors; the summary counts the contact fields. */
 	let summary = $state(Object.keys(start.errors).length > 0);
+	/** The pending submit read on mount: its token replaces the fresh one on the same form path. */
+	let pending = $state<Pending | null>(null);
+	// Only in the browser (pending is set on mount): the server render keeps the fresh token.
+	const submitToken = $derived(pending ? formToken(pending, page.url.pathname, view.submitToken) : view.submitToken);
 	let busy = $state(false);
 	let slow = $state(false);
 	let failed = $state(false);
@@ -103,15 +119,16 @@
 
 	function save() {
 		try {
-			sessionStorage.setItem(STORAGE_KEY, JSON.stringify(contact));
+			sessionStorage.setItem(CONTACT_KEY, JSON.stringify(contact));
 		} catch {
 			// Storage can be off (private mode, quota): the form still works.
 		}
 	}
 
 	onMount(() => {
+		pending = readPending(sessionStore());
 		try {
-			const stored = JSON.parse(sessionStorage.getItem(STORAGE_KEY) ?? 'null') as Record<string, unknown> | null;
+			const stored = JSON.parse(sessionStorage.getItem(CONTACT_KEY) ?? 'null') as Record<string, unknown> | null;
 			if (!stored) return;
 			for (const field of CONTACT_FIELDS) {
 				const value = stored[field];
@@ -177,6 +194,9 @@
 			void showErrors(parsed.errors);
 			return;
 		}
+		const path = page.url.pathname;
+		writePending(sessionStore(), path, parsed.value.submitToken);
+		pending = { path, token: parsed.value.submitToken };
 		busy = true;
 		slow = false;
 		failed = false;
@@ -199,6 +219,8 @@
 				return;
 			}
 			// A redirect: to the confirmation, or to the day with the conflict message.
+			// The server answered this token: nothing is pending any more. Booked: the contact details go too.
+			if (result.type === 'redirect') afterFormRedirect(sessionStore(), result.location);
 			try {
 				await update();
 			} finally {
@@ -230,7 +252,7 @@
 		{/if}
 	{/key}
 
-	<input type="hidden" name="submitToken" value={view.submitToken} />
+	<input type="hidden" name="submitToken" value={submitToken} />
 	<input type="hidden" name="notice" value={view.noticeToken} />
 
 	<SegmentedControl

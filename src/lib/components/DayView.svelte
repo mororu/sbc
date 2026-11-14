@@ -5,9 +5,12 @@
 	Everything is a plain link, so it works without JavaScript. With JavaScript, while SvelteKit
 	loads another day the strip selects it at once, the list is dimmed and busy, and "Lädt …"
 	appears after 1 s; on arrival the status announces the day's status line.
+	A conflict or past message for the form whose submit is pending (see day-nav.ts) may be the guest's own
+	booking after a lost response: the token is looked up (POST /booked) and, if it booked, the page
+	moves on to the confirmation. Until the lookup answers the message stays as rendered.
 -->
 <script lang="ts">
-	import { tick } from 'svelte';
+	import { onDestroy, tick } from 'svelte';
 	import { afterNavigate, goto } from '$app/navigation';
 	import { navigating, page } from '$app/state';
 	import DateStrip from './DateStrip.svelte';
@@ -15,21 +18,61 @@
 	import InlineMessage from './InlineMessage.svelte';
 	import PageTitle from './PageTitle.svelte';
 	import StartTimeRow from './StartTimeRow.svelte';
-	import { isDayPath, pendingDay, shouldAnnounce, withoutDayError } from '#lib/day-nav.ts';
+	import {
+		isDayPath,
+		pendingDay,
+		readPending,
+		resumePending,
+		resumeToken,
+		sessionStore,
+		shouldAnnounce,
+		withoutDayError
+	} from '#lib/day-nav.ts';
 	import type { DayView } from '#lib/server/day-view.ts';
 
 	let { view }: { view: DayView } = $props();
 
 	const SLOW_MS = 1000;
 
+	// Counts the page's real (not shallow) navigations, and is bumped when the view goes away: a
+	// resume that started before another navigation must not jump to the confirmation.
+	let navCount = 0;
+	onDestroy(() => navCount++);
+
 	// Once a refusal message is shown, drop `?error=&time=` from the address (shallow, replacing the
 	// entry), so a reload, a bookmark or the language switch does not show it again. After the
 	// navigation has finished, so the message keeps its focus and the title its "Fehler: ".
-	afterNavigate(() => {
-		const clean = withoutDayError(new URL((page.shallow?.url ?? page.url).href));
+	// Before that, a refusal for the form whose submit is pending starts the resume (see day-nav.ts).
+	afterNavigate((nav) => {
+		if (!nav.shallow) navCount++;
+		const url = new URL((page.shallow?.url ?? page.url).href);
+		const token = resumeToken(url, view.date, readPending(sessionStore()));
+		if (token) void resume(token).catch(() => {});
+		const clean = withoutDayError(url);
 		// eslint-disable-next-line svelte/no-navigation-without-resolve -- the current page, less its query
 		if (clean) void goto(clean, { shallow: true, replace: true, state: {} });
 	});
+
+	/** Looks up the pending token and, if it booked, moves on to the confirmation (replacing this entry). */
+	function resume(token: string) {
+		const started = navCount;
+		return resumePending({
+			storage: sessionStore(),
+			fetcher: fetch,
+			// Root-relative like every path the client helpers check: the app has no base path.
+			endpoint: '/booked',
+			token,
+			stillHere: () => navCount === started,
+			navigate: async (href) => {
+				try {
+					// eslint-disable-next-line svelte/no-navigation-without-resolve -- a confirmation path from the server
+					await goto(href, { replace: true });
+				} catch {
+					location.assign(href);
+				}
+			}
+		});
+	}
 
 	// While a day loads, the list is busy; the strip selects the target at once if it is a
 	// selectable cell, otherwise the current selection stays.

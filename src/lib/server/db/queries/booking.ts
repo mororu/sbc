@@ -3,7 +3,8 @@
 import { and, eq, gte, lte } from 'drizzle-orm';
 import type { Instant, LocalDate } from '#lib/time/index.ts';
 import { getDb, type Db } from '../index.ts';
-import { booking, season, setting } from '../schema.ts';
+import { booking, season } from '../schema.ts';
+import { getAdminContact } from './setting.ts';
 
 export type Confirmation = {
 	start: Instant;
@@ -32,14 +33,14 @@ export function getConfirmation(publicId: string, db: Db = getDb()): Confirmatio
 		.where(eq(booking.publicId, publicId))
 		.get();
 	if (!row || row.deletedAt) return null;
-	const contact = db.select({ adminContact: setting.adminContact }).from(setting).get();
 	return {
 		start: row.start,
 		durationMin: row.durationMin,
 		partySize: row.partySize,
 		createdAt: row.createdAt,
 		noticeAtBooking: row.noticeAtBooking,
-		adminContact: contact?.adminContact ?? null
+		// Read like the footer: trimmed, the one settings row, blank as none.
+		adminContact: getAdminContact(db)
 	};
 }
 

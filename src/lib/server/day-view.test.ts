@@ -586,10 +586,14 @@ describe('loadDayView', () => {
 		});
 	});
 
-	it('carries a refusal onto the redirect when the day is no longer selectable', () => {
+	it('drops a refusal on the redirect when the day is no longer selectable', () => {
 		expect(load('2026-01-01', undefined, { error: 'past', time: '2330' })).toEqual({
 			kind: 'redirect',
-			to: '/day/2027-01-12?error=past&time=2330'
+			to: '/day/2027-01-12'
+		});
+		expect(load('2026-01-01', undefined, { error: 'conflict', time: '1800' })).toEqual({
+			kind: 'redirect',
+			to: '/day/2027-01-12'
 		});
 		expect(load('2026-01-01', undefined, { error: 'oops', time: '2330' })).toEqual({
 			kind: 'redirect',

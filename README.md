@@ -181,7 +181,7 @@ The EN day title follows the DE pattern: "Tue, 12 January". "Nur" is used for ex
 
 - Public ids and submit tokens are `crypto.randomBytes(16)` as base64url (22 characters, `src/lib/server/ids.ts`), unique in the database. The schema and the command share one pattern for them (`RANDOM_ID`). Every form load makes a fresh token. Row ids never reach a guest page.
 - Name, email and mobile never go into a URL, cookie, redirect or log. The only query parameters in the flow are `d`, `p`, `error`, `time`, `new` and `changed`. The form and the confirmation are sent with `cache-control: private, no-store`; the confirmation and the error page carry `noindex`.
-- With JavaScript, name, email and mobile (only those) are kept in `sessionStorage` under `sauna-booking.contact`, written on input and on submit and read to prefill empty fields, so a conflict, a language switch or a second booking does not re-ask. Nothing else is stored.
+- With JavaScript, name, email and mobile (only those) are kept in `sessionStorage` under `sauna-booking.contact`, written on input and on submit and read to prefill empty fields, so a conflict or a language switch does not re-ask. They are removed once a booking succeeds. The only other entry is the pending submit token (both described under Story 1.10).
 
 ### Validation (AD-16)
 
@@ -286,7 +286,7 @@ Each slot has two messages in `messages/de.json` and `messages/en.json`: `{slot}
 ### For the operators: filling a slot
 
 - **Every text that starts with `[PLATZHALTER]` is a placeholder** and must be replaced before launch. Any other bracketed gap (`[Frist]`, `[period]`) is also still open.
-- **The drafted facts after the marker must be checked before you remove it:** the cookies (only the language cookie for guests; the theme stays in the browser), the retention (deletion 30 days after the season ends), the keybox timing (code by email 24 hours before the start), the backups (nightly, in Switzerland; the period comes from Story 5.3) and the field purposes. Keep only what is true.
+- **The drafted facts after the marker must be checked before you remove it:** the cookies (only the language cookie for guests; the theme stays in the browser; the booking form's contact details stay in session storage until the booking succeeds), the retention (deletion 30 days after the season ends), the keybox timing (code by email 24 hours before the start), the backups (nightly, in Switzerland; the period comes from Story 5.3) and the field purposes. Keep only what is true.
 - To fill a slot, edit its `_body` value (and, if needed, its `_heading`) in `messages/de.json` and `messages/en.json` and delete the marker. Nothing else changes: no code, no test. There is no CMS and no admin editing for these texts.
 - **No English yet?** Set the English `_body` to `""`. English mode then shows the German text, marked `lang="de"` so screen readers pronounce it as German. German is never empty, and headings are never empty in either language.
 - `npm test` fails if a slot lacks a DE or EN entry, if a German entry or an English heading is empty, if `PLATZHALTER` appears anywhere but as the exact `[PLATZHALTER] ` prefix, or if a heading or text is a placeholder in one language but not in the other. So remove the marker in both languages at once (or set the English body to `""`).
@@ -334,6 +334,38 @@ The headings and the footer label are drafted copy. The bodies are placeholders:
 | `imprint_contact_body` | [PLATZHALTER] E-Mail-Adresse. | [PLATZHALTER] Email address. |
 | `imprint_responsible_heading` | Verantwortlich für den Inhalt | Responsible for the content |
 | `imprint_responsible_body` | [PLATZHALTER] Name der verantwortlichen Person. | [PLATZHALTER] Name of the responsible person. |
+
+## Epic 1 hardening (Story 1.10)
+
+### Resume after a lost response
+
+- The booking form stores the submit token it sends, with its path, in `sessionStorage` (`sauna-booking.pending`, one entry: the latest submit). If the guest reloads the form on the same path while the time is still free, the form sends the stored token instead of the server's fresh one, so a retry stays idempotent.
+- If the booking did go through but the response was lost, a reload or a language switch of the form redirects to `/day/{date}?error=conflict&time={hhmm}` (the time is now taken), or with `error=past` once the start has passed. With JavaScript, the day page sees that the pending path is `/book/{date}/{hhmm}` and POSTs `{ submitToken }` as JSON to `/booked` (`src/routes/(guest)/booked/+server.ts`). A live booking answers `200 { href: "/booked/{id}?new=1" }` and the page replaces itself with the confirmation. An unknown or deleted booking answers a bare 404 (a malformed body a bare 400): the conflict message stays and the pending entry is dropped. A network error keeps it for the next reload. The message stays as rendered until the lookup answers.
+- The token is a 128-bit capability equal to resubmitting the form, so the lookup exposes nothing new. It goes only in the POST body, never in a URL, cookie or log; the answer is `private, no-store`. `GET /booked` answers 405.
+- Any redirect answering the form's own submit clears the pending entry: the server has answered that token, so nothing is lost (and a token whose booking an admin deleted is not sent again). After a booking (the form's redirect to `/booked/…`, or a resume) the contact details (`sauna-booking.contact`) are removed too, so a shared device does not prefill the next guest's form. A resume clears storage before it navigates, and falls back to a full page load if the client navigation fails.
+- A resume that started before the guest navigated elsewhere (even away and back to the same day) does not move them: the entry stays for the next reload.
+- **Known limits:** `sessionStorage` is per tab, so a new tab or window does not resume. When the reload lands on a day that is no longer selectable, the refusal query is dropped (A4) and there is no resume either. The confirmation email (Epic 2) covers both.
+- The client storage helpers, like the server view models, use root-relative paths (`/book/…`, `/booked`): they assume the app has no base path.
+- Every `sessionStorage` access is wrapped in try/catch: without storage the pages work as before, only without prefill and resume. Without JavaScript nothing changes. The helpers are in `src/lib/day-nav.ts` (unit-tested).
+
+### Root 404 and favicon
+
+- `src/routes/(guest)/[...path]/+page.server.ts` throws a 404 for any path no other route matches, so it renders `(guest)/+error.svelte` inside the guest shell (header, footer with the contact) in DE and EN instead of SvelteKit's bare English page. `/admin` gets the same 404 until Epic 3 adds its routes.
+- `src/routes/+error.svelte` is the fallback for errors outside the guest layout (for example when the guest layout's own load fails): header, the same message and calendar link, `noindex`, no footer.
+- `static/favicon.svg` (a flame in the Lärche palette, linked from `src/app.html`) and `static/favicon.ico` (32 px, the same drawing as a PNG inside an ICO) stop the `404 GET /favicon.ico` on every page load.
+
+### Other fixes
+
+- The confirmation reads the admin contact with `getAdminContact` (trimmed, row 1, blank as none), like the footer.
+- A refusal (`?error=&time=`) on a day that is no longer selectable is dropped on the redirect to the nearest day: its time belongs to another day.
+- The skip link reads "Zum Inhalt" / "Skip to content" where it targets `main`; day pages keep "Zu den Zeiten".
+
+### Drafted copy for operator review (Story 1.10)
+
+| Key | DE | EN |
+| --- | --- | --- |
+| `skip_to_content` (skip link on pages without start times) | Zum Inhalt | Skip to content |
+| `privacy_tracking_body` (added sentence, still behind `[PLATZHALTER]`) | Das Buchungsformular behält Name, E-Mail und Handynummer im Sitzungsspeicher deines Browsers, bis die Buchung geklappt hat oder du den Tab schliesst. | The booking form keeps your name, email and mobile in your browser's session storage until the booking has gone through or you close the tab. |
 
 ## Scaffold decisions
 

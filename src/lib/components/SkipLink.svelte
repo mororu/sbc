@@ -1,12 +1,15 @@
 <!-- Skip link (UX-DR11): first focusable element; off-screen until focused. On a day view it skips
-     past the date strip to the start-time list (#times); elsewhere it goes to #main. -->
+     past the date strip to the start-time list (#times, "Zu den Zeiten"); elsewhere it goes to
+     #main ("Zum Inhalt"). -->
 <script lang="ts">
 	import { m } from '#lib/paraglide/messages.js';
 
 	let { target = 'main' }: { target?: 'main' | 'times' } = $props();
 </script>
 
-<a class="skip-link" href={target === 'times' ? '#times' : '#main'}>{m.skip_to_times()}</a>
+<a class="skip-link" href={target === 'times' ? '#times' : '#main'}>
+	{target === 'times' ? m.skip_to_times() : m.skip_to_content()}
+</a>
 
 <style>
 	.skip-link {
