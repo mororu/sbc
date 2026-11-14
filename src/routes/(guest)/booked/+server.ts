@@ -4,7 +4,7 @@
 // resubmitting the form, so this exposes nothing new. It goes only in the POST body, never in a URL,
 // cookie or log. A malformed body is a bare 400; an unknown or deleted booking a bare 404.
 import { json } from '@sveltejs/kit';
-import { bookedHref } from '#lib/server/book-view.ts';
+import { bookedHref } from '#lib/server/guest-urls.ts';
 import { bookingByToken } from '#lib/server/db/queries/index.ts';
 import { isRandomId } from '#lib/server/ids.ts';
 import type { RequestHandler } from './$types';

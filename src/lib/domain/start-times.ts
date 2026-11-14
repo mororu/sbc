@@ -2,6 +2,7 @@
 // Pure: every input, including `now`, is a parameter. The calendar and the book command both call
 // `offeredStartTimes`, so the calendar never offers a time the command would refuse.
 import {
+	addDays,
 	addMinutes,
 	compareDates,
 	compareInstants,
@@ -55,6 +56,16 @@ export function isBookableDay(
 	return seasons.some(
 		(s) => compareDates(s.startDate, date) <= 0 && compareDates(date, s.endDate) <= 0
 	);
+}
+
+/**
+ * The window of bookings and blocks that can affect a day's start times: [day−1 00:00, day+2 00:00)
+ * local time. The neighbours matter because a booking or block can reach across midnight: a booking
+ * late on the day before still needs its changeover and heats the first start, and one early on the
+ * day after limits how long the last start may run. Every reader of a day's items uses this window.
+ */
+export function dayItemsWindow(date: LocalDate): { from: Instant; to: Instant } {
+	return { from: toInstant(addDays(date, -1), 0), to: toInstant(addDays(date, 2), 0) };
 }
 
 /** True if a new booking [start, end) keeps one current changeover to every booking and overlaps no block. */

@@ -7,7 +7,8 @@ import { fail, redirect } from '@sveltejs/kit';
 import { getLocale } from '#lib/paraglide/runtime.js';
 import { parseNotice, type Notice } from '#lib/domain/index.ts';
 import { BOOKING_FIELDS, parseBooking, type BookingErrors } from '#lib/schemas/index.ts';
-import { bookedHref, dayErrorHref, invalidUrlTarget, loadBookView, parseStart } from '#lib/server/book-view.ts';
+import { invalidUrlTarget, loadBookView, parseStart } from '#lib/server/book-view.ts';
+import { bookedHref, dayErrorHref } from '#lib/server/guest-urls.ts';
 import { createBooking, isLockTimeout, type CreateBookingResult } from '#lib/server/commands/index.ts';
 import type { Actions, PageServerLoad } from './$types';
 

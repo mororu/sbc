@@ -3,3 +3,4 @@
 export * from './start-times.ts';
 export * from './calendar.ts';
 export * from './notice.ts';
+export * from './keybox.ts';

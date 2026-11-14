@@ -15,17 +15,15 @@ import {
 } from '#lib/domain/index.ts';
 import { normaliseMobile, PARTY_SIZES, validateContactField } from '#lib/schemas/index.ts';
 import {
-	addDays,
 	isValidInstant,
 	localDate,
 	compareInstants,
-	toInstant,
 	type Instant,
 	type Locale
 } from '#lib/time/index.ts';
 import { now as clockNow } from '../clock.ts';
 import { getDb, type Db } from '../db/index.ts';
-import { bookingByToken, getDayItems, getSeasons, getSettings, seasonIdFor } from '../db/queries/index.ts';
+import { bookingByToken, getDayData, seasonIdFor } from '../db/queries/index.ts';
 import { booking, LOCALES } from '../db/schema.ts';
 import { isRandomId, randomId } from '../ids.ts';
 
@@ -121,9 +119,7 @@ export function createBooking(
 		if (compareInstants(input.start, now) <= 0) return { ok: false, code: 'past' };
 
 		const date = localDate(input.start);
-		const settings = getSettings(db);
-		const seasons = getSeasons(db);
-		const { bookings, blocks } = getDayItems(toInstant(addDays(date, -1), 0), toInstant(addDays(date, 2), 0), db);
+		const { settings, seasons, bookings, blocks } = getDayData(date, db);
 		const offer = offeredStartTimes({ date, bookings, blocks, settings, seasons, now }).find(
 			(o) => o.start === input.start
 		);
