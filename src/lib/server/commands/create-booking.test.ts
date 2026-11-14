@@ -342,7 +342,8 @@ describe('createBooking: the confirmation and keybox outbox rows (Stories 2.1, 2
 		snapshot_urgent: null,
 		snapshot_last_told: null,
 		reason: null,
-		outcome_at: null
+		outcome_at: null,
+		resolved_at: null
 	});
 
 	it('inserts a pending confirmation due now and a pending keybox row due at the cutoff, with no contact data or snapshot', () => {

@@ -21,6 +21,15 @@ export type OutboxState = (typeof OUTBOX_STATE_LIST)[number];
 /** A heat-change row is due this many minutes after the last change, so a burst of changes settles into one email. */
 export const SETTLE_DELAY_MIN = 10;
 
+/** A keybox row still not accepted this many minutes after its original due time makes the booking call required (Story 2.4). */
+export const KEYBOX_OVERDUE_MIN = 15;
+
+/**
+ * A keybox row is overdue at the latest this many minutes before the start (never before it was
+ * due), so a booking made shortly before its start is on the call list before it drops off at the start.
+ */
+export const KEYBOX_OVERDUE_BEFORE_START_MIN = 5;
+
 /** An `in_flight` row claimed this many minutes ago or longer is stale: boot returns it to `pending`. */
 export const IN_FLIGHT_TIMEOUT_MIN = 10;
 

@@ -52,7 +52,7 @@ development_status:
   2-1-guest-receives-a-confirmation-email: review
   2-2-guest-receives-the-keybox-email-at-the-24-hour-cutoff: review
   2-3-guest-is-emailed-when-the-heat-state-changes: review
-  2-4-refused-and-stuck-sends-are-recorded: in-progress
+  2-4-refused-and-stuck-sends-are-recorded: review
   epic-2-retrospective: optional
 
   epic-3: backlog

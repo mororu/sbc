@@ -430,6 +430,15 @@ The DE good-news subject and body, the DE cold-start subjects and the DE "neue A
 
 A collapsed range, or an arrival already past at the send, reuses the day-view cold notice text after the lead.
 
+## Refused and stuck sends (Story 2.4)
+
+- `sendProblems(entry, now)` in `src/lib/domain/call-list.ts` derives, per booking, the rows that make it **call required** (`keybox_refused`, `keybox_expired`, `keybox_overdue`, `warning_refused`, `warning_expired`) and the other unresolved refusals, each ordered by row id. `callList(feed, now)` turns the whole feed into the bookings with a problem, ordered by start, then booking id. `getSendProblemRows(now)` builds the feed; it reads no contact data and no keybox code.
+- **Bookings drop off the call list once they start** (AD-21): the feed holds only live bookings that have not started. Rows expire only at the start, so `keybox_expired` and `warning_expired` do not come out of the feed today; they stay in the core as a safety net.
+- A keybox row that has not gone out is overdue 15 minutes (`KEYBOX_OVERDUE_MIN`) after its original due time, `keyboxDueAt(start, createdAt)`, not after `outbox.due_at`, which every retry moves forward. **The overdue time is clamped to at most 5 minutes before the start (`KEYBOX_OVERDUE_BEFORE_START_MIN`), and never before the due time.** This clamp is what keeps a booking made shortly before its start on the call list before it drops off.
+- A held keybox row (a setting missing, still `pending`) is overdue like any other: the admin must call the guest.
+- "Latest" means highest row id. A heat row that expired unclaimed has no urgent flag and counts as not urgent.
+- Migration `0007_outbox_resolved.sql` adds `outbox.resolved_at`. Only mark called (Story 3.6) writes it; a resolved row never raises an entry again. Nothing displays the call list yet (Epic 3).
+
 ## Scaffold decisions
 
 1. **Instants are UTC ISO 8601 text** with seconds and `Z`, e.g. `2027-01-12T17:00:00Z`, everywhere, including the notice JSON. It is readable in the database and in logs, sorts correctly as text, and round-trips through Temporal without loss. Wall-clock dates in URLs stay `yyyy-mm-dd`, times `hhmm`.

@@ -1,12 +1,13 @@
-// Stories 2.1, 2.2 and 2.3: the worker drains the outbox into the sink, logs without contact data or the
+// Stories 2.1–2.4: the worker drains the outbox into the sink, logs without contact data or the
 // keybox code, records the heartbeat, and starts only once per process. Runs on a temp-file database.
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { Notice } from '#lib/domain/index.ts';
+import { callList, sendProblems, type Notice } from '#lib/domain/index.ts';
 import { claimDueRow, createBooking } from '#lib/server/commands/index.ts';
 import { createMailer, type Mailer } from '#lib/server/mail/index.ts';
+import { getSendProblemRows } from '#lib/server/db/queries/index.ts';
 // The test sets up its own temp database; app code reaches the db only through commands and queries.
 // eslint-disable-next-line no-restricted-imports
 import { createDb, openDatabase, type Db } from '../db/index.ts';
@@ -385,6 +386,70 @@ describe('tick: the good-news email in English (Story 2.3)', () => {
 		expect(
 			sqlite.prepare("select last_told_notice as n from booking where start_at = '2027-01-12T17:30:00Z'").get()
 		).toEqual({ n: '{"heat":"hot","earliest":null,"latest":null}' });
+	});
+});
+
+describe('tick: refused and stuck sends (Story 2.4)', () => {
+	/** 15:30 on the day, for 18:00: past the cutoff, so the confirmation and the keybox row are due now. */
+	const LATE = '2027-01-12T14:30:00Z';
+	const SENT = '2027-01-12T14:31:00Z';
+	const lateDeps = () => ({ ...deps(), now: () => SENT });
+	/** Throws like nodemailer for the keybox email only: the server's text names the guest. */
+	const failingKeybox = (error: object): Mailer => ({
+		send: async (message) => {
+			if (message.kind !== 'keybox') return { outcome: 'accepted', smtpCode: 250, reason: null };
+			throw Object.assign(new Error(`failed for ${message.to}`), error);
+		}
+	});
+	const keyboxRow = () =>
+		sqlite.prepare("select id, state, reason from outbox where kind = 'keybox'").get() as {
+			id: number;
+			state: string;
+			reason: string | null;
+		};
+	const SECRETS = ['4711', '4 7 1 1', 'Lena', 'lena@example.ch', '+41791234567'];
+
+	beforeEach(() => {
+		sqlite.prepare("update setting set keybox_code = '4711', keybox_instructions_de = 'Box links.' where id = 1").run();
+		book('2027-01-12T17:00:00Z', LATE);
+	});
+
+	it('logs a 5xx refusal with the row id, state and SMTP code only, and reports it as keybox_refused', async () => {
+		const response = '550 5.1.1 <lena@example.ch>: Recipient address rejected';
+		await tick({ ...lateDeps(), mailer: failingKeybox({ responseCode: 550, response }) });
+		const keybox = keyboxRow();
+		expect(keybox).toMatchObject({ state: 'refused', reason: 'smtp 550' });
+		expect(lines.filter((l) => l.includes(` ${keybox.id} `))).toEqual([
+			`[worker] outbox ${keybox.id} keybox attempt=1 refused smtp=550`
+		]);
+		for (const secret of SECRETS) expect(lines.join('\n')).not.toContain(secret);
+
+		const feed = getSendProblemRows(SENT, db);
+		expect(feed.size).toBe(1);
+		const [entry] = feed.values();
+		expect(sendProblems(entry, SENT)).toEqual({
+			callRequired: [{ rowId: keybox.id, reason: 'keybox_refused' }],
+			refusals: []
+		});
+	});
+
+	it('logs a timeout as a transient failure with smtp=- and its retry time, and no contact data or code', async () => {
+		await tick({ ...lateDeps(), mailer: failingKeybox({ code: 'ETIMEDOUT' }) });
+		const keybox = keyboxRow();
+		expect(keybox).toMatchObject({ state: 'transient_failure', reason: 'ETIMEDOUT' });
+		expect(lines.filter((l) => l.includes(` ${keybox.id} `))).toEqual([
+			`[worker] outbox ${keybox.id} keybox attempt=1 transient_failure smtp=- due=2027-01-12T14:32:00Z`
+		]);
+		for (const secret of SECRETS) expect(lines.join('\n')).not.toContain(secret);
+
+		// Nothing is raised right away; the row is overdue 15 minutes after its original due time
+		// (booked past the cutoff at 14:30Z), although its due_at moved to the retry.
+		expect(callList(getSendProblemRows(SENT, db), SENT)).toEqual([]);
+		expect(callList(getSendProblemRows('2027-01-12T14:44:59Z', db), '2027-01-12T14:44:59Z')).toEqual([]);
+		const overdue = '2027-01-12T14:45:00Z';
+		expect(callList(getSendProblemRows(overdue, db), overdue)).toEqual([
+			expect.objectContaining({ callRequired: [{ rowId: keybox.id, reason: 'keybox_overdue' }], refusals: [] })
+		]);
 	});
 });
 

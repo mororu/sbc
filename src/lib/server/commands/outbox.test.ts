@@ -1,4 +1,4 @@
-// Story 2.1, 2.2 and 2.3 matrices, outbox command rows (AD-23). Bookings are made through createBooking
+// Story 2.1, 2.2, 2.3 and 2.4 matrices, outbox command rows (AD-23). Bookings are made through createBooking
 // on a temp-file database (season 9 Jan – 30 Apr 2027); `now` is explicit everywhere. Each booking
 // also gets a keybox row; with the keybox settings empty (the migrated state) it is held, so the
 // Story 2.1 tests see only the confirmation rows being claimed.
@@ -7,11 +7,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type Database from 'better-sqlite3';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { KIND_ORDER, OUTBOX_STATE_LIST, type Notice } from '#lib/domain/index.ts';
-import { toInstant } from '#lib/time/index.ts';
+import { callList, KIND_ORDER, OUTBOX_STATE_LIST, sendProblems, type Notice } from '#lib/domain/index.ts';
+import { addMinutes, toInstant } from '#lib/time/index.ts';
 import { createDb, openDatabase, type Db } from '../db/index.ts';
 import { applyMigrations, MIGRATIONS_FOLDER } from '../db/migrate.ts';
-import { getHeldKeyboxRows, getSendData } from '../db/queries/index.ts';
+import { getHeldKeyboxRows, getSendData, getSendProblemRows } from '../db/queries/index.ts';
 import { OUTBOX_KINDS, OUTBOX_STATES } from '../db/schema.ts';
 import { randomId } from '../ids.ts';
 import { createBooking, type CreateBookingInput } from './create-booking.ts';
@@ -911,5 +911,127 @@ describe('the heat-change row (Story 2.3)', () => {
 		expect(result).toMatchObject({ ok: true, row: { bookingId: target, kind: 'keybox' } });
 		expect(row(heat)).toMatchObject({ state: 'cancelled', outcome_at: cutoff });
 		expect(claimDueRow({ now: cutoff, db })).toEqual({ ok: false, code: 'none' });
+	});
+});
+
+describe('refused and stuck sends (Story 2.4)', () => {
+	const rowCount = () => (sqlite.prepare('select count(*) as n from outbox').get() as { n: number }).n;
+	/** Books like `book` and returns the booking id. */
+	const bookingId = (over: Partial<CreateBookingInput> = {}, now = NOW) => row(book(over, now).id).booking_id as number;
+	const rowOf = (id: number, kind: string) =>
+		(sqlite.prepare('select id from outbox where booking_id = ? and kind = ?').get(id, kind) as { id: number }).id;
+	const problemsOf = (id: number, now: string) => {
+		const entry = getSendProblemRows(now, db).get(id);
+		if (!entry) throw new Error(`booking ${id} not in the feed`);
+		return sendProblems(entry, now);
+	};
+
+	it('stores a refused outcome for a booking deleted while in flight, without telling it or adding rows', () => {
+		const { id } = book();
+		claimDueRow({ now: NOW, db });
+		sqlite.prepare("update booking set deleted_at = '2027-01-12T08:00:02Z'").run();
+		const before = lastTold();
+		const rows = rowCount();
+		expect(recordSendOutcome(id, 'refused', 'smtp 550', { now: '2027-01-12T08:00:05Z', db })).toEqual({
+			ok: true,
+			code: 'refused'
+		});
+		expect(row(id)).toMatchObject({ state: 'refused', reason: 'smtp 550', outcome_at: '2027-01-12T08:00:05Z' });
+		expect(lastTold()).toBe(before);
+		expect(rowCount()).toBe(rows);
+	});
+
+	it('keeps resolved_at through an outcome', () => {
+		const { id } = book();
+		claimDueRow({ now: NOW, db });
+		setRow(id, { resolved_at: '2027-01-12T08:00:01Z' });
+		recordSendOutcome(id, 'refused', 'smtp 550', { now: '2027-01-12T08:00:05Z', db });
+		expect(row(id)).toMatchObject({ state: 'refused', resolved_at: '2027-01-12T08:00:01Z' });
+	});
+
+	it('starts every row unresolved', () => {
+		const { id } = book();
+		expect(row(id).resolved_at).toBeNull();
+		expect(row(keyboxOf(id)).resolved_at).toBeNull();
+	});
+
+	describe('a keybox row booked early (due at the cutoff, Mon 11 Jan 17:00Z)', () => {
+		const EARLY = '2027-01-07T10:00:00Z';
+		const CUTOFF = '2027-01-11T17:00:00Z';
+		const plus = (minutes: number) => addMinutes(CUTOFF, minutes);
+
+		it('is overdue 15 minutes after the cutoff although transient failures pushed its due_at past that', () => {
+			setKeybox('4711');
+			const id = bookingId({ locale: 'de' }, EARLY);
+			const keybox = rowOf(id, 'keybox');
+			sqlite.prepare("update outbox set state = 'accepted' where kind = 'confirmation'").run();
+			// Backoff 1, 2, 5, 10 minutes: due 17:01, 17:03, 17:08, then 17:18.
+			for (const minute of [0, 1, 3, 8]) {
+				expect(claimDueRow({ now: plus(minute), db })).toMatchObject({ ok: true, row: { id: keybox } });
+				recordSendOutcome(keybox, 'transient_failure', 'smtp 421', { now: plus(minute), db });
+			}
+			expect(row(keybox)).toMatchObject({ state: 'transient_failure', due_at: plus(18), attempts: 4 });
+			expect(problemsOf(id, plus(14)).callRequired).toEqual([]);
+			expect(problemsOf(id, plus(15)).callRequired).toEqual([{ rowId: keybox, reason: 'keybox_overdue' }]);
+		});
+
+		it('is overdue 15 minutes after the cutoff while held for a missing setting: the admin must call', () => {
+			// The keybox settings are empty (the migrated state): the row is held, still pending.
+			const id = bookingId({ locale: 'de' }, EARLY);
+			const keybox = rowOf(id, 'keybox');
+			expect(getHeldKeyboxRows(plus(15), db)).toEqual([{ id: keybox, missing: 'keybox_code' }]);
+			expect(row(keybox).state).toBe('pending');
+			expect(problemsOf(id, plus(14)).callRequired).toEqual([]);
+			expect(problemsOf(id, plus(15)).callRequired).toEqual([{ rowId: keybox, reason: 'keybox_overdue' }]);
+		});
+	});
+
+	it('feeds the call list only from live bookings that have not started, with no contact data or code', () => {
+		setKeybox('4711', 'Box links.', 'Box on the left.');
+		// The live 18:00 booking: its confirmation is refused, its keybox row is in flight with the code frozen.
+		const live = bookingId({ start: at('18:00') });
+		const liveConfirmation = rowOf(live, 'confirmation');
+		const liveKeybox = rowOf(live, 'keybox');
+		expect(claimDueRow({ now: NOW, db })).toMatchObject({ ok: true, row: { id: liveConfirmation } });
+		recordSendOutcome(liveConfirmation, 'refused', 'smtp 550', { now: NOW, db });
+		expect(claimDueRow({ now: NOW, db })).toMatchObject({ ok: true, row: { id: liveKeybox, snapshotKeyboxCode: '4711' } });
+
+		const started = bookingId({ start: at('10:00') });
+		setRow(rowOf(started, 'confirmation'), { state: 'refused', reason: 'smtp 550' });
+		const deleted = bookingId({ start: at('20:00') });
+		setRow(rowOf(deleted, 'confirmation'), { state: 'refused', reason: 'smtp 550' });
+		sqlite.prepare('update booking set deleted_at = ? where id = ?').run(NOW, deleted);
+		// Starts one second after `now`: still in the feed.
+		const edge = bookingId({ start: at('12:00') });
+		const now = '2027-01-12T10:59:59Z';
+
+		const feed = getSendProblemRows(now, db);
+		expect([...feed.keys()].sort((a, b) => a - b)).toEqual([live, edge].sort((a, b) => a - b));
+		expect(feed.get(live)).toEqual({
+			start: at('18:00'),
+			createdAt: NOW,
+			rows: [
+				{ id: liveConfirmation, kind: 'confirmation', state: 'refused', urgent: null, resolvedAt: null },
+				{ id: liveKeybox, kind: 'keybox', state: 'in_flight', urgent: null, resolvedAt: null }
+			]
+		});
+		const serialized = JSON.stringify([...feed.entries()]);
+		for (const secret of ['4711', 'Lena', 'lena@example.ch', '+41791234567', 'Box']) expect(serialized).not.toContain(secret);
+
+		// Both were booked past their cutoff at 09:00: their keybox rows are overdue since 09:15.
+		expect(callList(feed, now)).toEqual([
+			{
+				bookingId: edge,
+				start: at('12:00'),
+				callRequired: [{ rowId: rowOf(edge, 'keybox'), reason: 'keybox_overdue' }],
+				refusals: []
+			},
+			{
+				bookingId: live,
+				start: at('18:00'),
+				callRequired: [{ rowId: liveKeybox, reason: 'keybox_overdue' }],
+				refusals: [{ rowId: liveConfirmation, kind: 'confirmation' }]
+			}
+		]);
 	});
 });

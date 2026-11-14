@@ -164,7 +164,9 @@ export const outbox = sqliteTable(
 		snapshotLastTold: text(),
 		/** `smtp <code>` or an error code; never the server's text. */
 		reason: text(),
-		outcomeAt: text()
+		outcomeAt: text(),
+		/** Written only by mark called (Story 3.6); the send-path commands never write or clear it. Once set, the row never raises a send problem again. */
+		resolvedAt: text()
 	},
 	(t) => [
 		index('outbox_state_due_at').on(t.state, t.dueAt),

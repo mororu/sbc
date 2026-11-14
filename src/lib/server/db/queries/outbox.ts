@@ -1,8 +1,8 @@
 // Outbox read queries for the worker only. Unlike the guest queries, `getSendData` selects the
 // guest's email address and the keybox instructions: they are read at send time and never stored
-// on the outbox row.
+// on the outbox row. `getSendProblemRows` selects neither.
 import { and, eq, gt, inArray, isNull, lte } from 'drizzle-orm';
-import { missingKeyboxSetting, type KeyboxSettingName } from '#lib/domain/index.ts';
+import { missingKeyboxSetting, type KeyboxSettingName, type SendProblemEntry } from '#lib/domain/index.ts';
 import type { Instant } from '#lib/time/index.ts';
 import { getDb, type Db } from '../index.ts';
 import { booking, outbox } from '../schema.ts';
@@ -79,4 +79,35 @@ export function getHeldKeyboxRows(now: Instant, db: Db = getDb()): HeldKeyboxRow
 			const missing = missingKeyboxSetting(settings, row.locale);
 			return missing ? [{ id: row.id, missing }] : [];
 		});
+}
+
+/**
+ * The outbox rows of every live booking that has not started at `now` (AD-21), by booking id, for
+ * `callList`/`sendProblems`. A booking drops off once it starts. Selects no contact
+ * data and no keybox code.
+ */
+export function getSendProblemRows(now: Instant, db: Db = getDb()): Map<number, SendProblemEntry> {
+	const rows = db
+		.select({
+			bookingId: booking.id,
+			start: booking.startAt,
+			createdAt: booking.createdAt,
+			id: outbox.id,
+			kind: outbox.kind,
+			state: outbox.state,
+			urgent: outbox.snapshotUrgent,
+			resolvedAt: outbox.resolvedAt
+		})
+		.from(outbox)
+		.innerJoin(booking, eq(booking.id, outbox.bookingId))
+		.where(and(isNull(booking.deletedAt), gt(booking.startAt, now)))
+		.orderBy(booking.startAt, booking.id, outbox.id)
+		.all();
+	const byBooking = new Map<number, SendProblemEntry>();
+	for (const { bookingId, start, createdAt, ...row } of rows) {
+		let entry = byBooking.get(bookingId);
+		if (!entry) byBooking.set(bookingId, (entry = { start, createdAt, rows: [] }));
+		entry.rows.push(row);
+	}
+	return byBooking;
 }
