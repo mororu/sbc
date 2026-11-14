@@ -29,7 +29,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 # - Retrospective appends its action items to action_items; the status view surfaces open ones
 generated: 11-09-2026 19:44
-last_updated: 11-14-2026 10:30
+last_updated: 11-14-2026 12:00
 project: sauna-booking
 project_key: NOKEY
 tracking_system: file-system
@@ -129,7 +129,7 @@ action_items:
     action: "A7: Before Epic 2 move the 24 h keybox cutoff into src/lib/domain, share
       the day-data loading, split day-view.ts by concern"
     owner: "dev"
-    status: open
+    status: done
     ref: "_bmad-output/implementation-artifacts/epic-1-retro-2026-11-12.md"
   - id: "epic-1-retro-item-8-a8-decide-the-message-for-a-resubmit-aft"
     epic: 1
