@@ -6,6 +6,18 @@ import { addMinutes, minutesBetween, type Instant } from '#lib/time/index.ts';
 export const KIND_ORDER = ['confirmation', 'keybox', 'heat_change'] as const;
 export type OutboxKind = (typeof KIND_ORDER)[number];
 
+/** The outbox row states (AD-23): the schema's `OUTBOX_STATES` must match. */
+export const OUTBOX_STATE_LIST = [
+	'pending',
+	'in_flight',
+	'accepted',
+	'refused',
+	'transient_failure',
+	'expired',
+	'cancelled'
+] as const;
+export type OutboxState = (typeof OUTBOX_STATE_LIST)[number];
+
 /** An `in_flight` row claimed this many minutes ago or longer is stale: boot returns it to `pending`. */
 export const IN_FLIGHT_TIMEOUT_MIN = 10;
 

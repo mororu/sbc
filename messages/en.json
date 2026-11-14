@@ -175,6 +175,7 @@
 	"booked_badge_cold_other": "Cold start: {notice}",
 	"booked_changed": "That just changed.",
 	"booked_revisit": "This is how it stood when you booked. We'll email you about any changes.",
+	"booked_revisit_past": "This is how it stood when you booked.",
 	"booked_keybox": "You'll get the keybox code on {at}.",
 	"booked_keybox_sent": "The keybox code is already on its way to your inbox.",
 	"booked_keybox_at": "{date} at {time}",
@@ -191,5 +192,9 @@
 	"mail_notice_may_change": "If that changes, we'll let you know.",
 	"mail_keybox": "We'll send you the keybox code on {at}.",
 	"mail_keybox_now": "The keybox code follows right away in a separate email.",
+	"mail_keybox_subject": "Keybox code for {date}, {time}",
+	"mail_keybox_code": "Code: {code}",
+	"mail_keybox_counts": "This is what counts now",
+	"mail_keybox_instructions_heading": "Getting the key and bringing it back",
 	"mail_signature": "See you soon, Sauna Luegisee"
 }

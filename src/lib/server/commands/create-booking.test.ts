@@ -326,36 +326,58 @@ describe('createBooking', () => {
 	});
 });
 
-describe('createBooking: the confirmation outbox row (Story 2.1)', () => {
+describe('createBooking: the confirmation and keybox outbox rows (Stories 2.1, 2.2)', () => {
 	const outboxRows = () => sqlite.prepare('select * from outbox order by id').all() as Record<string, unknown>[];
+	const pending = (bookingId: unknown, kind: string, dueAt: string) => ({
+		id: expect.any(Number),
+		booking_id: bookingId,
+		kind,
+		state: 'pending',
+		due_at: dueAt,
+		claimed_at: null,
+		attempts: 0,
+		snapshot_notice: null,
+		snapshot_keybox_code: null,
+		snapshot_locale: null,
+		snapshot_urgent: null,
+		reason: null,
+		outcome_at: null
+	});
 
-	it('inserts one pending confirmation row, due now, with no contact data or snapshot', () => {
-		expect(createBooking(lena(), { now: NOW, db }).ok).toBe(true);
+	it('inserts a pending confirmation due now and a pending keybox row due at the cutoff, with no contact data or snapshot', () => {
+		// Booked on Thu 7 Jan for Tue 12 Jan 18:00: the keybox row is due Mon 11 Jan 18:00.
+		expect(createBooking(lena(), { now: '2027-01-07T10:00:00Z', db }).ok).toBe(true);
 		const bookingId = rows()[0].id;
 		expect(outboxRows()).toEqual([
-			{
-				id: expect.any(Number),
-				booking_id: bookingId,
-				kind: 'confirmation',
-				state: 'pending',
-				due_at: NOW,
-				claimed_at: null,
-				attempts: 0,
-				snapshot_notice: null,
-				snapshot_keybox_code: null,
-				snapshot_locale: null,
-				snapshot_urgent: null,
-				reason: null,
-				outcome_at: null
-			}
+			pending(bookingId, 'confirmation', '2027-01-07T10:00:00Z'),
+			pending(bookingId, 'keybox', '2027-01-11T17:00:00Z')
 		]);
 	});
 
-	it('inserts no second row for a resubmit', () => {
+	it('makes the keybox row due now for a booking made past the cutoff', () => {
+		// 15:30 for 18:00 the same day.
+		const now = '2027-01-12T14:30:00Z';
+		expect(createBooking(lena(), { now, db }).ok).toBe(true);
+		expect(outboxRows().map((r) => [r.kind, r.due_at])).toEqual([
+			['confirmation', now],
+			['keybox', now]
+		]);
+	});
+
+	it('counts the cutoff in real time across the spring clock change', () => {
+		// Sun 28 Mar 2027 10:00 (UTC+2): due Sat 27 Mar 09:00 (UTC+1).
+		const start = at('10:00', '2027-03-28');
+		const displayedNotice: Notice = { heat: 'cold', earliest: '2027-03-28T07:20:00Z', latest: '2027-03-28T07:30:00Z' };
+		const result = createBooking(lena({ start, displayedNotice }), { now: '2027-03-20T10:00:00Z', db });
+		expect(result.ok).toBe(true);
+		expect(outboxRows().find((r) => r.kind === 'keybox')?.due_at).toBe('2027-03-27T08:00:00Z');
+	});
+
+	it('inserts no second rows for a resubmit', () => {
 		const token = randomId();
 		createBooking(lena({ submitToken: token }), { now: NOW, db });
 		createBooking(lena({ submitToken: token }), { now: NOW, db });
-		expect(outboxRows()).toHaveLength(1);
+		expect(outboxRows().map((r) => r.kind)).toEqual(['confirmation', 'keybox']);
 	});
 
 	it('inserts no row for a deleted-booking resubmit, a conflict, a past start or invalid input', () => {

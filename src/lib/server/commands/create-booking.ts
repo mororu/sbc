@@ -6,8 +6,10 @@
 // as both the notice at booking (never updated after this insert) and the last-told notice, and
 // compared with the notice the form displayed, so the confirmation can say it just changed.
 // The confirmation email (Story 2.1) is one outbox row, due now, inserted in the same transaction.
+// So is the keybox email (Story 2.2), due at the keybox cutoff, or now when booked past it.
 import {
 	DURATIONS,
+	keyboxDueAt,
 	noticeEquals,
 	offeredStartTimes,
 	parseNotice,
@@ -153,7 +155,10 @@ export function createBooking(
 			.returning({ id: booking.id })
 			.get();
 		db.insert(outbox)
-			.values({ bookingId: inserted.id, kind: 'confirmation', state: 'pending', dueAt: now })
+			.values([
+				{ bookingId: inserted.id, kind: 'confirmation', state: 'pending', dueAt: now },
+				{ bookingId: inserted.id, kind: 'keybox', state: 'pending', dueAt: keyboxDueAt(input.start, now) }
+			])
 			.run();
 		return { ok: true, publicId, changed: !noticeEquals(offer.notice, input.displayedNotice) };
 	});

@@ -45,7 +45,7 @@ Server view models and the core files they lean on:
 - `src/lib/server/guest-urls.ts`: guest links, the URL time `hhmm` and the refusal query `?error=…&time=…`.
 - `src/lib/server/notice-text.ts`: the heat notice sentences and the duration-limit and sentence helpers of the day rows.
 - `src/lib/server/db/queries/calendar.ts`: `getDayData`, the one read of a day's settings, seasons, bookings and blocks, over `dayItemsWindow` from `src/lib/domain/start-times.ts`.
-- `src/lib/domain/keybox.ts`: the 24 h keybox cutoff (AD-9), used by the confirmation; the outbox planned for Epic 2 is to use it too.
+- `src/lib/domain/keybox.ts`: the 24 h keybox cutoff (AD-9), the keybox row's due time and the held-row check, used by the confirmation and the keybox outbox row.
 
 `src/eslint-boundaries.test.ts` lints a snippet for each rule, so `npm test` fails if a rule stops working. Known gap: inside a pure layer, relative imports between its own subfolders (`domain/a/x.ts` → `../b`) are refused; use `#lib/domain/…` there.
 
@@ -376,6 +376,40 @@ The headings and the footer label are drafted copy. The bodies are placeholders:
 | --- | --- | --- |
 | `skip_to_content` (skip link on pages without start times) | Zum Inhalt | Skip to content |
 | `privacy_tracking_body` (added sentence, still behind `[PLATZHALTER]`) | Das Buchungsformular behält Name, E-Mail und Handynummer im Sitzungsspeicher deines Browsers, bis die Buchung geklappt hat oder du den Tab schliesst. | The booking form keeps your name, email and mobile in your browser's session storage until the booking has gone through or you close the tab. |
+
+## Keybox email (Story 2.2)
+
+### Setting the keybox code and instructions in development
+
+The admin settings UI comes in Story 3.8. Until then, set the keybox code and the access and return instructions (DE and EN) in the dev database by hand, for example with the `sqlite3` CLI:
+
+```sh
+sqlite3 data/dev.sqlite "UPDATE setting SET
+  keybox_code = '4711',
+  keybox_instructions_de = 'Die Box hängt links an der Tür.
+
+Leg den Schlüssel danach wieder in die Box.',
+  keybox_instructions_en = 'The box hangs to the left of the door.
+
+Put the key back in the box afterwards.'
+WHERE id = 1;"
+```
+
+- All three settings start NULL (migration `0005_keybox_settings.sql`). NULL or blank after trimming counts as unset.
+- **Until the code and the instructions in a booking's language are set, its keybox row is held:** it stays `pending`, the worker skips it and logs `[worker] outbox <id> keybox held missing=<setting>` once (again only if the missing setting changes), and it expires at the start. Once set, the next tick (about a minute) sends it, even late.
+- In the instructions, a blank line starts a new paragraph and a single newline is a line break.
+- The code is frozen on the row at claim (`snapshot_keybox_code`): changing it later never resends an accepted email. The instructions are read at send time; if they are blanked between claim and send, the row goes back to `pending`, held.
+- The keybox row waits for its booking's confirmation while that is still open or in flight, so the confirmation always goes out first.
+
+### Drafted copy for operator review (Story 2.2)
+
+| Key | DE | EN |
+| --- | --- | --- |
+| `mail_keybox_subject` | Schlüsselcode für {date}, {time} | Keybox code for {date}, {time} |
+| `mail_keybox_code` (first line, the code's characters spaced) | Code: {code} | Code: {code} |
+| `mail_keybox_counts` (label line above the notice) | Das gilt jetzt | This is what counts now |
+| `mail_keybox_instructions_heading` | Schlüssel holen und zurückbringen | Getting the key and bringing it back |
+| `booked_revisit_past` (confirmation page once the start has come, retro A9) | So stand es bei der Buchung. | This is how it stood when you booked. |
 
 ## Scaffold decisions
 

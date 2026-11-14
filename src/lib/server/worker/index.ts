@@ -5,7 +5,9 @@
 // the outcome, then records the heartbeat, but only when the drain did not fail, so an old heartbeat
 // also flags a worker that runs but cannot send. The next tick is scheduled only after the current
 // one has finished. Delivery is at-least-once (AD-23): a stale release may resend a mail the server
-// had already accepted.
+// had already accepted. A keybox row whose settings are unset is held: the claim skips it, and after
+// the drain the tick logs a `held` line for each row that is newly held or now misses another
+// setting (the last held set is kept in memory), so an unset setting is not logged every minute.
 // Log lines name the row id, kind, attempt, state, SMTP code and next due time only: never a guest's
 // name, email, mobile or the keybox code, and never the SMTP server's text.
 import {
@@ -13,18 +15,21 @@ import {
 	claimDueRow,
 	recordHeartbeat,
 	recordSendOutcome,
+	releaseHeldKeybox,
 	releaseStaleClaims,
 	type ClaimedRow
 } from '#lib/server/commands/index.ts';
-import { getSendData } from '#lib/server/db/queries/index.ts';
+import { getHeldKeyboxRows, getSendData } from '#lib/server/db/queries/index.ts';
 import {
 	classifySendError,
 	createMailer,
 	renderConfirmation,
+	renderKeybox,
 	type Mailer,
 	type RenderedEmail,
 	type SendResult
 } from '#lib/server/mail/index.ts';
+import { missingKeyboxSetting, type KeyboxSettingName } from '#lib/domain/index.ts';
 import type { Instant } from '#lib/time/index.ts';
 import { now as clockNow } from '../clock.ts';
 import { getEnv } from '../env.ts';
@@ -45,6 +50,7 @@ export type WorkerDeps = {
 type Context = { db: Db | undefined; mailer: Mailer; now: () => Instant; log: (line: string) => void };
 
 const WORKER = Symbol.for('sauna-booking.worker');
+const HELD = Symbol.for('sauna-booking.worker.held');
 
 type WorkerState = { timer: ReturnType<typeof setTimeout> | null; stopped: boolean };
 
@@ -76,9 +82,44 @@ function render(row: ClaimedRow, data: SendData): RenderedEmail {
 				booking: data,
 				claimedAt: row.claimedAt
 			});
+		case 'keybox':
+			return renderKeybox({
+				snapshot: { notice: row.snapshotNotice, keyboxCode: row.snapshotKeyboxCode, locale: row.snapshotLocale },
+				booking: { start: data.start, instructions: data.keyboxInstructions, adminContact: data.adminContact },
+				claimedAt: row.claimedAt
+			});
 		default:
 			throw noTemplate(row.kind);
 	}
+}
+
+/** The held keybox rows last logged, by row id. On `globalThis`, like the loop guard, for dev HMR. */
+function heldMemory(): Map<number, KeyboxSettingName> {
+	const g = globalThis as { [HELD]?: Map<number, KeyboxSettingName> };
+	g[HELD] ??= new Map();
+	return g[HELD];
+}
+
+/** Logs a held row unless it was already logged as missing the same setting. Names the setting, never its value. */
+function logHeld(ctx: Context, id: number, missing: KeyboxSettingName): void {
+	const memory = heldMemory();
+	if (memory.get(id) !== missing) ctx.log(`[worker] outbox ${id} keybox held missing=${missing}`);
+	memory.set(id, missing);
+}
+
+/** Logs the rows newly held (or missing another setting) and forgets the rows no longer held. */
+function logHeldRows(ctx: Context, at: Instant): void {
+	const held = getHeldKeyboxRows(at, ctx.db);
+	const memory = heldMemory();
+	const ids = new Set(held.map((row) => row.id));
+	for (const id of [...memory.keys()]) if (!ids.has(id)) memory.delete(id);
+	for (const row of held) logHeld(ctx, row.id, row.missing);
+}
+
+/** The keybox setting a claimed keybox row now lacks: its frozen code, or the instructions read at send time. */
+function heldSince(row: ClaimedRow, data: SendData): KeyboxSettingName | null {
+	const instructions = { de: null, en: null, [row.snapshotLocale]: data.keyboxInstructions };
+	return missingKeyboxSetting({ code: row.snapshotKeyboxCode, instructions }, row.snapshotLocale);
 }
 
 const refused = (reason: string): SendResult => ({ outcome: 'refused', smtpCode: null, reason });
@@ -86,7 +127,9 @@ const refused = (reason: string): SendResult => ({ outcome: 'refused', smtpCode:
 /**
  * Sends one claimed row. Deterministic failures (no row, no address, no template, a render error)
  * are terminal; only the transport's own classification can make a row transient. A booking deleted
- * since the claim is not sent and its row is cancelled. Exported for tests.
+ * since the claim is not sent and its row is cancelled. A keybox row whose instructions were unset
+ * since the claim is not sent either: it goes back to `pending`, held until the setting is fixed.
+ * Exported for tests.
  */
 export async function sendClaimedRow(row: ClaimedRow, deps: WorkerDeps = {}): Promise<void> {
 	const ctx = context(deps);
@@ -98,12 +141,18 @@ export async function sendClaimedRow(row: ClaimedRow, deps: WorkerDeps = {}): Pr
 		return;
 	}
 
+	const held = data && row.kind === 'keybox' ? heldSince(row, data) : null;
 	let result: SendResult;
 	let email: RenderedEmail | null = null;
 	if (!data) result = refused('no_row');
 	// The contact data was erased: no retry can deliver this one.
 	else if (!data.email) result = refused('no_address');
-	else {
+	else if (held) {
+		const released = releaseHeldKeybox(row.id, { db: ctx.db });
+		if (released.ok) logHeld(ctx, row.id, held);
+		else ctx.log(`${prefix} ${released.code}`);
+		return;
+	} else {
 		try {
 			email = render(row, data);
 			result = { outcome: 'accepted', smtpCode: null, reason: null };
@@ -131,7 +180,11 @@ export async function sendClaimedRow(row: ClaimedRow, deps: WorkerDeps = {}): Pr
 	ctx.log(`${prefix} ${recorded.code} smtp=${result.smtpCode ?? '-'}${due}`);
 }
 
-/** One tick: release stale claims, drain every due row, then record the heartbeat. Never throws. */
+/**
+ * One tick: release stale claims, drain every due row, log the newly held keybox rows (also when the
+ * drain failed), then record the heartbeat if the drain succeeded. One instant for the release, the
+ * claims and the held list. Never throws.
+ */
 export async function tick(deps: WorkerDeps = {}): Promise<void> {
 	let ctx: Context;
 	try {
@@ -140,19 +193,27 @@ export async function tick(deps: WorkerDeps = {}): Promise<void> {
 		(deps.log ?? defaultLog)(`[worker] tick failed: ${errorCode(error)}`);
 		return;
 	}
+	const at = ctx.now();
+	let drained = true;
 	try {
-		const released = releaseStaleClaims({ now: ctx.now(), db: ctx.db });
+		const released = releaseStaleClaims({ now: at, db: ctx.db });
 		if (released.count > 0) ctx.log(`[worker] released ${released.count} stale claims`);
 		for (;;) {
-			const claim = claimDueRow({ now: ctx.now(), db: ctx.db });
+			const claim = claimDueRow({ now: at, db: ctx.db });
 			if (!claim.ok) break;
 			await sendClaimedRow(claim.row, { ...deps, mailer: ctx.mailer });
 		}
 	} catch (error) {
 		// No heartbeat: the worker runs but cannot drain, and an old heartbeat should say so.
 		ctx.log(`[worker] tick failed: ${errorCode(error)}`);
-		return;
+		drained = false;
 	}
+	try {
+		logHeldRows(ctx, at);
+	} catch (error) {
+		ctx.log(`[worker] held check failed: ${errorCode(error)}`);
+	}
+	if (!drained) return;
 	try {
 		recordHeartbeat({ now: ctx.now(), db: ctx.db });
 	} catch (error) {
@@ -198,8 +259,9 @@ export function startWorker(deps: WorkerDeps = {}): boolean {
 	return true;
 }
 
-/** Stops the loop and clears the guard. For tests; the app's worker runs until the process ends. */
+/** Stops the loop, clears the guard and forgets the held rows. For tests; the app's worker runs until the process ends. */
 export function stopWorker(): void {
+	heldMemory().clear();
 	const g = globalState();
 	const state = g[WORKER];
 	if (!state) return;

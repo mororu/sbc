@@ -1,4 +1,5 @@
-// Story 2.1: the confirmation email, the layout's format rules and the transport's classification.
+// Stories 2.1 and 2.2: the confirmation and keybox emails, the layout's format rules and the
+// transport's classification.
 import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -6,6 +7,7 @@ import nodemailer from 'nodemailer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Env } from '../env.ts';
 import { renderConfirmation, type ConfirmationInput } from './confirmation.ts';
+import { renderKeybox, spacedCode, type KeyboxInput } from './keybox.ts';
 import { escapeHtml, renderEmail } from './layout.ts';
 import { classifySendError, createMailer, responseCodeOf, sinkDir } from './transport.ts';
 
@@ -114,6 +116,127 @@ describe('renderConfirmation', () => {
 	it.each(['de', 'en'] as const)('keeps the %s plain and HTML parts in step', (locale) => {
 		const email = renderConfirmation(input({}, locale));
 		expect(htmlBodyText(email.html)).toBe(collapse(email.text));
+		expect(htmlBodyLines(email.html)).toBe(email.text);
+	});
+});
+
+/**
+ * The HTML body as the plain text should read it: one block per line of the HTML source, `<br>` as a
+ * newline, tags dropped, entities decoded. Unlike `htmlBodyText`, line breaks are kept and checked.
+ */
+const htmlBodyLines = (html: string) =>
+	html
+		.replace(/^[\s\S]*<body>\n/, '')
+		.replace(/\n<\/body>[\s\S]*$/, '')
+		.replace(/<br>\n/g, '\u0001')
+		.split('\n')
+		.map((block) =>
+			block
+				.replace(/<[^>]+>/g, '')
+				.replace(/&lt;/g, '<')
+				.replace(/&gt;/g, '>')
+				.replace(/&quot;/g, '"')
+				.replace(/&#39;/g, "'")
+				.replace(/&amp;/g, '&')
+				.split('\u0001')
+				.join('\n')
+		)
+		.join('\n\n') + '\n';
+
+describe('renderKeybox', () => {
+	const INSTRUCTIONS_DE = 'Die Box hängt links an der Tür.\nDreh am Rad.\n\n  Leg den Schlüssel danach zurück.  ';
+	const keybox = (
+		over: Partial<KeyboxInput['snapshot']> = {},
+		instructions: string | null = INSTRUCTIONS_DE,
+		adminContact: string | null = 'sauna+info@example.ch'
+	): KeyboxInput => ({
+		snapshot: { notice: COLD_1800_JSON, keyboxCode: '4711', locale: 'de', ...over },
+		booking: { start: '2027-01-12T17:00:00Z', instructions, adminContact },
+		claimedAt: '2027-01-11T17:00:30Z'
+	});
+
+	it('renders the DE subject, the code first, the date, the notice that counts, the instructions and the cancel line', () => {
+		const email = renderKeybox(keybox());
+		expect(email.subject).toBe('Schlüsselcode für Di 12. Januar, 18:00');
+		expect(email.lang).toBe('de-CH');
+		expect(email.text).toBe(
+			[
+				'Code: 4 7 1 1',
+				'Datum: Di 12. Januar\nBeginn: 18:00',
+				'Das gilt jetzt\nKaltstart: komm zwischen 17:20 und 17:30 und heiz ein.',
+				'Schlüssel holen und zurückbringen',
+				'Die Box hängt links an der Tür.\nDreh am Rad.',
+				'Leg den Schlüssel danach zurück.',
+				'Absagen: Schreib an sauna+info@example.ch.',
+				'Bis bald, Sauna Luegisee'
+			].join('\n\n') + '\n'
+		);
+		expect(email.html).toMatch(/<body>\n<h1>Code: 4 7 1 1<\/h1>/);
+		expect(email.html).toContain('<p>Die Box hängt links an der Tür.<br>\nDreh am Rad.</p>');
+		expect(email.html).toContain('<a href="mailto:sauna%2Binfo@example.ch">sauna+info@example.ch</a>');
+	});
+
+	it('renders the EN subject and body', () => {
+		const email = renderKeybox(keybox({ locale: 'en', notice: '{"heat":"hot","earliest":null,"latest":null}' }, 'Box on the left.'));
+		expect(email.subject).toBe('Keybox code for Tue 12 January, 18:00');
+		expect(email.lang).toBe('en');
+		expect(email.text).toBe(
+			[
+				'Code: 4 7 1 1',
+				'Date: Tue 12 January\nStart: 18:00',
+				'This is what counts now\nAlready hot at 18:00.',
+				'Getting the key and bringing it back',
+				'Box on the left.',
+				'To cancel: Email sauna+info@example.ch.',
+				'See you soon, Sauna Luegisee'
+			].join('\n\n') + '\n'
+		);
+	});
+
+	it('leaves the cancel line out without an admin contact, and the notice out without a snapshot notice', () => {
+		const email = renderKeybox(keybox({ notice: null }, 'Box links.', null));
+		expect(email.text).toBe(
+			[
+				'Code: 4 7 1 1',
+				'Datum: Di 12. Januar\nBeginn: 18:00',
+				'Schlüssel holen und zurückbringen',
+				'Box links.',
+				'Bis bald, Sauna Luegisee'
+			].join('\n\n') + '\n'
+		);
+		expect(email.html).not.toContain('mailto:');
+		expect(htmlBodyLines(email.html)).toBe(email.text);
+	});
+
+	it('judges a past arrival at the claim', () => {
+		const late = { ...keybox({ locale: 'en' }, 'Box.'), claimedAt: '2027-01-12T16:40:00Z' };
+		const text = renderKeybox(late).text;
+		expect(text).toContain('This is what counts now\nCold start: ');
+		expect(text).not.toContain('come between 17:20 and 17:30');
+	});
+
+	it.each(['de', 'en'] as const)('keeps the %s plain and HTML parts in step, line breaks included', (locale) => {
+		const email = renderKeybox(keybox({ locale }, INSTRUCTIONS_DE));
+		expect(htmlBodyLines(email.html)).toBe(email.text);
+	});
+
+	it('escapes the instructions in the HTML part', () => {
+		expect(renderKeybox(keybox({}, 'Code <links> & "rechts"')).html).toContain('<p>Code &lt;links&gt; &amp; &quot;rechts&quot;</p>');
+	});
+
+	it.each([null, '', ' \n\n '])('throws MISSING_SETTING for the instructions %j', (instructions) => {
+		expect(() => renderKeybox(keybox({}, instructions))).toThrow(expect.objectContaining({ code: 'MISSING_SETTING' }));
+	});
+
+	it.each([null, '  '])('throws MISSING_SETTING for the code %j, and never names a setting value in the error', (keyboxCode) => {
+		const input = keybox({ keyboxCode }, 'Box links, Code 4711.');
+		expect(() => renderKeybox(input)).toThrow(expect.objectContaining({ code: 'MISSING_SETTING' }));
+		expect(() => renderKeybox(input)).toThrow(/^A keybox setting is missing$/);
+	});
+
+	it('spaces every character of the code', () => {
+		expect(spacedCode('4711')).toBe('4 7 1 1');
+		expect(spacedCode('A1 b2')).toBe('A 1 b 2');
 	});
 });
 

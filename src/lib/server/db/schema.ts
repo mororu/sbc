@@ -36,7 +36,12 @@ export const setting = sqliteTable(
 		openMinute: integer().notNull(),
 		closeMinute: integer().notNull(),
 		/** The admin contact address guests write to, e.g. to cancel. Seeded with a placeholder. */
-		adminContact: text()
+		adminContact: text(),
+		/** The keybox code (Story 2.2). NULL or blank: unset, and keybox rows are held. */
+		keyboxCode: text(),
+		/** The access and return instructions in the keybox email, per locale. NULL or blank: unset. */
+		keyboxInstructionsDe: text(),
+		keyboxInstructionsEn: text()
 	},
 	(t) => [
 		check('setting_single_row', sql`${t.id} = 1`),
@@ -164,6 +169,8 @@ export const outbox = sqliteTable(
 		index('outbox_booking_id').on(t.bookingId),
 		/** One confirmation per booking. */
 		uniqueIndex('outbox_one_confirmation').on(t.bookingId).where(sql`${t.kind} = 'confirmation'`),
+		/** One keybox row per booking (Story 2.2). */
+		uniqueIndex('outbox_one_keybox').on(t.bookingId).where(sql`${t.kind} = 'keybox'`),
 		check('outbox_kind', sql`${t.kind} IN (${sqlList(OUTBOX_KINDS)})`),
 		check('outbox_state', sql`${t.state} IN (${sqlList(OUTBOX_STATES)})`),
 		check('outbox_attempts', sql`${t.attempts} >= 0`),

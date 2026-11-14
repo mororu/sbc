@@ -4,10 +4,10 @@
 // time is overwritten on every re-claim, so a retry claimed after the cutoff renders "the code
 // follows right away" even though the first attempt named the cutoff time: by then that is true.
 import { isPastKeyboxCutoff, keyboxCutoff, parseNotice } from '#lib/domain/index.ts';
-import { mailtoHref } from '#lib/mailto.ts';
 import { m } from '#lib/paraglide/messages.js';
 import { addMinutes, formatDateShort, formatTime, localDate, type Instant, type Locale } from '#lib/time/index.ts';
 import { badgeText } from '../booked-view.ts';
+import { cancelBlock, whenItems } from './blocks.ts';
 import { renderEmail, type Block, type RenderedEmail } from './layout.ts';
 
 export type ConfirmationInput = {
@@ -27,8 +27,6 @@ export type ConfirmationInput = {
 	claimedAt: Instant;
 };
 
-const MARKER = '\u0000';
-
 export function renderConfirmation(input: ConfirmationInput): RenderedEmail {
 	const { locale } = input.snapshot;
 	const { start, durationMin, partySize, createdAt, adminContact } = input.booking;
@@ -40,8 +38,7 @@ export function renderConfirmation(input: ConfirmationInput): RenderedEmail {
 		{
 			type: 'details',
 			items: [
-				{ term: m.mail_detail_date({}, { locale }), value: date },
-				{ term: m.mail_detail_start({}, { locale }), value: time },
+				...whenItems(start, locale),
 				{
 					term: m.mail_detail_duration({}, { locale }),
 					value: m.duration_option({ minutes: durationMin, time: formatTime(addMinutes(start, durationMin)) }, { locale })
@@ -65,13 +62,8 @@ export function renderConfirmation(input: ConfirmationInput): RenderedEmail {
 		blocks.push({ type: 'paragraph', content: [m.mail_keybox({ at }, { locale })] });
 	}
 
-	if (adminContact !== null) {
-		const [before, after = ''] = m.booked_cancel({ address: MARKER }, { locale }).split(MARKER);
-		blocks.push({
-			type: 'paragraph',
-			content: [`${m.booked_cancel_term({}, { locale })}: ${before}`, { text: adminContact, href: mailtoHref(adminContact) }, after]
-		});
-	}
+	const cancel = cancelBlock(adminContact, locale);
+	if (cancel) blocks.push(cancel);
 
 	return renderEmail({
 		locale,

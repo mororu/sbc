@@ -1,19 +1,21 @@
 // Outbox commands (AD-23), each one BEGIN IMMEDIATE transaction, run by the worker only. They move a
 // row through its lifecycle: claim (`pending`/`transient_failure` → `in_flight`, freezing the
 // snapshot), outcome (`in_flight` → `accepted`/`refused`/`transient_failure`), expiry at the start
-// time, cancellation for a deleted booking, and the per-tick release of stale claims. No outcome in
-// this story writes `last_told_notice`: an accepted confirmation leaves it unchanged.
+// time, cancellation for a deleted booking, and the per-tick release of stale claims.
+// Only an accepted keybox row of a live booking writes `last_told_notice`, from its snapshot; an
+// accepted confirmation leaves it unchanged (AD-24).
 import { and, eq, inArray, isNotNull, lte, sql } from 'drizzle-orm';
-import { isStale, KIND_ORDER, retryAt, type OutboxKind } from '#lib/domain/index.ts';
+import { isStale, KIND_ORDER, missingKeyboxSetting, retryAt, type OutboxKind } from '#lib/domain/index.ts';
 import type { Instant, Locale } from '#lib/time/index.ts';
 import { now as clockNow } from '../clock.ts';
 import { getDb, type Db } from '../db/index.ts';
+import { currentNotice, getKeyboxSettings } from '../db/queries/index.ts';
 import { booking, outbox, workerHeartbeat } from '../db/schema.ts';
 
 type Options = { now?: Instant; db?: Db };
 
-/** The kinds the worker sends so far; Stories 2.2 and 2.3 add theirs here. */
-export const SENDABLE_KINDS: readonly OutboxKind[] = ['confirmation'];
+/** The kinds the worker sends so far; Story 2.3 adds `heat_change` here. */
+export const SENDABLE_KINDS: readonly OutboxKind[] = ['confirmation', 'keybox'];
 
 const OPEN_STATES = ['pending', 'transient_failure'] as const;
 
@@ -24,8 +26,13 @@ export type ClaimedRow = {
 	kind: OutboxKind;
 	claimedAt: Instant;
 	attempts: number;
-	/** Canonical Notice JSON frozen at claim; null for a booking made before notices were stored. */
+	/**
+	 * Canonical Notice JSON frozen at claim: the notice at booking for a confirmation, the current
+	 * notice for a keybox row. Null for a booking made before notices were stored.
+	 */
 	snapshotNotice: string | null;
+	/** The trimmed keybox code frozen at claim: the record of what was sent. Null for other kinds. */
+	snapshotKeyboxCode: string | null;
 	snapshotLocale: Locale;
 };
 
@@ -68,7 +75,11 @@ export function releaseStaleClaims(options: Options = {}): { ok: true; code: 're
 /**
  * In one transaction: open rows of deleted bookings are cancelled, open rows of bookings whose
  * start has come expire, then the first due open row of a sendable kind is claimed, by due time,
- * kind and id. The claim freezes the snapshot: the notice at booking and the booking's locale.
+ * kind and id. A keybox row whose code or instructions in the booking's locale are unset is held:
+ * skipped, left `pending`, and the next due row is claimed instead (the worker logs held rows). A
+ * keybox row also waits while its booking's confirmation is open or in flight. The claim freezes the snapshot: for a confirmation the notice at booking and the
+ * locale; for a keybox row the current notice (or the notice at booking when there is none), the
+ * trimmed code and the locale.
  */
 export function claimDueRow(options: Options = {}): ClaimResult {
 	const { db, now } = resolve(options);
@@ -94,6 +105,17 @@ export function claimDueRow(options: Options = {}): ClaimResult {
 			[sql`CASE ${outbox.kind}`, ...KIND_ORDER.map((k, i) => sql`WHEN ${k} THEN ${i}`), sql`END`],
 			sql` `
 		);
+		const keybox = getKeyboxSettings(db);
+		// The confirmation goes first: a keybox row waits while its booking's confirmation is still
+		// open or in flight, even when a retry moved the confirmation's due time past the keybox row's.
+		const awaitingConfirmation = new Set(
+			db
+				.select({ bookingId: outbox.bookingId })
+				.from(outbox)
+				.where(and(eq(outbox.kind, 'confirmation'), inArray(outbox.state, [...OPEN_STATES, 'in_flight'])))
+				.all()
+				.map((row) => row.bookingId)
+		);
 		const due = db
 			.select({
 				id: outbox.id,
@@ -107,33 +129,30 @@ export function claimDueRow(options: Options = {}): ClaimResult {
 			.innerJoin(booking, eq(booking.id, outbox.bookingId))
 			.where(and(open, lte(outbox.dueAt, now), inArray(outbox.kind, [...SENDABLE_KINDS])))
 			.orderBy(outbox.dueAt, kindRank, outbox.id)
-			.limit(1)
-			.get();
+			.all()
+			.find(
+				(row) =>
+					row.kind !== 'keybox' ||
+					(!awaitingConfirmation.has(row.bookingId) && missingKeyboxSetting(keybox, row.locale) === null)
+			);
 		if (!due) return { ok: false, code: 'none' };
 
+		const isKeybox = due.kind === 'keybox';
+		const snapshot = {
+			// The keybox notice is the current one; without one, the notice at booking stands in.
+			snapshotNotice: isKeybox ? (currentNotice(due.bookingId, db) ?? due.noticeAtBooking) : due.noticeAtBooking,
+			snapshotKeyboxCode: isKeybox ? keybox.code : null,
+			snapshotLocale: due.locale
+		};
 		const attempts = due.attempts + 1;
 		db.update(outbox)
-			.set({
-				state: 'in_flight',
-				claimedAt: now,
-				attempts,
-				snapshotNotice: due.noticeAtBooking,
-				snapshotLocale: due.locale
-			})
+			.set({ state: 'in_flight', claimedAt: now, attempts, ...snapshot })
 			.where(eq(outbox.id, due.id))
 			.run();
 		return {
 			ok: true,
 			code: 'claimed',
-			row: {
-				id: due.id,
-				bookingId: due.bookingId,
-				kind: due.kind,
-				claimedAt: now,
-				attempts,
-				snapshotNotice: due.noticeAtBooking,
-				snapshotLocale: due.locale
-			}
+			row: { id: due.id, bookingId: due.bookingId, kind: due.kind, claimedAt: now, attempts, ...snapshot }
 		};
 	});
 	return run.immediate();
@@ -141,8 +160,9 @@ export function claimDueRow(options: Options = {}): ClaimResult {
 
 /**
  * Records a send's outcome on an `in_flight` row. A transient failure is due again after the
- * backoff. `reason` is `smtp <code>` or an error code, never the server's text. Any other state:
- * nothing is written.
+ * backoff. `reason` is `smtp <code>` or an error code, never the server's text. An accepted keybox
+ * row of a live booking also writes the booking's `last_told_notice` from its snapshot, in the
+ * same transaction. Any other state: nothing is written.
  */
 export function recordSendOutcome(
 	id: number,
@@ -153,8 +173,16 @@ export function recordSendOutcome(
 	const { db, now } = resolve(options);
 	const run = db.$client.transaction((): OutcomeResult => {
 		const row = db
-			.select({ state: outbox.state, attempts: outbox.attempts })
+			.select({
+				state: outbox.state,
+				attempts: outbox.attempts,
+				kind: outbox.kind,
+				bookingId: outbox.bookingId,
+				snapshotNotice: outbox.snapshotNotice,
+				deletedAt: booking.deletedAt
+			})
 			.from(outbox)
+			.innerJoin(booking, eq(booking.id, outbox.bookingId))
 			.where(eq(outbox.id, id))
 			.get();
 		if (!row || row.state !== 'in_flight') return { ok: false, code: 'not_in_flight' };
@@ -168,6 +196,10 @@ export function recordSendOutcome(
 			})
 			.where(eq(outbox.id, id))
 			.run();
+		// A deleted booking's outcome writes the row only.
+		if (outcome === 'accepted' && row.kind === 'keybox' && row.deletedAt === null && row.snapshotNotice !== null) {
+			db.update(booking).set({ lastToldNotice: row.snapshotNotice }).where(eq(booking.id, row.bookingId)).run();
+		}
 		return dueAt ? { ok: true, code: outcome, dueAt } : { ok: true, code: outcome };
 	});
 	return run.immediate();
@@ -193,6 +225,27 @@ export function cancelInFlightOfDeleted(
 		if (row.deletedAt === null) return { ok: false as const, code: 'not_deleted' as const };
 		db.update(outbox).set({ state: 'cancelled', outcomeAt: now }).where(eq(outbox.id, id)).run();
 		return { ok: true as const, code: 'cancelled' as const };
+	});
+	return run.immediate();
+}
+
+/**
+ * Returns an `in_flight` keybox row to `pending` when a setting it needs was unset between the claim
+ * and the send: it is held again and goes out once the setting is fixed (or expires at the start).
+ * The attempt count stays. Any other row is left alone.
+ */
+export function releaseHeldKeybox(
+	id: number,
+	options: Options = {}
+): { ok: true; code: 'held' } | { ok: false; code: 'not_in_flight' } {
+	const { db } = resolve(options);
+	const run = db.$client.transaction(() => {
+		const row = db.select({ state: outbox.state, kind: outbox.kind }).from(outbox).where(eq(outbox.id, id)).get();
+		if (!row || row.state !== 'in_flight' || row.kind !== 'keybox') {
+			return { ok: false as const, code: 'not_in_flight' as const };
+		}
+		db.update(outbox).set({ state: 'pending', claimedAt: null }).where(eq(outbox.id, id)).run();
+		return { ok: true as const, code: 'held' as const };
 	});
 	return run.immediate();
 }

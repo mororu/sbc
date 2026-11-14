@@ -1,10 +1,12 @@
 // Outbox read queries for the worker only. Unlike the guest queries, `getSendData` selects the
-// guest's email address: it is read at send time and never stored on the outbox row.
-import { eq } from 'drizzle-orm';
+// guest's email address and the keybox instructions: they are read at send time and never stored
+// on the outbox row.
+import { and, eq, gt, inArray, isNull, lte } from 'drizzle-orm';
+import { missingKeyboxSetting, type KeyboxSettingName } from '#lib/domain/index.ts';
 import type { Instant } from '#lib/time/index.ts';
 import { getDb, type Db } from '../index.ts';
 import { booking, outbox } from '../schema.ts';
-import { getAdminContact } from './setting.ts';
+import { getAdminContact, getKeyboxSettings } from './setting.ts';
 
 /** The immutable booking facts and the address a row's email needs, read at send time. */
 export type SendData = {
@@ -18,6 +20,8 @@ export type SendData = {
 	deletedAt: Instant | null;
 	/** The admin contact address, or null when none is set. */
 	adminContact: string | null;
+	/** For a keybox row: the instructions in the booking's locale, trimmed, or null when unset. Null for other kinds. */
+	keyboxInstructions: string | null;
 };
 
 /** The send data for outbox row `rowId`, or null for an unknown row. */
@@ -29,11 +33,50 @@ export function getSendData(rowId: number, db: Db = getDb()): SendData | null {
 			durationMin: booking.durationMin,
 			partySize: booking.partySize,
 			createdAt: booking.createdAt,
-			deletedAt: booking.deletedAt
+			deletedAt: booking.deletedAt,
+			locale: booking.locale,
+			kind: outbox.kind
 		})
 		.from(outbox)
 		.innerJoin(booking, eq(booking.id, outbox.bookingId))
 		.where(eq(outbox.id, rowId))
 		.get();
-	return row ? { ...row, adminContact: getAdminContact(db) } : null;
+	if (!row) return null;
+	const { locale, kind, ...facts } = row;
+	return {
+		...facts,
+		adminContact: getAdminContact(db),
+		// Only a keybox email reads the keybox settings.
+		keyboxInstructions: kind === 'keybox' ? getKeyboxSettings(db).instructions[locale] : null
+	};
+}
+
+/** A keybox row the claim skips because a setting it needs is unset. */
+export type HeldKeyboxRow = { id: number; missing: KeyboxSettingName };
+
+/**
+ * The due, open keybox rows of live bookings that have not started, which cannot be claimed
+ * because a keybox setting is missing, by id. The worker logs one line per row per tick.
+ */
+export function getHeldKeyboxRows(now: Instant, db: Db = getDb()): HeldKeyboxRow[] {
+	const settings = getKeyboxSettings(db);
+	return db
+		.select({ id: outbox.id, locale: booking.locale })
+		.from(outbox)
+		.innerJoin(booking, eq(booking.id, outbox.bookingId))
+		.where(
+			and(
+				eq(outbox.kind, 'keybox'),
+				inArray(outbox.state, ['pending', 'transient_failure']),
+				lte(outbox.dueAt, now),
+				isNull(booking.deletedAt),
+				gt(booking.startAt, now)
+			)
+		)
+		.orderBy(outbox.id)
+		.all()
+		.flatMap((row) => {
+			const missing = missingKeyboxSetting(settings, row.locale);
+			return missing ? [{ id: row.id, missing }] : [];
+		});
 }

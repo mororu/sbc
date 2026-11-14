@@ -6,7 +6,10 @@ import { htmlLang } from '#lib/i18n/locale-switch.ts';
 import { m } from '#lib/paraglide/messages.js';
 import type { Locale } from '#lib/time/index.ts';
 
-/** Text, or a link: a `mailto:` or `tel:` href with the address or number as its visible text. */
+/**
+ * Text, or a link: a `mailto:` or `tel:` href with the address or number as its visible text. A
+ * newline in text is a line break (`<br>` in the HTML part).
+ */
 export type Inline = string | { text: string; href: string };
 
 export type Block =
@@ -32,7 +35,8 @@ export function escapeHtml(value: string): string {
 function inlineHtml(content: Inline[]): string {
 	return content
 		.map((part) =>
-			typeof part === 'string' ? escapeHtml(part) : `<a href="${escapeHtml(part.href)}">${escapeHtml(part.text)}</a>`
+			// A single newline inside a paragraph is a line break; the plain text keeps the newline.
+			typeof part === 'string' ? escapeHtml(part).replace(/\n/g, '<br>\n') : `<a href="${escapeHtml(part.href)}">${escapeHtml(part.text)}</a>`
 		)
 		.join('');
 }

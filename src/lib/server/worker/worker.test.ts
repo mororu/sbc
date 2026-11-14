@@ -1,6 +1,6 @@
-// Story 2.1: the worker drains the outbox into the sink, logs without contact data, records the
-// heartbeat, and starts only once per process. Runs on a temp-file database.
-import { existsSync, mkdtempSync, readdirSync, rmSync } from 'node:fs';
+// Stories 2.1 and 2.2: the worker drains the outbox into the sink, logs without contact data or the
+// keybox code, records the heartbeat, and starts only once per process. Runs on a temp-file database.
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -46,7 +46,7 @@ afterEach(() => {
 	rmSync(dir, { recursive: true, force: true });
 });
 
-const book = (start = '2027-01-12T17:00:00Z') => {
+const book = (start = '2027-01-12T17:00:00Z', now = NOW) => {
 	const result = createBooking(
 		{
 			start,
@@ -59,7 +59,7 @@ const book = (start = '2027-01-12T17:00:00Z') => {
 			submitToken: randomId(),
 			displayedNotice: COLD_1800
 		},
-		{ now: NOW, db }
+		{ now, db }
 	);
 	if (!result.ok) throw new Error(result.code);
 };
@@ -69,7 +69,9 @@ const until = async (done: () => boolean) => {
 	for (let i = 0; i < 500 && !done(); i++) await new Promise((resolve) => setImmediate(resolve));
 };
 
-const states = () => (sqlite.prepare('select id, state from outbox order by id').all() as { id: number; state: string }[]);
+/** The confirmation rows; each booking's keybox row is not due yet at `NOW`. */
+const states = () =>
+	sqlite.prepare("select id, state from outbox where kind = 'confirmation' order by id").all() as { id: number; state: string }[];
 const deps = () => ({ db, mailer, now: () => NOW, log: (line: string) => lines.push(line) });
 
 describe('tick', () => {
@@ -158,7 +160,8 @@ describe('tick', () => {
 		sqlite.exec('drop table outbox');
 		await tick(deps());
 		expect(sqlite.prepare('select * from worker_heartbeat').all()).toEqual([]);
-		expect(lines).toEqual(['[worker] tick failed: SQLITE_ERROR']);
+		// The held list is still checked, and fails the same way here.
+		expect(lines).toEqual(['[worker] tick failed: SQLITE_ERROR', '[worker] held check failed: SQLITE_ERROR']);
 	});
 
 	it('records the heartbeat with nothing to send', async () => {
@@ -166,6 +169,121 @@ describe('tick', () => {
 		expect(sqlite.prepare('select beat_at from worker_heartbeat').get()).toEqual({ beat_at: NOW });
 		expect(lines).toEqual([]);
 		expect(existsSync(join(dir, 'mail-sink'))).toBe(false);
+	});
+});
+
+describe('tick: the keybox email (Story 2.2)', () => {
+	/** 15:30 on the day, for 18:00: past the cutoff, so both rows are due now. */
+	const LATE = '2027-01-12T14:30:00Z';
+	const lateDeps = () => ({ ...deps(), now: () => '2027-01-12T14:31:00Z' });
+	const setKeybox = (code: string | null, de: string | null) =>
+		sqlite.prepare('update setting set keybox_code = ?, keybox_instructions_de = ? where id = 1').run(code, de);
+	const rows = () =>
+		sqlite.prepare('select id, kind, state, reason from outbox order by id').all() as {
+			id: number;
+			kind: string;
+			state: string;
+			reason: string | null;
+		}[];
+
+	it('sends the confirmation, then the keybox email, and logs neither the code nor contact data', async () => {
+		setKeybox('4711', 'Die Box hängt links an der Tür.\n\nLeg den Schlüssel danach zurück.');
+		book('2027-01-12T17:00:00Z', LATE);
+		await tick(lateDeps());
+		const [confirmation, keybox] = rows();
+		expect([confirmation.state, keybox.state]).toEqual(['accepted', 'accepted']);
+		expect(lines).toEqual([
+			`[worker] outbox ${confirmation.id} confirmation attempt=1 accepted smtp=-`,
+			`[worker] outbox ${keybox.id} keybox attempt=1 accepted smtp=-`
+		]);
+		expect(readdirSync(join(dir, 'mail-sink')).sort()).toEqual([
+			`${confirmation.id}-confirmation-1.eml`,
+			`${keybox.id}-keybox-1.eml`
+		]);
+		const eml = readFileSync(join(dir, 'mail-sink', `${keybox.id}-keybox-1.eml`), 'utf8');
+		expect(eml).toContain('Code: 4 7 1 1');
+		const log = lines.join('\n');
+		for (const secret of ['4711', '4 7 1 1', 'Lena', 'lena@example.ch', '+41791234567']) expect(log).not.toContain(secret);
+		expect(sqlite.prepare('select snapshot_keybox_code as code from outbox where id = ?').get(keybox.id)).toEqual({ code: '4711' });
+		expect(sqlite.prepare('select last_told_notice = (select snapshot_notice from outbox where id = ?) as same from booking').get(keybox.id)).toEqual({ same: 1 });
+	});
+
+	it('holds a keybox row without a code, logging it once, and still sends the rest', async () => {
+		setKeybox(null, 'Box links.');
+		book('2027-01-12T17:00:00Z', LATE);
+		await tick(lateDeps());
+		await tick(lateDeps());
+		const [confirmation, keybox] = rows();
+		expect(confirmation.state).toBe('accepted');
+		expect(keybox.state).toBe('pending');
+		expect(lines).toEqual([
+			`[worker] outbox ${confirmation.id} confirmation attempt=1 accepted smtp=-`,
+			`[worker] outbox ${keybox.id} keybox held missing=keybox_code`
+		]);
+		expect(sqlite.prepare('select beat_at from worker_heartbeat').get()).toEqual({ beat_at: '2027-01-12T14:31:00Z' });
+	});
+
+	it('logs a held row again only when its missing setting changes, or once it is held anew', async () => {
+		setKeybox(null, ' ');
+		book('2027-01-12T17:00:00Z', LATE);
+		await tick(lateDeps());
+		const keybox = rows()[1].id;
+		setKeybox('4711', ' ');
+		await tick(lateDeps());
+		await tick(lateDeps());
+		expect(lines.slice(1)).toEqual([
+			`[worker] outbox ${keybox} keybox held missing=keybox_code`,
+			`[worker] outbox ${keybox} keybox held missing=keybox_instructions_de`
+		]);
+		expect(lines.join('\n')).not.toContain('4711');
+		// A second held row is logged on its own; the first is not logged again.
+		book('2027-01-12T19:00:00Z', LATE);
+		await tick(lateDeps());
+		const second = rows()[3].id;
+		expect(lines.slice(3)).toEqual([
+			`[worker] outbox ${rows()[2].id} confirmation attempt=1 accepted smtp=-`,
+			`[worker] outbox ${second} keybox held missing=keybox_instructions_de`
+		]);
+		// Once sent it leaves the held set.
+		setKeybox('4711', 'Box links.');
+		await tick(lateDeps());
+		expect(rows().map((r) => r.state)).toEqual(['accepted', 'accepted', 'accepted', 'accepted']);
+	});
+
+	it('logs the held rows even when the drain fails', async () => {
+		setKeybox(null, 'Box links.');
+		book('2027-01-12T17:00:00Z', LATE);
+		// The claim of the confirmation fails; the held query still works.
+		sqlite.exec('create trigger no_claim before update of state on outbox begin select raise(abort, \'nope\'); end;');
+		await tick(lateDeps());
+		expect(lines).toEqual([
+			'[worker] tick failed: SQLITE_CONSTRAINT_TRIGGER',
+			`[worker] outbox ${rows()[1].id} keybox held missing=keybox_code`
+		]);
+		expect(sqlite.prepare('select * from worker_heartbeat').all()).toEqual([]);
+	});
+
+	it('returns a claimed row whose instructions were blanked before the send to pending, held', async () => {
+		setKeybox('4711', 'Box links.');
+		book('2027-01-12T17:00:00Z', LATE);
+		const now = '2027-01-12T14:31:00Z';
+		const first = claimDueRow({ now, db });
+		if (!first.ok) throw new Error('nothing claimed');
+		await sendClaimedRow(first.row, lateDeps());
+		const claim = claimDueRow({ now, db });
+		if (!claim.ok || claim.row.kind !== 'keybox') throw new Error('no keybox row claimed');
+		setKeybox('4711', null);
+		await sendClaimedRow(claim.row, lateDeps());
+		expect(rows()[1]).toMatchObject({ state: 'pending', reason: null });
+		const held = `[worker] outbox ${claim.row.id} keybox held missing=keybox_instructions_de`;
+		expect(lines.at(-1)).toBe(held);
+		// The next tick does not log it again; once fixed, it goes out.
+		await tick(lateDeps());
+		expect(lines.filter((l) => l === held)).toHaveLength(1);
+		setKeybox('4711', 'Box links.');
+		await tick(lateDeps());
+		expect(rows()[1]).toMatchObject({ state: 'accepted' });
+		expect(readdirSync(join(dir, 'mail-sink'))).toContain(`${claim.row.id}-keybox-2.eml`);
 	});
 });
 
@@ -183,7 +301,7 @@ describe('startWorker', () => {
 		try {
 			let clock = NOW;
 			book();
-			sqlite.prepare("update outbox set due_at = '2027-01-10T09:00:30Z'").run();
+			sqlite.prepare("update outbox set due_at = '2027-01-10T09:00:30Z' where kind = 'confirmation'").run();
 			expect(startWorker({ ...deps(), now: () => clock })).toBe(true);
 			await vi.advanceTimersByTimeAsync(0);
 			// vi.waitFor would advance the fake timers itself; poll on real immediates instead.
@@ -203,7 +321,7 @@ describe('startWorker', () => {
 
 	it('releases stale claims on start', async () => {
 		book();
-		sqlite.prepare("update outbox set state = 'in_flight', claimed_at = '2027-01-10T08:00:00Z'").run();
+		sqlite.prepare("update outbox set state = 'in_flight', claimed_at = '2027-01-10T08:00:00Z' where kind = 'confirmation'").run();
 		expect(startWorker(deps())).toBe(true);
 		await vi.waitFor(() => expect(states()[0].state).toBe('accepted'));
 		expect(lines[0]).toBe('[worker] released 1 stale claims');
