@@ -1,4 +1,4 @@
-// Stories 2.1 and 2.2: the worker drains the outbox into the sink, logs without contact data or the
+// Stories 2.1, 2.2 and 2.3: the worker drains the outbox into the sink, logs without contact data or the
 // keybox code, records the heartbeat, and starts only once per process. Runs on a temp-file database.
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -13,6 +13,7 @@ import { createDb, openDatabase, type Db } from '../db/index.ts';
 // eslint-disable-next-line no-restricted-imports
 import { applyMigrations, MIGRATIONS_FOLDER } from '../db/migrate.ts';
 import { randomId } from '../ids.ts';
+import type { ClaimedRow } from '#lib/server/commands/index.ts';
 import { sendClaimedRow, startWorker, stopWorker, tick, TICK_INTERVAL_MS } from './index.ts';
 
 const NOW = '2027-01-10T09:00:00Z';
@@ -46,16 +47,16 @@ afterEach(() => {
 	rmSync(dir, { recursive: true, force: true });
 });
 
-const book = (start = '2027-01-12T17:00:00Z', now = NOW) => {
+const book = (start = '2027-01-12T17:00:00Z', now = NOW, durationMin = 90, locale: 'de' | 'en' = 'de') => {
 	const result = createBooking(
 		{
 			start,
-			durationMin: 90,
+			durationMin,
 			partySize: 3,
 			name: 'Lena Muster',
 			email: 'lena@example.ch',
 			mobile: '+41791234567',
-			locale: 'de',
+			locale,
 			submitToken: randomId(),
 			displayedNotice: COLD_1800
 		},
@@ -287,6 +288,106 @@ describe('tick: the keybox email (Story 2.2)', () => {
 	});
 });
 
+describe('tick: the heat-change email (Story 2.3)', () => {
+	const heatRow = () =>
+		sqlite.prepare("select id, state, snapshot_notice, snapshot_urgent from outbox where kind = 'heat_change'").get() as
+			| { id: number; state: string; snapshot_notice: string; snapshot_urgent: number }
+			| undefined;
+
+	it('sends the urgent email for a collapsed range at the first tick after the settle delay, and updates the last-told notice', async () => {
+		// 18:00 told 17:20–17:30, then 16:30–17:30 is booked: come at 17:45.
+		book('2027-01-12T17:00:00Z');
+		await tick(deps());
+		book('2027-01-12T15:30:00Z', NOW, 60);
+		expect(heatRow()).toMatchObject({ state: 'pending' });
+		// Before the settle delay ends: only the new confirmation goes out.
+		await tick({ ...deps(), now: () => '2027-01-10T09:09:00Z' });
+		expect(heatRow()).toMatchObject({ state: 'pending' });
+		await tick({ ...deps(), now: () => '2027-01-10T09:11:00Z' });
+		const sent = heatRow();
+		expect(sent).toMatchObject({ state: 'accepted', snapshot_urgent: 1 });
+		expect(lines.at(-1)).toBe(`[worker] outbox ${sent?.id} heat_change attempt=1 accepted smtp=-`);
+		const eml = readFileSync(join(dir, 'mail-sink', `${sent?.id}-heat_change-1.eml`), 'utf8');
+		expect(eml).toContain('multipart/alternative');
+		expect(eml).toMatch(/Subject: =\?UTF-8\?Q\?Wichtig/);
+		expect(
+			sqlite.prepare("select last_told_notice as n from booking where start_at = '2027-01-12T17:00:00Z'").get()
+		).toEqual({ n: sent?.snapshot_notice });
+		expect(sent?.snapshot_notice).toBe('{"heat":"cold","earliest":"2027-01-12T16:45:00Z","latest":null}');
+		for (const secret of ['Lena', 'lena@example.ch', '+41791234567']) expect(lines.join('\n')).not.toContain(secret);
+	});
+});
+
+describe('sendClaimedRow: heat-change edge cases (Story 2.3)', () => {
+	const TOLD = '{"heat":"cold","earliest":"2027-01-12T16:20:00Z","latest":"2027-01-12T16:30:00Z"}';
+	const NOW_NOTICE = '{"heat":"cold","earliest":"2027-01-12T16:45:00Z","latest":null}';
+	/** 18:00 told 17:20–17:30, then 16:30–17:30 booked; its heat-change row claimed by hand. */
+	const claimedHeat = (over: Partial<ClaimedRow> = {}): ClaimedRow => {
+		book('2027-01-12T17:00:00Z');
+		book('2027-01-12T15:30:00Z', NOW, 60);
+		const { id, booking_id: bookingId } = sqlite.prepare("select id, booking_id from outbox where kind = 'heat_change'").get() as {
+			id: number;
+			booking_id: number;
+		};
+		sqlite.prepare("update outbox set state = 'in_flight', claimed_at = ?, attempts = 1 where id = ?").run(NOW, id);
+		return {
+			id,
+			bookingId,
+			kind: 'heat_change',
+			claimedAt: NOW,
+			attempts: 1,
+			snapshotNotice: NOW_NOTICE,
+			snapshotKeyboxCode: null,
+			snapshotLocale: 'de',
+			snapshotLastTold: TOLD,
+			snapshotUrgent: true,
+			...over
+		};
+	};
+	const state = (id: number) => sqlite.prepare('select state, reason from outbox where id = ?').get(id);
+
+	it('refuses a heat-change row that cannot be rendered, without a retry, and leaves the last-told notice', async () => {
+		const row = claimedHeat({ snapshotLastTold: NOW_NOTICE });
+		await sendClaimedRow(row, deps());
+		expect(state(row.id)).toEqual({ state: 'refused', reason: 'render_error' });
+		expect(lines).toEqual([`[worker] outbox ${row.id} heat_change attempt=1 refused smtp=-`]);
+		expect(existsSync(join(dir, 'mail-sink'))).toBe(false);
+		expect(sqlite.prepare("select last_told_notice as n from booking where start_at = '2027-01-12T17:00:00Z'").get()).toEqual({ n: TOLD });
+	});
+
+	it('logs superseded, without a due time, for a transient failure while a newer change has its own row', async () => {
+		const row = claimedHeat();
+		sqlite.prepare("insert into outbox (booking_id, kind, state, due_at) values (?, 'heat_change', 'pending', ?)").run(row.bookingId, NOW);
+		const failing: Mailer = { send: async () => ({ outcome: 'transient_failure', smtpCode: 421, reason: 'smtp 421' }) };
+		await sendClaimedRow(row, { ...deps(), mailer: failing });
+		expect(state(row.id)).toEqual({ state: 'cancelled', reason: 'smtp 421' });
+		expect(lines).toEqual([`[worker] outbox ${row.id} heat_change attempt=1 superseded smtp=421`]);
+	});
+});
+
+describe('tick: the good-news email in English (Story 2.3)', () => {
+	it('sends "Good news" for an EN booking that turns hot', async () => {
+		// 16:00–17:00, then 18:30 (told cold 17:50–18:00), then 17:15–18:15 makes 18:30 hot.
+		book('2027-01-12T15:00:00Z', NOW, 60);
+		book('2027-01-12T17:30:00Z', NOW, 90, 'en');
+		book('2027-01-12T16:15:00Z', NOW, 60);
+		await tick({ ...deps(), now: () => '2027-01-10T09:10:00Z' });
+		const sent = sqlite.prepare("select id, state, snapshot_urgent, snapshot_locale from outbox where kind = 'heat_change'").get() as {
+			id: number;
+			state: string;
+			snapshot_urgent: number;
+			snapshot_locale: string;
+		};
+		expect(sent).toMatchObject({ state: 'accepted', snapshot_urgent: 0, snapshot_locale: 'en' });
+		const eml = readFileSync(join(dir, 'mail-sink', `${sent.id}-heat_change-1.eml`), 'utf8');
+		expect(eml).toContain('Subject: Good news: Tue 12 January, 18:30 is already hot');
+		expect(eml).toContain('Content-Language: en');
+		expect(
+			sqlite.prepare("select last_told_notice as n from booking where start_at = '2027-01-12T17:30:00Z'").get()
+		).toEqual({ n: '{"heat":"hot","earliest":null,"latest":null}' });
+	});
+});
+
 describe('startWorker', () => {
 	it('starts one loop only, even when called again (HMR)', async () => {
 		book();
@@ -324,6 +425,6 @@ describe('startWorker', () => {
 		sqlite.prepare("update outbox set state = 'in_flight', claimed_at = '2027-01-10T08:00:00Z' where kind = 'confirmation'").run();
 		expect(startWorker(deps())).toBe(true);
 		await vi.waitFor(() => expect(states()[0].state).toBe('accepted'));
-		expect(lines[0]).toBe('[worker] released 1 stale claims');
+		expect(lines[0]).toBe('[worker] released 1 stale claims, superseded 0');
 	});
 });

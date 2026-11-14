@@ -196,5 +196,15 @@
 	"mail_keybox_code": "Code: {code}",
 	"mail_keybox_counts": "Das gilt jetzt",
 	"mail_keybox_instructions_heading": "Schlüssel holen und zurückbringen",
-	"mail_signature": "Bis bald, Sauna Luegisee"
+	"mail_signature": "Bis bald, Sauna Luegisee",
+	"mail_heat_good_subject": "Gute Nachricht: {date}, {time} ist schon heiss",
+	"mail_heat_good_body": "Vor dir ist jetzt jemand in der Sauna. Komm am {date} einfach um {time}, der Ofen läuft.",
+	"mail_heat_cold_subject": "Wichtig: Kaltstart {date}, {time}, komm zwischen {earliest} und {latest}",
+	"mail_heat_cold_short_subject": "Wichtig: Kaltstart {date}, {time}, komm um {earliest}",
+	"mail_heat_cold_past_subject": "Wichtig: Kaltstart {date}, {time}",
+	"mail_heat_now_cold": "Vor dir ist jetzt niemand mehr in der Sauna.",
+	"mail_heat_arrival_subject": "Wichtig: neue Ankunftszeit für {date}, {time}",
+	"mail_heat_longer_preheat": "Wir heizen jetzt länger vor.",
+	"mail_heat_later_earliest": "Vor dir ist die Sauna länger belegt.",
+	"mail_heat_arrival": "Komm zwischen {earliest} und {latest} und heiz ein."
 }

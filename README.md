@@ -411,6 +411,25 @@ WHERE id = 1;"
 | `mail_keybox_instructions_heading` | Schlüssel holen und zurückbringen | Getting the key and bringing it back |
 | `booked_revisit_past` (confirmation page once the start has come, retro A9) | So stand es bei der Buchung. | This is how it stood when you booked. |
 
+### Drafted copy for operator review (Story 2.3)
+
+The DE good-news subject and body, the DE cold-start subjects and the DE "neue Ankunftszeit" subject are story copy. Everything else, and all EN lines, are drafts:
+
+| Key | DE | EN |
+| --- | --- | --- |
+| `mail_heat_good_subject` | Gute Nachricht: {date}, {time} ist schon heiss | Good news: {date}, {time} is already hot |
+| `mail_heat_good_body` | Vor dir ist jetzt jemand in der Sauna. Komm am {date} einfach um {time}, der Ofen läuft. | Someone is in the sauna before you now. Just come at {time} on {date}, the stove will be going. |
+| `mail_heat_cold_subject` | Wichtig: Kaltstart {date}, {time}, komm zwischen {earliest} und {latest} | Important: cold start {date}, {time}, come between {earliest} and {latest} |
+| `mail_heat_cold_short_subject` (collapsed range) | Wichtig: Kaltstart {date}, {time}, komm um {earliest} | Important: cold start {date}, {time}, come at {earliest} |
+| `mail_heat_cold_past_subject` (arrival already past at the send) | Wichtig: Kaltstart {date}, {time} | Important: cold start {date}, {time} |
+| `mail_heat_now_cold` (lead) | Vor dir ist jetzt niemand mehr in der Sauna. | Nobody is in the sauna before you any more. |
+| `mail_heat_arrival_subject` | Wichtig: neue Ankunftszeit für {date}, {time} | Important: new arrival time for {date}, {time} |
+| `mail_heat_longer_preheat` (lead, earlier latest arrival) | Wir heizen jetzt länger vor. | We now pre-heat for longer. |
+| `mail_heat_later_earliest` (lead, later earliest arrival) | Vor dir ist die Sauna länger belegt. | The sauna is booked for longer before you. |
+| `mail_heat_arrival` | Komm zwischen {earliest} und {latest} und heiz ein. | Come between {earliest} and {latest} and light the fire. |
+
+A collapsed range, or an arrival already past at the send, reuses the day-view cold notice text after the lead.
+
 ## Scaffold decisions
 
 1. **Instants are UTC ISO 8601 text** with seconds and `Z`, e.g. `2027-01-12T17:00:00Z`, everywhere, including the notice JSON. It is readable in the database and in logs, sorts correctly as text, and round-trips through Temporal without loss. Wall-clock dates in URLs stay `yyyy-mm-dd`, times `hhmm`.

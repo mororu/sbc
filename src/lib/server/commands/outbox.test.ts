@@ -1,4 +1,4 @@
-// Story 2.1 and 2.2 matrices, outbox command rows (AD-23). Bookings are made through createBooking
+// Story 2.1, 2.2 and 2.3 matrices, outbox command rows (AD-23). Bookings are made through createBooking
 // on a temp-file database (season 9 Jan – 30 Apr 2027); `now` is explicit everywhere. Each booking
 // also gets a keybox row; with the keybox settings empty (the migrated state) it is held, so the
 // Story 2.1 tests see only the confirmation rows being claimed.
@@ -21,8 +21,10 @@ import {
 	recordHeartbeat,
 	recordSendOutcome,
 	releaseHeldKeybox,
-	releaseStaleClaims
+	releaseStaleClaims,
+	SENDABLE_KINDS
 } from './outbox.ts';
+import { enqueueHeatChanges } from './heat-change.ts';
 
 const DAY = '2027-01-12';
 /** 09:00 in Zurich. */
@@ -121,7 +123,9 @@ describe('claimDueRow', () => {
 				attempts: 1,
 				snapshotNotice: COLD_1800_JSON,
 				snapshotKeyboxCode: null,
-				snapshotLocale: 'en'
+				snapshotLocale: 'en',
+				snapshotLastTold: null,
+				snapshotUrgent: null
 			}
 		});
 		expect(row(id)).toMatchObject({
@@ -153,12 +157,8 @@ describe('claimDueRow', () => {
 		}
 	});
 
-	it('does not claim a kind that is not sendable yet', () => {
-		const { id } = book();
-		setRow(keyboxOf(id), { state: 'cancelled' });
-		setRow(id, { kind: 'heat_change' });
-		expect(claimDueRow({ now: NOW, db })).toEqual({ ok: false, code: 'none' });
-		expect(row(id).state).toBe('pending');
+	it('sends every kind', () => {
+		expect([...SENDABLE_KINDS]).toEqual([...KIND_ORDER]);
 	});
 
 	it('claims by due time, then kind, then id', () => {
@@ -296,7 +296,7 @@ describe('cancelInFlightOfDeleted', () => {
 });
 
 describe('the outbox schema', () => {
-	it('allows only one confirmation row and one keybox row per booking', () => {
+	it('allows only one confirmation row, one keybox row and one open heat-change row per booking', () => {
 		const { id } = book();
 		const bookingId = row(id).booking_id;
 		const insert = (kind: string) =>
@@ -306,7 +306,9 @@ describe('the outbox schema', () => {
 		expect(() => insert('confirmation')).toThrow(/UNIQUE/);
 		expect(() => insert('keybox')).toThrow(/UNIQUE/);
 		expect(() => insert('heat_change')).not.toThrow();
-		// A second heat-change row is fine: the index limits only confirmation and keybox rows.
+		// A second open heat-change row is not; a finished one is fine (Story 2.3).
+		expect(() => insert('heat_change')).toThrow(/UNIQUE/);
+		sqlite.prepare("update outbox set state = 'cancelled' where kind = 'heat_change'").run();
 		expect(() => insert('heat_change')).not.toThrow();
 	});
 
@@ -325,7 +327,7 @@ describe('releaseStaleClaims', () => {
 		setRow(stale.id, { state: 'in_flight', claimed_at: '2027-01-12T07:50:00Z' });
 		setRow(fresh.id, { state: 'in_flight', claimed_at: '2027-01-12T07:55:00Z' });
 		setRow(done.id, { state: 'accepted', claimed_at: '2027-01-12T07:00:00Z' });
-		expect(releaseStaleClaims({ now: NOW, db })).toEqual({ ok: true, code: 'released', count: 1 });
+		expect(releaseStaleClaims({ now: NOW, db })).toEqual({ ok: true, code: 'released', released: 1, superseded: 0 });
 		expect(row(stale.id)).toMatchObject({ state: 'pending', claimed_at: null });
 		expect(row(fresh.id)).toMatchObject({ state: 'in_flight' });
 		expect(row(done.id)).toMatchObject({ state: 'accepted' });
@@ -424,7 +426,9 @@ describe('the keybox row (Story 2.2)', () => {
 			attempts: 1,
 			snapshotNotice: current,
 			snapshotKeyboxCode: '4711',
-			snapshotLocale: 'de'
+			snapshotLocale: 'de',
+			snapshotLastTold: null,
+			snapshotUrgent: null
 		});
 		expect(row(id)).toMatchObject({
 			state: 'in_flight',
@@ -630,7 +634,7 @@ describe('the keybox row (Story 2.2)', () => {
 		claimKeybox(CUTOFF);
 		// The process died mid-send; it is back after the start.
 		const boot = at('18:30');
-		expect(releaseStaleClaims({ now: boot, db }).count).toBe(1);
+		expect(releaseStaleClaims({ now: boot, db })).toMatchObject({ released: 1, superseded: 0 });
 		expect(row(id)).toMatchObject({ state: 'pending', claimed_at: null });
 		expect(claimDueRow({ now: boot, db })).toEqual({ ok: false, code: 'none' });
 		expect(row(id)).toMatchObject({ state: 'expired', outcome_at: boot });
@@ -662,5 +666,250 @@ describe('the keybox row (Story 2.2)', () => {
 		sqlite.prepare("update booking set deleted_at = '2027-01-11T17:00:01Z'").run();
 		expect(cancelInFlightOfDeleted(id, { now: '2027-01-11T17:00:02Z', db })).toEqual({ ok: true, code: 'cancelled' });
 		expect(bookingOf(id).last_told_notice).toBe(COLD_1800_JSON);
+	});
+});
+
+describe('the heat-change row (Story 2.3)', () => {
+	/** Booked on Thu 7 Jan for Sat 16 Jan: every keybox row is due on 15 January. */
+	const EARLY = '2027-01-07T10:00:00Z';
+	const SAT = '2027-01-16';
+	/** The settle delay after EARLY. */
+	const SETTLED = '2027-01-07T10:10:00Z';
+	const told1800 = JSON.stringify({ heat: 'cold', earliest: at('17:20', SAT), latest: at('17:30', SAT) });
+	const collapsed1800 = JSON.stringify({ heat: 'cold', earliest: at('17:45', SAT), latest: null });
+	const drainConfirmations = () => sqlite.prepare("update outbox set state = 'accepted' where kind = 'confirmation'").run();
+	const heatOf = (bookingId: number) =>
+		(sqlite.prepare("select id from outbox where kind = 'heat_change' and booking_id = ? order by id desc").get(bookingId) as { id: number }).id;
+	const bookingIdOf = (confirmationId: number) => row(confirmationId).booking_id as number;
+	const lastToldOf = (bookingId: number) =>
+		(sqlite.prepare('select last_told_notice as n from booking where id = ?').get(bookingId) as { n: string }).n;
+
+	/** 18:00 told 17:20–17:30, then 16:30–17:30 is booked: the heat-change row of 18:00 (collapsed urgent). */
+	const collapsedExample = (date = SAT) => {
+		const target = bookingIdOf(book({ start: at('18:00', date), locale: 'de' }, EARLY).id);
+		const before = bookingIdOf(book({ start: at('16:30', date), durationMin: 60 }, EARLY).id);
+		return { target, before, heat: heatOf(target) };
+	};
+
+	it('is pending, not claimed before the settle delay, and claimed at the next tick after it, well within 15 minutes', () => {
+		const { heat } = collapsedExample();
+		drainConfirmations();
+		expect(row(heat)).toMatchObject({ state: 'pending', due_at: SETTLED });
+		expect(claimDueRow({ now: '2027-01-07T10:09:59Z', db })).toEqual({ ok: false, code: 'none' });
+		expect(claimDueRow({ now: '2027-01-07T10:11:00Z', db })).toMatchObject({ ok: true, row: { id: heat, kind: 'heat_change' } });
+	});
+
+	it('freezes the current notice, the last-told notice, the locale and the urgent flag at claim', () => {
+		const { target, heat } = collapsedExample();
+		drainConfirmations();
+		expect(claimDueRow({ now: SETTLED, db })).toEqual({
+			ok: true,
+			code: 'claimed',
+			row: {
+				id: heat,
+				bookingId: target,
+				kind: 'heat_change',
+				claimedAt: SETTLED,
+				attempts: 1,
+				snapshotNotice: collapsed1800,
+				snapshotKeyboxCode: null,
+				snapshotLocale: 'de',
+				snapshotLastTold: told1800,
+				snapshotUrgent: true
+			}
+		});
+		expect(row(heat)).toMatchObject({
+			state: 'in_flight',
+			claimed_at: SETTLED,
+			snapshot_notice: collapsed1800,
+			snapshot_last_told: told1800,
+			snapshot_locale: 'de',
+			snapshot_urgent: 1
+		});
+	});
+
+	it('freezes urgent false for good news', () => {
+		book({ start: at('16:00', SAT), durationMin: 60 }, EARLY);
+		const target = bookingIdOf(book({ start: at('18:30', SAT) }, EARLY).id);
+		book({ start: at('17:15', SAT), durationMin: 60 }, EARLY);
+		drainConfirmations();
+		expect(claimDueRow({ now: SETTLED, db })).toMatchObject({
+			ok: true,
+			row: { id: heatOf(target), snapshotNotice: '{"heat":"hot","earliest":null,"latest":null}', snapshotUrgent: false }
+		});
+	});
+
+	it.each(['pending', 'transient_failure', 'in_flight'] as const)('waits while the confirmation is %s', (state) => {
+		const { target, heat } = collapsedExample();
+		drainConfirmations();
+		const confirmation = (
+			sqlite.prepare("select id from outbox where kind = 'confirmation' and booking_id = ?").get(target) as { id: number }
+		).id;
+		setRow(confirmation, { state, due_at: '2027-01-07T10:30:00Z', claimed_at: state === 'in_flight' ? SETTLED : null });
+		expect(claimDueRow({ now: SETTLED, db })).toEqual({ ok: false, code: 'none' });
+		expect(row(heat).state).toBe('pending');
+	});
+
+	it('is cancelled at claim when the recheck finds nothing worth an email, and the next due row is claimed', () => {
+		const { before, heat } = collapsedExample();
+		// The booking before is gone again: the current notice equals the last-told one.
+		sqlite.prepare("update booking set deleted_at = '2027-01-07T10:05:00Z' where id = ?").run(before);
+		drainConfirmations();
+		const other = book({ start: at('12:00', SAT) }, EARLY).id;
+		setRow(other, { due_at: '2027-01-07T10:10:30Z' });
+		const now = '2027-01-07T10:11:00Z';
+		expect(claimDueRow({ now, db })).toMatchObject({ ok: true, row: { id: other, kind: 'confirmation' } });
+		expect(row(heat)).toMatchObject({ state: 'cancelled', outcome_at: now });
+	});
+
+	it('is cancelled at claim for a change that only widens the range against the last-told notice', () => {
+		const { target, heat } = collapsedExample();
+		drainConfirmations();
+		// Told 17:20–17:30; now 17:15–17:30.
+		sqlite.prepare("update booking set deleted_at = '2027-01-07T10:05:00Z' where start_at = ?").run(at('16:30', SAT));
+		sqlite.prepare('update setting set preheat_max_min = 45 where id = 1').run();
+		expect(claimDueRow({ now: SETTLED, db })).toEqual({ ok: false, code: 'none' });
+		expect(row(heat).state).toBe('cancelled');
+		expect(lastToldOf(target)).toBe(told1800);
+	});
+
+	it('is cancelled at claim without a last-told notice', () => {
+		const { heat } = collapsedExample();
+		drainConfirmations();
+		sqlite.prepare('update booking set last_told_notice = null').run();
+		expect(claimDueRow({ now: SETTLED, db })).toEqual({ ok: false, code: 'none' });
+		expect(row(heat).state).toBe('cancelled');
+	});
+
+	it('writes the last-told notice from the snapshot when accepted', () => {
+		const { target, heat } = collapsedExample();
+		drainConfirmations();
+		claimDueRow({ now: SETTLED, db });
+		// A change after the claim is not what was sent.
+		sqlite.prepare("insert into block (start_at, end_at, reason) values (?, ?, 'cleaning')").run(at('17:30', SAT), at('17:50', SAT));
+		expect(recordSendOutcome(heat, 'accepted', null, { now: SETTLED, db })).toEqual({ ok: true, code: 'accepted' });
+		expect(lastToldOf(target)).toBe(collapsed1800);
+	});
+
+	it.each(['refused', 'transient_failure'] as const)('leaves the last-told notice unchanged when %s', (outcome) => {
+		const { target, heat } = collapsedExample();
+		drainConfirmations();
+		claimDueRow({ now: SETTLED, db });
+		expect(recordSendOutcome(heat, outcome, 'smtp 550', { now: SETTLED, db }).ok).toBe(true);
+		expect(row(heat).state).toBe(outcome);
+		expect(lastToldOf(target)).toBe(told1800);
+	});
+
+	it('retries a transient failure with the backoff and expires it at the start', () => {
+		const { heat } = collapsedExample();
+		drainConfirmations();
+		claimDueRow({ now: SETTLED, db });
+		recordSendOutcome(heat, 'transient_failure', 'smtp 421', { now: SETTLED, db });
+		expect(row(heat)).toMatchObject({ state: 'transient_failure', due_at: '2027-01-07T10:11:00Z' });
+		expect(claimDueRow({ now: '2027-01-07T10:11:00Z', db })).toMatchObject({ ok: true, row: { id: heat, attempts: 2 } });
+		recordSendOutcome(heat, 'transient_failure', 'smtp 421', { now: '2027-01-07T10:11:00Z', db });
+		claimDueRow({ now: at('18:00', SAT), db });
+		expect(row(heat)).toMatchObject({ state: 'expired', outcome_at: at('18:00', SAT) });
+	});
+
+	it('returns a stale in_flight row to pending, and never expires an in_flight row directly', () => {
+		const { heat } = collapsedExample();
+		drainConfirmations();
+		claimDueRow({ now: SETTLED, db });
+		claimDueRow({ now: at('18:30', SAT), db });
+		expect(row(heat).state).toBe('in_flight');
+		expect(releaseStaleClaims({ now: '2027-01-07T10:20:00Z', db })).toMatchObject({ released: 1, superseded: 0 });
+		expect(row(heat)).toMatchObject({ state: 'pending', claimed_at: null });
+	});
+
+	it('is cancelled once the booking is deleted, and an accepted send of a deleted booking writes only the row', () => {
+		const { target, heat } = collapsedExample();
+		drainConfirmations();
+		claimDueRow({ now: SETTLED, db });
+		sqlite.prepare("update booking set deleted_at = '2027-01-07T10:10:01Z' where id = ?").run(target);
+		expect(recordSendOutcome(heat, 'accepted', null, { now: '2027-01-07T10:10:02Z', db }).code).toBe('accepted');
+		expect(lastToldOf(target)).toBe(told1800);
+
+		const second = collapsedExample('2027-01-17');
+		sqlite.prepare("update booking set deleted_at = '2027-01-07T10:05:00Z' where id = ?").run(second.target);
+		drainConfirmations();
+		claimDueRow({ now: SETTLED, db });
+		expect(row(second.heat)).toMatchObject({ state: 'cancelled', outcome_at: SETTLED });
+	});
+
+	it.each(['in_flight', 'accepted', 'refused', 'expired'] as const)('is cancelled by the sweep once the keybox row is %s', (state) => {
+		const { target, heat } = collapsedExample();
+		drainConfirmations();
+		sqlite
+			.prepare("update outbox set state = ?, claimed_at = ? where kind = 'keybox' and booking_id = ?")
+			.run(state, state === 'in_flight' ? SETTLED : null, target);
+		expect(claimDueRow({ now: SETTLED, db })).toEqual({ ok: false, code: 'none' });
+		expect(row(heat)).toMatchObject({ state: 'cancelled', outcome_at: SETTLED });
+	});
+
+	it('gets a new open row for a change while it is in flight; a transient failure or stale claim then gives way to it', () => {
+		const { target, heat } = collapsedExample();
+		drainConfirmations();
+		claimDueRow({ now: SETTLED, db });
+		// A block during the send moves the earliest arrival again: the helper inserts a new open row.
+		sqlite.prepare("insert into block (start_at, end_at, reason) values (?, ?, 'cleaning')").run(at('17:30', SAT), at('17:50', SAT));
+		db.$client.transaction(() => enqueueHeatChanges([target], { now: SETTLED, db })).immediate();
+		const newer = heatOf(target);
+		expect(newer).not.toBe(heat);
+		expect(recordSendOutcome(heat, 'transient_failure', 'smtp 421', { now: SETTLED, db })).toEqual({ ok: true, code: 'superseded' });
+		expect(row(heat)).toMatchObject({ state: 'cancelled', reason: 'smtp 421' });
+		expect(row(newer).state).toBe('pending');
+
+		// The newer row is claimed, goes stale, and a third change arrives meanwhile.
+		expect(claimDueRow({ now: '2027-01-07T10:20:00Z', db })).toMatchObject({ ok: true, row: { id: newer } });
+		sqlite.prepare("insert into block (start_at, end_at, reason) values (?, ?, 'cleaning')").run(at('17:30', SAT), at('17:52', SAT));
+		db.$client.transaction(() => enqueueHeatChanges([target], { now: '2027-01-07T10:21:00Z', db })).immediate();
+		const third = heatOf(target);
+		expect(releaseStaleClaims({ now: '2027-01-07T10:30:00Z', db })).toMatchObject({ released: 0, superseded: 1 });
+		expect(row(newer)).toMatchObject({ state: 'cancelled', outcome_at: '2027-01-07T10:30:00Z' });
+		expect(row(third).state).toBe('pending');
+	});
+
+	it('releases only the newest of two stale in-flight rows of a booking and supersedes the older one', () => {
+		const { target, heat } = collapsedExample();
+		drainConfirmations();
+		claimDueRow({ now: SETTLED, db });
+		sqlite.prepare("insert into block (start_at, end_at, reason) values (?, ?, 'cleaning')").run(at('17:30', SAT), at('17:50', SAT));
+		db.$client.transaction(() => enqueueHeatChanges([target], { now: SETTLED, db })).immediate();
+		const newer = heatOf(target);
+		expect(claimDueRow({ now: '2027-01-07T10:20:00Z', db })).toMatchObject({ ok: true, row: { id: newer } });
+		// Both are in flight and both go stale.
+		expect(releaseStaleClaims({ now: '2027-01-07T10:40:00Z', db })).toEqual({
+			ok: true,
+			code: 'released',
+			released: 1,
+			superseded: 1
+		});
+		expect(row(newer)).toMatchObject({ state: 'pending', claimed_at: null });
+		expect(row(heat)).toMatchObject({ state: 'cancelled', outcome_at: '2027-01-07T10:40:00Z' });
+	});
+
+	it('cancels a row whose notice cannot be compared with reason invalid_notice, and claims the next one', () => {
+		const { heat } = collapsedExample();
+		const second = collapsedExample('2027-01-17');
+		drainConfirmations();
+		// A cold notice without an earliest arrival: not a valid notice.
+		sqlite.prepare("update booking set last_told_notice = '{\"heat\":\"cold\",\"earliest\":null,\"latest\":null}' where start_at = ?").run(at('18:00', SAT));
+		expect(claimDueRow({ now: SETTLED, db })).toMatchObject({ ok: true, row: { id: second.heat, kind: 'heat_change' } });
+		expect(row(heat)).toMatchObject({ state: 'cancelled', reason: 'invalid_notice', outcome_at: SETTLED });
+	});
+
+	it('is cancelled in the same transaction as the keybox claim', () => {
+		setKeybox('4711');
+		const { target, before, heat } = collapsedExample();
+		drainConfirmations();
+		sqlite.prepare("update outbox set state = 'accepted' where kind = 'keybox' and booking_id = ?").run(before);
+		// The keybox row falls due first, at the cutoff; the heat-change row was retried to the same time.
+		const cutoff = '2027-01-15T17:00:00Z';
+		setRow(heat, { due_at: cutoff });
+		const result = claimDueRow({ now: cutoff, db });
+		expect(result).toMatchObject({ ok: true, row: { bookingId: target, kind: 'keybox' } });
+		expect(row(heat)).toMatchObject({ state: 'cancelled', outcome_at: cutoff });
+		expect(claimDueRow({ now: cutoff, db })).toEqual({ ok: false, code: 'none' });
 	});
 });

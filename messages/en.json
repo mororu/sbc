@@ -196,5 +196,15 @@
 	"mail_keybox_code": "Code: {code}",
 	"mail_keybox_counts": "This is what counts now",
 	"mail_keybox_instructions_heading": "Getting the key and bringing it back",
-	"mail_signature": "See you soon, Sauna Luegisee"
+	"mail_signature": "See you soon, Sauna Luegisee",
+	"mail_heat_good_subject": "Good news: {date}, {time} is already hot",
+	"mail_heat_good_body": "Someone is in the sauna before you now. Just come at {time} on {date}, the stove will be going.",
+	"mail_heat_cold_subject": "Important: cold start {date}, {time}, come between {earliest} and {latest}",
+	"mail_heat_cold_short_subject": "Important: cold start {date}, {time}, come at {earliest}",
+	"mail_heat_cold_past_subject": "Important: cold start {date}, {time}",
+	"mail_heat_now_cold": "Nobody is in the sauna before you any more.",
+	"mail_heat_arrival_subject": "Important: new arrival time for {date}, {time}",
+	"mail_heat_longer_preheat": "We now pre-heat for longer.",
+	"mail_heat_later_earliest": "The sauna is booked for longer before you.",
+	"mail_heat_arrival": "Come between {earliest} and {latest} and light the fire."
 }

@@ -2,22 +2,34 @@
 // row through its lifecycle: claim (`pending`/`transient_failure` → `in_flight`, freezing the
 // snapshot), outcome (`in_flight` → `accepted`/`refused`/`transient_failure`), expiry at the start
 // time, cancellation for a deleted booking, and the per-tick release of stale claims.
-// Only an accepted keybox row of a live booking writes `last_told_notice`, from its snapshot; an
-// accepted confirmation leaves it unchanged (AD-24).
-import { and, eq, inArray, isNotNull, lte, sql } from 'drizzle-orm';
-import { isStale, KIND_ORDER, missingKeyboxSetting, retryAt, type OutboxKind } from '#lib/domain/index.ts';
+// Only an accepted keybox or heat-change row of a live booking writes `last_told_notice`, from its
+// snapshot; an accepted confirmation leaves it unchanged (AD-24).
+import { and, desc, eq, inArray, isNotNull, lte, sql } from 'drizzle-orm';
+import {
+	classifyHeatChange,
+	endsHeatChangeMail,
+	isStale,
+	KIND_ORDER,
+	missingKeyboxSetting,
+	OUTBOX_STATE_LIST,
+	parseNotice,
+	retryAt,
+	type OutboxKind
+} from '#lib/domain/index.ts';
 import type { Instant, Locale } from '#lib/time/index.ts';
 import { now as clockNow } from '../clock.ts';
 import { getDb, type Db } from '../db/index.ts';
 import { currentNotice, getKeyboxSettings } from '../db/queries/index.ts';
 import { booking, outbox, workerHeartbeat } from '../db/schema.ts';
+import { cancelOpenHeatChanges, OPEN_STATES, openHeatChangesOf } from './heat-change.ts';
 
 type Options = { now?: Instant; db?: Db };
 
-/** The kinds the worker sends so far; Story 2.3 adds `heat_change` here. */
-export const SENDABLE_KINDS: readonly OutboxKind[] = ['confirmation', 'keybox'];
+/** The kinds the worker sends. */
+export const SENDABLE_KINDS: readonly OutboxKind[] = ['confirmation', 'keybox', 'heat_change'];
 
-const OPEN_STATES = ['pending', 'transient_failure'] as const;
+/** The keybox row states that end heat-change mail for the booking. */
+const HEAT_MAIL_ENDED_STATES = OUTBOX_STATE_LIST.filter(endsHeatChangeMail);
 
 /** A claimed row: what the worker needs to render and send it. */
 export type ClaimedRow = {
@@ -28,12 +40,16 @@ export type ClaimedRow = {
 	attempts: number;
 	/**
 	 * Canonical Notice JSON frozen at claim: the notice at booking for a confirmation, the current
-	 * notice for a keybox row. Null for a booking made before notices were stored.
+	 * notice for a keybox or heat-change row. Null for a booking made before notices were stored.
 	 */
 	snapshotNotice: string | null;
 	/** The trimmed keybox code frozen at claim: the record of what was sent. Null for other kinds. */
 	snapshotKeyboxCode: string | null;
 	snapshotLocale: Locale;
+	/** Heat change: the last-told notice frozen at claim (canonical JSON). Null for other kinds. */
+	snapshotLastTold: string | null;
+	/** Heat change: true for an urgent change, false for good news. Null for other kinds. */
+	snapshotUrgent: boolean | null;
 };
 
 export type ClaimResult = { ok: true; code: 'claimed'; row: ClaimedRow } | { ok: false; code: 'none' };
@@ -43,6 +59,11 @@ export type SendOutcome = 'accepted' | 'refused' | 'transient_failure';
 export type OutcomeResult =
 	/** `dueAt`: the next attempt, for a transient failure. */
 	| { ok: true; code: SendOutcome; dueAt?: Instant }
+	/**
+	 * A heat-change row failed transiently while a newer change already has its own open row: it is
+	 * cancelled (the reason kept), and the newer row is rechecked and sent instead.
+	 */
+	| { ok: true; code: 'superseded' }
 	| { ok: false; code: 'not_in_flight' };
 
 function resolve(options: Options) {
@@ -50,36 +71,90 @@ function resolve(options: Options) {
 }
 
 /**
+ * True when the booking has an open heat-change row other than `exceptId`. While a heat-change row is
+ * in flight, a newer change gets its own open row; at most one may be open per booking.
+ */
+function hasOtherOpenHeatChange(bookingId: number, exceptId: number, db: Db): boolean {
+	return db
+		.select({ id: outbox.id })
+		.from(outbox)
+		.where(openHeatChangesOf(bookingId))
+		.all()
+		.some((row) => row.id !== exceptId);
+}
+
+export type ReleaseResult = {
+	ok: true;
+	code: 'released';
+	/** Stale rows returned to `pending`. */
+	released: number;
+	/** Stale heat-change rows cancelled because a newer heat-change row of the booking takes over. */
+	superseded: number;
+};
+
+/**
  * Every tick: `in_flight` rows claimed at least the in-flight timeout ago go back to `pending`.
  * Delivery is at-least-once (AD-23): a released row may be resent even though the server had
- * already accepted it, e.g. when the process died between the send and the outcome.
+ * already accepted it, e.g. when the process died between the send and the outcome. For a
+ * heat-change row that crash-after-accept case means the guest can get the same heat-change email
+ * twice, and the last-told notice is written only by the resend's outcome.
+ * At most one open heat-change row may exist per booking, so stale heat-change rows are released
+ * only when the booking has no open one: then the newest stale row goes back to `pending`. Every
+ * other stale heat-change row of the booking is cancelled as superseded; the open (or released) row
+ * is rechecked at its claim and carries the latest change.
  */
-export function releaseStaleClaims(options: Options = {}): { ok: true; code: 'released'; count: number } {
+export function releaseStaleClaims(options: Options = {}): ReleaseResult {
 	const { db, now } = resolve(options);
-	const run = db.$client.transaction(() => {
+	const run = db.$client.transaction((): ReleaseResult => {
 		const stale = db
-			.select({ id: outbox.id, claimedAt: outbox.claimedAt })
+			.select({ id: outbox.id, claimedAt: outbox.claimedAt, kind: outbox.kind, bookingId: outbox.bookingId })
 			.from(outbox)
 			.where(eq(outbox.state, 'in_flight'))
+			.orderBy(desc(outbox.id))
 			.all()
-			.filter((row) => row.claimedAt !== null && isStale(row.claimedAt, now))
-			.map((row) => row.id);
-		if (stale.length > 0) {
-			db.update(outbox).set({ state: 'pending', claimedAt: null }).where(inArray(outbox.id, stale)).run();
+			.filter((row) => row.claimedAt !== null && isStale(row.claimedAt, now));
+		const released: number[] = [];
+		const superseded: number[] = [];
+		// Bookings that already have, or are given, an open heat-change row.
+		const heatOpen = new Set<number>();
+		for (const row of stale) {
+			if (row.kind !== 'heat_change') {
+				released.push(row.id);
+				continue;
+			}
+			// Newest first: the first stale row of a booking without an open row is released.
+			if (heatOpen.has(row.bookingId) || hasOtherOpenHeatChange(row.bookingId, row.id, db)) {
+				superseded.push(row.id);
+			} else {
+				released.push(row.id);
+			}
+			heatOpen.add(row.bookingId);
 		}
-		return { ok: true as const, code: 'released' as const, count: stale.length };
+		if (superseded.length > 0) {
+			db.update(outbox).set({ state: 'cancelled', outcomeAt: now }).where(inArray(outbox.id, superseded)).run();
+		}
+		if (released.length > 0) {
+			db.update(outbox).set({ state: 'pending', claimedAt: null }).where(inArray(outbox.id, released)).run();
+		}
+		return { ok: true, code: 'released', released: released.length, superseded: superseded.length };
 	});
 	return run.immediate();
 }
 
 /**
- * In one transaction: open rows of deleted bookings are cancelled, open rows of bookings whose
- * start has come expire, then the first due open row of a sendable kind is claimed, by due time,
- * kind and id. A keybox row whose code or instructions in the booking's locale are unset is held:
- * skipped, left `pending`, and the next due row is claimed instead (the worker logs held rows). A
- * keybox row also waits while its booking's confirmation is open or in flight. The claim freezes the snapshot: for a confirmation the notice at booking and the
- * locale; for a keybox row the current notice (or the notice at booking when there is none), the
- * trimmed code and the locale.
+ * Claims the next row to send, in one transaction:
+ * 1. Sweep: open rows of deleted bookings are cancelled; open rows of bookings whose start has come
+ *    expire; open heat-change rows whose keybox row is in flight or finished are cancelled.
+ * 2. Pick: due open rows of a sendable kind, by due time, kind and id. Skipped (left as they are):
+ *    a keybox or heat-change row while its booking's confirmation is open or in flight, and a held
+ *    keybox row whose code or instructions in the booking's locale are unset (the worker logs it).
+ * 3. Recheck a heat-change row against the last-told notice: `none` (or a missing notice) cancels
+ *    it, a notice that cannot be compared cancels it with reason `invalid_notice`; either way the
+ *    next candidate is tried.
+ * 4. Claim: `in_flight`, freezing the snapshot. A confirmation: the notice at booking and the
+ *    locale. A keybox row: the current notice (or the notice at booking), the trimmed code and the
+ *    locale; the booking's open heat-change rows are cancelled. A heat-change row: the current
+ *    notice, the last-told notice, the locale and the urgent flag.
  */
 export function claimDueRow(options: Options = {}): ClaimResult {
 	const { db, now } = resolve(options);
@@ -101,13 +176,24 @@ export function claimDueRow(options: Options = {}): ClaimResult {
 			.where(and(open, inArray(outbox.bookingId, started)))
 			.run();
 
+		// Once the keybox row is in flight or finished, no heat-change email goes out.
+		const keyboxDone = db
+			.select({ id: outbox.bookingId })
+			.from(outbox)
+			.where(and(eq(outbox.kind, 'keybox'), inArray(outbox.state, HEAT_MAIL_ENDED_STATES)));
+		db.update(outbox)
+			.set({ state: 'cancelled', outcomeAt: now })
+			.where(and(open, eq(outbox.kind, 'heat_change'), inArray(outbox.bookingId, keyboxDone)))
+			.run();
+
 		const kindRank = sql.join(
 			[sql`CASE ${outbox.kind}`, ...KIND_ORDER.map((k, i) => sql`WHEN ${k} THEN ${i}`), sql`END`],
 			sql` `
 		);
 		const keybox = getKeyboxSettings(db);
-		// The confirmation goes first: a keybox row waits while its booking's confirmation is still
-		// open or in flight, even when a retry moved the confirmation's due time past the keybox row's.
+		// The confirmation goes first: a keybox or heat-change row waits while its booking's
+		// confirmation is still open or in flight, even when a retry moved the confirmation's due time
+		// past the row's.
 		const awaitingConfirmation = new Set(
 			db
 				.select({ bookingId: outbox.bookingId })
@@ -116,44 +202,80 @@ export function claimDueRow(options: Options = {}): ClaimResult {
 				.all()
 				.map((row) => row.bookingId)
 		);
-		const due = db
+		const candidates = db
 			.select({
 				id: outbox.id,
 				bookingId: outbox.bookingId,
 				kind: outbox.kind,
 				attempts: outbox.attempts,
 				noticeAtBooking: booking.noticeAtBooking,
+				lastToldNotice: booking.lastToldNotice,
 				locale: booking.locale
 			})
 			.from(outbox)
 			.innerJoin(booking, eq(booking.id, outbox.bookingId))
 			.where(and(open, lte(outbox.dueAt, now), inArray(outbox.kind, [...SENDABLE_KINDS])))
 			.orderBy(outbox.dueAt, kindRank, outbox.id)
-			.all()
-			.find(
-				(row) =>
-					row.kind !== 'keybox' ||
-					(!awaitingConfirmation.has(row.bookingId) && missingKeyboxSetting(keybox, row.locale) === null)
-			);
-		if (!due) return { ok: false, code: 'none' };
+			.all();
 
-		const isKeybox = due.kind === 'keybox';
-		const snapshot = {
-			// The keybox notice is the current one; without one, the notice at booking stands in.
-			snapshotNotice: isKeybox ? (currentNotice(due.bookingId, db) ?? due.noticeAtBooking) : due.noticeAtBooking,
-			snapshotKeyboxCode: isKeybox ? keybox.code : null,
-			snapshotLocale: due.locale
-		};
-		const attempts = due.attempts + 1;
-		db.update(outbox)
-			.set({ state: 'in_flight', claimedAt: now, attempts, ...snapshot })
-			.where(eq(outbox.id, due.id))
-			.run();
-		return {
-			ok: true,
-			code: 'claimed',
-			row: { id: due.id, bookingId: due.bookingId, kind: due.kind, claimedAt: now, attempts, ...snapshot }
-		};
+		for (const due of candidates) {
+			if (due.kind !== 'confirmation' && awaitingConfirmation.has(due.bookingId)) continue;
+			if (due.kind === 'keybox' && missingKeyboxSetting(keybox, due.locale) !== null) continue;
+
+			let snapshot: Omit<ClaimedRow, 'id' | 'bookingId' | 'kind' | 'claimedAt' | 'attempts'>;
+			if (due.kind === 'heat_change') {
+				// The recheck (AD-6): only a change still worth an email against the last-told notice is sent.
+				const current = currentNotice(due.bookingId, db);
+				let classification: ReturnType<typeof classifyHeatChange>;
+				try {
+					classification =
+						due.lastToldNotice === null || current === null
+							? 'none'
+							: classifyHeatChange(parseNotice(due.lastToldNotice), parseNotice(current));
+				} catch {
+					// A broken stored notice must not stall the drain: this row is dropped, the rest go on.
+					db.update(outbox)
+						.set({ state: 'cancelled', reason: 'invalid_notice', outcomeAt: now })
+						.where(eq(outbox.id, due.id))
+						.run();
+					continue;
+				}
+				if (classification === 'none') {
+					db.update(outbox).set({ state: 'cancelled', outcomeAt: now }).where(eq(outbox.id, due.id)).run();
+					continue;
+				}
+				snapshot = {
+					snapshotNotice: current,
+					snapshotKeyboxCode: null,
+					snapshotLocale: due.locale,
+					snapshotLastTold: due.lastToldNotice,
+					snapshotUrgent: classification === 'urgent'
+				};
+			} else {
+				const isKeybox = due.kind === 'keybox';
+				snapshot = {
+					// The keybox notice is the current one; without one, the notice at booking stands in.
+					snapshotNotice: isKeybox ? (currentNotice(due.bookingId, db) ?? due.noticeAtBooking) : due.noticeAtBooking,
+					snapshotKeyboxCode: isKeybox ? keybox.code : null,
+					snapshotLocale: due.locale,
+					snapshotLastTold: null,
+					snapshotUrgent: null
+				};
+				// From the keybox claim on, the keybox email is what counts.
+				if (isKeybox) cancelOpenHeatChanges(due.bookingId, now, db);
+			}
+			const attempts = due.attempts + 1;
+			db.update(outbox)
+				.set({ state: 'in_flight', claimedAt: now, attempts, ...snapshot })
+				.where(eq(outbox.id, due.id))
+				.run();
+			return {
+				ok: true,
+				code: 'claimed',
+				row: { id: due.id, bookingId: due.bookingId, kind: due.kind, claimedAt: now, attempts, ...snapshot }
+			};
+		}
+		return { ok: false, code: 'none' };
 	});
 	return run.immediate();
 }
@@ -161,7 +283,7 @@ export function claimDueRow(options: Options = {}): ClaimResult {
 /**
  * Records a send's outcome on an `in_flight` row. A transient failure is due again after the
  * backoff. `reason` is `smtp <code>` or an error code, never the server's text. An accepted keybox
- * row of a live booking also writes the booking's `last_told_notice` from its snapshot, in the
+ * or heat-change row of a live booking also writes the booking's `last_told_notice` from its snapshot, in the
  * same transaction. Any other state: nothing is written.
  */
 export function recordSendOutcome(
@@ -186,6 +308,10 @@ export function recordSendOutcome(
 			.where(eq(outbox.id, id))
 			.get();
 		if (!row || row.state !== 'in_flight') return { ok: false, code: 'not_in_flight' };
+		if (outcome === 'transient_failure' && row.kind === 'heat_change' && hasOtherOpenHeatChange(row.bookingId, id, db)) {
+			db.update(outbox).set({ state: 'cancelled', reason, outcomeAt: now }).where(eq(outbox.id, id)).run();
+			return { ok: true, code: 'superseded' };
+		}
 		const dueAt = outcome === 'transient_failure' ? retryAt(row.attempts, now) : undefined;
 		db.update(outbox)
 			.set({
@@ -197,7 +323,8 @@ export function recordSendOutcome(
 			.where(eq(outbox.id, id))
 			.run();
 		// A deleted booking's outcome writes the row only.
-		if (outcome === 'accepted' && row.kind === 'keybox' && row.deletedAt === null && row.snapshotNotice !== null) {
+		const tells = row.kind === 'keybox' || row.kind === 'heat_change';
+		if (outcome === 'accepted' && tells && row.deletedAt === null && row.snapshotNotice !== null) {
 			db.update(booking).set({ lastToldNotice: row.snapshotNotice }).where(eq(booking.id, row.bookingId)).run();
 		}
 		return dueAt ? { ok: true, code: outcome, dueAt } : { ok: true, code: outcome };

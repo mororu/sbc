@@ -18,6 +18,9 @@ export const OUTBOX_STATE_LIST = [
 ] as const;
 export type OutboxState = (typeof OUTBOX_STATE_LIST)[number];
 
+/** A heat-change row is due this many minutes after the last change, so a burst of changes settles into one email. */
+export const SETTLE_DELAY_MIN = 10;
+
 /** An `in_flight` row claimed this many minutes ago or longer is stale: boot returns it to `pending`. */
 export const IN_FLIGHT_TIMEOUT_MIN = 10;
 

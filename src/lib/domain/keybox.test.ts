@@ -2,6 +2,7 @@
 import { describe, expect, it } from 'vitest';
 import { formatTime, localDate, toInstant } from '#lib/time/index.ts';
 import {
+	endsHeatChangeMail,
 	isKeyboxPhase,
 	isPastKeyboxCutoff,
 	KEYBOX_LEAD_MIN,
@@ -127,5 +128,12 @@ describe('isKeyboxPhase', () => {
 		for (const state of ['pending', 'in_flight', 'transient_failure', 'cancelled'] as const) {
 			expect(isKeyboxPhase(state)).toBe(false);
 		}
+	});
+});
+
+describe('endsHeatChangeMail', () => {
+	it('is true once the keybox row is in flight or finished', () => {
+		for (const state of ['in_flight', 'accepted', 'refused', 'expired'] as const) expect(endsHeatChangeMail(state)).toBe(true);
+		for (const state of ['pending', 'transient_failure', 'cancelled'] as const) expect(endsHeatChangeMail(state)).toBe(false);
 	});
 });

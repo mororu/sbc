@@ -122,7 +122,7 @@ export function parseNotice(json: string): Notice {
 	throw new Error('Notice: invalid heat');
 }
 
-/** The only notice comparison in the codebase. */
+/** Notice equality: with `heatChangeDirection`/`classifyHeatChange`, the only way notices are compared. */
 export function noticeEquals(a: Notice, b: Notice): boolean {
 	const same = (x: Instant | null, y: Instant | null) =>
 		x === null || y === null ? x === y : compareInstants(x, y) === 0;

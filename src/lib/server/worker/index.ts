@@ -24,6 +24,7 @@ import {
 	classifySendError,
 	createMailer,
 	renderConfirmation,
+	renderHeatChange,
 	renderKeybox,
 	type Mailer,
 	type RenderedEmail,
@@ -86,6 +87,12 @@ function render(row: ClaimedRow, data: SendData): RenderedEmail {
 			return renderKeybox({
 				snapshot: { notice: row.snapshotNotice, keyboxCode: row.snapshotKeyboxCode, locale: row.snapshotLocale },
 				booking: { start: data.start, instructions: data.keyboxInstructions, adminContact: data.adminContact },
+				claimedAt: row.claimedAt
+			});
+		case 'heat_change':
+			return renderHeatChange({
+				snapshot: { notice: row.snapshotNotice, lastTold: row.snapshotLastTold, locale: row.snapshotLocale },
+				booking: { start: data.start, adminContact: data.adminContact },
 				claimedAt: row.claimedAt
 			});
 		default:
@@ -176,7 +183,7 @@ export async function sendClaimedRow(row: ClaimedRow, deps: WorkerDeps = {}): Pr
 	}
 
 	const recorded = recordSendOutcome(row.id, result.outcome, result.reason, { now: ctx.now(), db: ctx.db });
-	const due = recorded.ok && recorded.dueAt ? ` due=${recorded.dueAt}` : '';
+	const due = 'dueAt' in recorded && recorded.dueAt ? ` due=${recorded.dueAt}` : '';
 	ctx.log(`${prefix} ${recorded.code} smtp=${result.smtpCode ?? '-'}${due}`);
 }
 
@@ -197,7 +204,9 @@ export async function tick(deps: WorkerDeps = {}): Promise<void> {
 	let drained = true;
 	try {
 		const released = releaseStaleClaims({ now: at, db: ctx.db });
-		if (released.count > 0) ctx.log(`[worker] released ${released.count} stale claims`);
+		if (released.released > 0 || released.superseded > 0) {
+			ctx.log(`[worker] released ${released.released} stale claims, superseded ${released.superseded}`);
+		}
 		for (;;) {
 			const claim = claimDueRow({ now: at, db: ctx.db });
 			if (!claim.ok) break;

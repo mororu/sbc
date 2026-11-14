@@ -2,4 +2,5 @@
 export * from './layout.ts';
 export * from './confirmation.ts';
 export * from './keybox.ts';
+export * from './heat-change.ts';
 export * from './transport.ts';

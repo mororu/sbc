@@ -31,3 +31,7 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-2-2-guest-receives-the-keybox-email-at-the-24-hour-cutoff.md`
   summary: After the 24 h cutoff the confirmation page says the keybox code is on its way, even when the keybox row is held (missing setting), refused or expired.
   evidence: `keyboxText` in `src/lib/server/booked-view.ts` uses only the cutoff time, never the outbox state. Showing the real state needs an AD-26 decision on what the guest page may reveal.
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-2-3-guest-is-emailed-when-the-heat-state-changes.md`
+  summary: The heat-change debounce has no cap, so changes arriving less than 10 minutes apart can hold the email back until the keybox phase cancels it.
+  evidence: `enqueueOne` resets `due_at` to now + 10 min on every repeat change (AD-6 debounce). A cap measured from the first enqueue would need an AD-6 decision.

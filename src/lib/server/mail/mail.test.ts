@@ -1,4 +1,4 @@
-// Stories 2.1 and 2.2: the confirmation and keybox emails, the layout's format rules and the
+// Stories 2.1, 2.2 and 2.3: the confirmation, keybox and heat-change emails, the layout's format rules and the
 // transport's classification.
 import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -7,6 +7,7 @@ import nodemailer from 'nodemailer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Env } from '../env.ts';
 import { renderConfirmation, type ConfirmationInput } from './confirmation.ts';
+import { renderHeatChange, type HeatChangeInput } from './heat-change.ts';
 import { renderKeybox, spacedCode, type KeyboxInput } from './keybox.ts';
 import { escapeHtml, renderEmail } from './layout.ts';
 import { classifySendError, createMailer, responseCodeOf, sinkDir } from './transport.ts';
@@ -237,6 +238,150 @@ describe('renderKeybox', () => {
 	it('spaces every character of the code', () => {
 		expect(spacedCode('4711')).toBe('4 7 1 1');
 		expect(spacedCode('A1 b2')).toBe('A 1 b 2');
+	});
+});
+
+describe('renderHeatChange', () => {
+	/** Sat 16 Jan 2027 (UTC+1). */
+	const z = (hhmm: string) => {
+		const [h, m] = hhmm.split(':').map(Number);
+		return `2027-01-16T${String(h - 1).padStart(2, '0')}:${String(m).padStart(2, '0')}:00Z`;
+	};
+	const HOT = '{"heat":"hot","earliest":null,"latest":null}';
+	const cold = (earliest: string, latest: string | null) =>
+		JSON.stringify({ heat: 'cold', earliest: z(earliest), latest: latest === null ? null : z(latest) });
+	const heat = (
+		start: string,
+		lastTold: string,
+		notice: string,
+		locale: 'de' | 'en' = 'de',
+		over: Partial<HeatChangeInput> = {}
+	): HeatChangeInput => ({
+		snapshot: { notice, lastTold, locale },
+		booking: { start: z(start), adminContact: 'sauna+info@example.ch' },
+		claimedAt: '2027-01-16T10:00:00Z',
+		...over
+	});
+	const body = (lines: string[], cancel: string, signature: string) => [...lines, cancel, signature].join('\n\n') + '\n';
+	const DE_END = ['Absagen: Schreib an sauna+info@example.ch.', 'Bis bald, Sauna Luegisee'] as const;
+	const EN_END = ['To cancel: Email sauna+info@example.ch.', 'See you soon, Sauna Luegisee'] as const;
+
+	const variants = {
+		'good news': heat('18:30', cold('17:50', '18:00'), HOT),
+		'now cold': heat('18:30', HOT, cold('17:50', '18:00')),
+		'now cold, collapsed': heat('18:00', HOT, cold('17:45', null)),
+		'later earliest': heat('18:00', cold('17:20', '17:30'), cold('17:25', '17:30')),
+		'later earliest, collapsed': heat('18:00', cold('17:20', '17:30'), cold('17:45', null)),
+		'earlier latest': heat('18:00', cold('17:20', '17:30'), cold('17:10', '17:20'))
+	};
+	const DE: Record<keyof typeof variants, { subject: string; lead: string; start: string }> = {
+		'good news': {
+			subject: 'Gute Nachricht: Sa 16. Januar, 18:30 ist schon heiss',
+			lead: 'Vor dir ist jetzt jemand in der Sauna. Komm am Sa 16. Januar einfach um 18:30, der Ofen läuft.',
+			start: '18:30'
+		},
+		'now cold': {
+			subject: 'Wichtig: Kaltstart Sa 16. Januar, 18:30, komm zwischen 17:50 und 18:00',
+			lead: 'Vor dir ist jetzt niemand mehr in der Sauna. Komm zwischen 17:50 und 18:00 und heiz ein.',
+			start: '18:30'
+		},
+		'now cold, collapsed': {
+			subject: 'Wichtig: Kaltstart Sa 16. Januar, 18:00, komm um 17:45',
+			lead: 'Vor dir ist jetzt niemand mehr in der Sauna. Nur 15 Minuten zum Einheizen: komm um 17:45. Die Sauna wärmt dann noch auf.',
+			start: '18:00'
+		},
+		'later earliest': {
+			subject: 'Wichtig: neue Ankunftszeit für Sa 16. Januar, 18:00',
+			lead: 'Vor dir ist die Sauna länger belegt. Komm zwischen 17:25 und 17:30 und heiz ein.',
+			start: '18:00'
+		},
+		'later earliest, collapsed': {
+			subject: 'Wichtig: neue Ankunftszeit für Sa 16. Januar, 18:00',
+			lead: 'Vor dir ist die Sauna länger belegt. Nur 15 Minuten zum Einheizen: komm um 17:45. Die Sauna wärmt dann noch auf.',
+			start: '18:00'
+		},
+		'earlier latest': {
+			subject: 'Wichtig: neue Ankunftszeit für Sa 16. Januar, 18:00',
+			lead: 'Wir heizen jetzt länger vor. Komm zwischen 17:10 und 17:20 und heiz ein.',
+			start: '18:00'
+		}
+	};
+	const EN: Record<keyof typeof variants, { subject: string; lead: string }> = {
+		'good news': {
+			subject: 'Good news: Sat 16 January, 18:30 is already hot',
+			lead: 'Someone is in the sauna before you now. Just come at 18:30 on Sat 16 January, the stove will be going.'
+		},
+		'now cold': {
+			subject: 'Important: cold start Sat 16 January, 18:30, come between 17:50 and 18:00',
+			lead: 'Nobody is in the sauna before you any more. Come between 17:50 and 18:00 and light the fire.'
+		},
+		'now cold, collapsed': {
+			subject: 'Important: cold start Sat 16 January, 18:00, come at 17:45',
+			lead: 'Nobody is in the sauna before you any more. Only 15 minutes to heat: come at 17:45. It will still be warming up.'
+		},
+		'later earliest': {
+			subject: 'Important: new arrival time for Sat 16 January, 18:00',
+			lead: 'The sauna is booked for longer before you. Come between 17:25 and 17:30 and light the fire.'
+		},
+		'later earliest, collapsed': {
+			subject: 'Important: new arrival time for Sat 16 January, 18:00',
+			lead: 'The sauna is booked for longer before you. Only 15 minutes to heat: come at 17:45. It will still be warming up.'
+		},
+		'earlier latest': {
+			subject: 'Important: new arrival time for Sat 16 January, 18:00',
+			lead: 'We now pre-heat for longer. Come between 17:10 and 17:20 and light the fire.'
+		}
+	};
+
+	it.each(Object.keys(variants) as (keyof typeof variants)[])('renders %s in DE and EN, with the text part matching the HTML', (name) => {
+		const de = renderHeatChange(variants[name]);
+		expect(de.subject).toBe(DE[name].subject);
+		expect(de.lang).toBe('de-CH');
+		expect(de.text).toBe(body([DE[name].lead, `Datum: Sa 16. Januar\nBeginn: ${DE[name].start}`], ...DE_END));
+		expect(htmlBodyLines(de.html)).toBe(de.text);
+
+		const en = renderHeatChange({ ...variants[name], snapshot: { ...variants[name].snapshot, locale: 'en' } });
+		expect(en.subject).toBe(EN[name].subject);
+		expect(en.lang).toBe('en');
+		expect(en.text).toBe(body([EN[name].lead, `Date: Sat 16 January\nStart: ${DE[name].start}`], ...EN_END));
+		expect(htmlBodyLines(en.html)).toBe(en.text);
+	});
+
+	it('uses the past wording for an arrival already past at the claim', () => {
+		const late = heat('18:00', cold('17:20', '17:30'), cold('17:10', '17:20'), 'de', { claimedAt: z('17:25') });
+		const text = renderHeatChange(late).text;
+		expect(text).toContain('Wir heizen jetzt länger vor. Komm so bald wie möglich und heiz ein.');
+		expect(text).not.toContain('17:10');
+	});
+
+	it.each([
+		['de', 'Wichtig: Kaltstart Sa 16. Januar, 18:30', 'Vor dir ist jetzt niemand mehr in der Sauna. Komm so bald wie möglich und heiz ein.'],
+		['en', 'Important: cold start Sat 16 January, 18:30', 'Nobody is in the sauna before you any more. Come as soon as you can and light the fire.']
+	] as const)('names no arrival time in the %s now-cold subject once the arrival has passed at the claim', (locale, subject, lead) => {
+		const late = heat('18:30', HOT, cold('17:50', '18:00'), locale, { claimedAt: z('18:05') });
+		const email = renderHeatChange(late);
+		expect(email.subject).toBe(subject);
+		expect(email.text).toContain(lead);
+		expect(email.text).not.toContain('17:50');
+		const collapsed = renderHeatChange(heat('18:00', HOT, cold('17:45', null), locale, { claimedAt: z('17:50') }));
+		expect(collapsed.subject).not.toContain('17:45');
+	});
+
+	it('leaves the cancel line out without an admin contact', () => {
+		const input = heat('18:30', cold('17:50', '18:00'), HOT);
+		const email = renderHeatChange({ ...input, booking: { ...input.booking, adminContact: null } });
+		expect(email.text).not.toContain('Absagen');
+		expect(email.html).not.toContain('mailto:');
+	});
+
+	it.each([
+		['equal notices', cold('17:20', '17:30'), cold('17:20', '17:30')],
+		['a widened range', cold('17:20', '17:30'), cold('17:15', '17:30')],
+		['no last-told notice', null, cold('17:20', '17:30')],
+		['no notice', cold('17:20', '17:30'), null]
+	])('throws for %s', (_name, lastTold, notice) => {
+		const input = heat('18:00', HOT, HOT);
+		expect(() => renderHeatChange({ ...input, snapshot: { ...input.snapshot, lastTold, notice } })).toThrow();
 	});
 });
 

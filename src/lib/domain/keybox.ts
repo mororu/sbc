@@ -54,8 +54,16 @@ export function missingKeyboxSetting(settings: KeyboxSettings, locale: Locale): 
 
 /**
  * True once the keybox row has finished: `accepted`, `refused` or `expired`. From then on the
- * keybox email is what counts; no heat-change email goes out (Story 2.3 adds its own `in_flight` check).
+ * keybox email is what counts; no heat-change email goes out (see `endsHeatChangeMail`).
  */
 export function isKeyboxPhase(state: OutboxState): boolean {
 	return state === 'accepted' || state === 'refused' || state === 'expired';
+}
+
+/**
+ * True when a keybox row in `state` ends heat-change mail for its booking (Story 2.3): once it is
+ * `in_flight` or has finished, nothing is upserted and open heat-change rows are cancelled.
+ */
+export function endsHeatChangeMail(state: OutboxState): boolean {
+	return state === 'in_flight' || isKeyboxPhase(state);
 }

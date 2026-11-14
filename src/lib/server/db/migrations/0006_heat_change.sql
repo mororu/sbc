@@ -1,0 +1,2 @@
+ALTER TABLE `outbox` ADD `snapshot_last_told` text;--> statement-breakpoint
+CREATE UNIQUE INDEX `outbox_one_open_heat_change` ON `outbox` (`booking_id`) WHERE "outbox"."kind" = 'heat_change' AND "outbox"."state" IN ('pending', 'transient_failure');

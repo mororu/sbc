@@ -160,6 +160,8 @@ export const outbox = sqliteTable(
 		snapshotLocale: text({ enum: LOCALES }),
 		/** Heat change (Story 2.3): 1 urgent, 0 good news. */
 		snapshotUrgent: integer({ mode: 'boolean' }),
+		/** Heat change (Story 2.3): the last-told notice frozen at claim (canonical Notice JSON), so the template knows what changed. */
+		snapshotLastTold: text(),
 		/** `smtp <code>` or an error code; never the server's text. */
 		reason: text(),
 		outcomeAt: text()
@@ -171,6 +173,10 @@ export const outbox = sqliteTable(
 		uniqueIndex('outbox_one_confirmation').on(t.bookingId).where(sql`${t.kind} = 'confirmation'`),
 		/** One keybox row per booking (Story 2.2). */
 		uniqueIndex('outbox_one_keybox').on(t.bookingId).where(sql`${t.kind} = 'keybox'`),
+		/** At most one open heat-change row per booking (Story 2.3): a repeat change updates it. */
+		uniqueIndex('outbox_one_open_heat_change')
+			.on(t.bookingId)
+			.where(sql`${t.kind} = 'heat_change' AND ${t.state} IN ('pending', 'transient_failure')`),
 		check('outbox_kind', sql`${t.kind} IN (${sqlList(OUTBOX_KINDS)})`),
 		check('outbox_state', sql`${t.state} IN (${sqlList(OUTBOX_STATES)})`),
 		check('outbox_attempts', sql`${t.attempts} >= 0`),
