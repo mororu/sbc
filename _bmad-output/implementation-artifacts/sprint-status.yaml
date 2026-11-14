@@ -29,7 +29,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 # - Retrospective appends its action items to action_items; the status view surfaces open ones
 generated: 11-09-2026 19:44
-last_updated: 11-14-2026 10:00
+last_updated: 11-14-2026 10:30
 project: sauna-booking
 project_key: NOKEY
 tracking_system: file-system
@@ -45,7 +45,7 @@ development_status:
   1-7-guest-books-a-start-time: done
   1-8-guest-sees-the-confirmation-with-the-notice-at-booking: done
   1-9-so-funktioniert-s-privacy-statement-and-impressum-pages: done
-  1-10-epic-1-hardening: review
+  1-10-epic-1-hardening: done
   epic-1-retrospective: done
 
   epic-2: backlog
@@ -89,40 +89,40 @@ action_items:
     action: "A1: Keep the submit token per start time in sessionStorage so a reload
       or language switch after a lost response reaches the guest own confirmation"
     owner: "dev"
-    status: open
+    status: done
     ref: "_bmad-output/implementation-artifacts/epic-1-retro-2026-11-12.md"
   - id: "epic-1-retro-item-2-a2-add-a-root-error-svelte-in-the-guest"
     epic: 1
     action: "A2: Add a root +error.svelte in the guest shell (DE/EN) and a favicon"
     owner: "dev"
-    status: open
+    status: done
     ref: "_bmad-output/implementation-artifacts/epic-1-retro-2026-11-12.md"
   - id: "epic-1-retro-item-3-a3-read-the-confirmation-admin-contact-t"
     epic: 1
     action: "A3: Read the confirmation admin contact through getAdminContact (trimmed,
       id 1, blank is null) and test it"
     owner: "dev"
-    status: open
+    status: done
     ref: "_bmad-output/implementation-artifacts/epic-1-retro-2026-11-12.md"
   - id: "epic-1-retro-item-4-a4-drop-or-adapt-the-refusal-query-when"
     epic: 1
     action: "A4: Drop or adapt the refusal query when the redirect lands on another
       day"
     owner: "dev"
-    status: open
+    status: done
     ref: "_bmad-output/implementation-artifacts/epic-1-retro-2026-11-12.md"
   - id: "epic-1-retro-item-5-a5-generic-skip-link-label-on-pages-with"
     epic: 1
     action: "A5: Generic skip-link label on pages without start times"
     owner: "dev + operators"
-    status: open
+    status: done
     ref: "_bmad-output/implementation-artifacts/epic-1-retro-2026-11-12.md"
   - id: "epic-1-retro-item-6-a6-clear-contact-details-from-sessionsto"
     epic: 1
     action: "A6: Clear contact details from sessionStorage after a successful booking
       and name sessionStorage in the privacy draft"
     owner: "dev + operators"
-    status: open
+    status: done
     ref: "_bmad-output/implementation-artifacts/epic-1-retro-2026-11-12.md"
   - id: "epic-1-retro-item-7-a7-before-epic-2-move-the-24-h-keybox-cu"
     epic: 1
