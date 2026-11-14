@@ -438,11 +438,8 @@ export function loadDayView(
 		if (!isBookableDay(date, seasons, settings, now)) {
 			const nearest = nearestSelectableDay(date, { seasons, settings, now });
 			if (!nearest) return { kind: 'redirect', to: '/' };
-			// A refusal travels along, so the guest still learns why they are here.
-			const error = options.error ?? null;
-			const time = options.time ?? null;
-			const query = isDayErrorQuery(error, time) ? `?error=${error}&time=${time}` : '';
-			return { kind: 'redirect', to: `/day/${nearest}${query}` };
+			// A refusal is dropped: its time belongs to another day, so the message would mislead.
+			return { kind: 'redirect', to: `/day/${nearest}` };
 		}
 		day = date;
 	}

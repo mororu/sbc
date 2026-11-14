@@ -924,6 +924,45 @@ So that I can arrive prepared and trust the operators with my details.
 
 **Covers:** FR-29, FR-26, FR-9 (link target), NFR-8, NFR-10, UX-DR43, UX-DR47, UX-DR48, UX-DR49, UX-DR74, AD-14
 
+### Story 1.10: Epic 1 hardening (retro A1–A6)
+
+As a guest,
+I want the booking flow to recover from a lost response and every page to speak plainly,
+So that I always reach my own confirmation and nothing misleads me or stays behind on a shared device.
+
+Added after the Epic 1 retrospective (2026-11-12, findings F1–F6, action items A1–A6). Spec: `_bmad-output/implementation-artifacts/spec-1-10-epic-1-hardening.md`.
+
+**Acceptance Criteria:**
+
+**Given** a booking POST that went through but whose response was lost, with the pending `{path: '/book/D/T', token}` in `sessionStorage`
+**When** the guest reloads or switches language and the form redirects to `/day/D?error=conflict&time=T`
+**Then** the day page POSTs the token to `/booked`, gets `{href}`, replaces the location with `/booked/{id}?new=1` and clears the pending submit (A1)
+**And** a token that matches no live booking gets a 404, the conflict message stays and the pending submit is cleared; a pending submit for another form path is not looked up; a reloaded form whose slot is still free submits the stored token; a malformed lookup body gets a 400 with no detail; the token goes only in a POST body
+
+**Given** an unknown path such as `/nope/deeper`
+**When** it is requested
+**Then** a 404 renders inside the guest shell (header, footer with contact) in DE and EN, errors outside the guest layout get a root fallback error page, and `/favicon.ico` no longer 404s (A2)
+
+**Given** an admin contact of `'  a@b.ch '`, `''`, `'   '` or null
+**When** the confirmation renders
+**Then** it gets `'a@b.ch'`, `null`, `null` or `null`, read like the footer (A3)
+
+**Given** a refusal query on a day that is no longer selectable (`/day/2026-01-01?error=past&time=2330`)
+**When** it redirects to the nearest selectable day
+**Then** the redirect carries no query (A4)
+
+**Given** a page whose skip target is `main`
+**When** it renders
+**Then** the skip link reads "Zum Inhalt" / "Skip to content"; day pages keep "Zu den Zeiten" (A5)
+
+**Given** a booking that succeeds (redirect to `/booked/…`)
+**When** the form or the resume lookup lands on the confirmation
+**Then** the contact details and the pending submit are removed from `sessionStorage`, and the drafted privacy text names the session storage (A6)
+
+**And** without JavaScript the booking flow is unchanged (A1 and A6 are progressive enhancements only)
+
+**Covers:** FR-5, FR-6, FR-9, NFR-8, UX-DR11; retro A1–A6
+
 ## Epic 2: Guests are kept informed by email
 
 Every booking gets a confirmation email; the keybox email arrives at the 24-hour cutoff with the authoritative notice; heat changes are emailed after the settle delay, all in the booking's language. The epic adds the transactional outbox, the in-process worker with heartbeat and Infomaniak SMTP delivery, and records refused and stuck sends so the call list (Epic 3) can surface them.
