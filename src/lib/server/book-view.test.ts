@@ -8,7 +8,7 @@ import { toInstant } from '#lib/time/index.ts';
 import { createDb, openDatabase, type Db } from './db/index.ts';
 // eslint-disable-next-line no-restricted-imports
 import { applyMigrations, MIGRATIONS_FOLDER } from './db/migrate.ts';
-import { bookedHref, buildBookView, invalidUrlTarget, loadBookView, parseStart, unavailableNote, type BookView } from './book-view.ts';
+import { buildBookView, invalidUrlTarget, loadBookView, parseStart, unavailableNote, type BookView } from './book-view.ts';
 
 const settings: Settings = { changeoverMin: 15, openMinute: 600, closeMinute: 1320, horizonDays: 14, preheatMinMin: 30, preheatMaxMin: 40 };
 const seasons = [{ startDate: '2027-01-09', endDate: '2027-04-30' }];
@@ -56,13 +56,6 @@ function form(
 }
 
 const enabled = (v: BookView) => v.durations.filter((d) => d.enabled).map((d) => d.value);
-
-describe('bookedHref', () => {
-	it('carries only the one-time flags', () => {
-		expect(bookedHref(TOKEN, false)).toBe(`/booked/${TOKEN}?new=1`);
-		expect(bookedHref(TOKEN, true)).toBe(`/booked/${TOKEN}?new=1&changed=1`);
-	});
-});
 
 describe('buildBookView', () => {
 	it('carries the displayed notice as its canonical token', () => {

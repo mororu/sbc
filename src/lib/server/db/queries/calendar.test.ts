@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type Database from 'better-sqlite3';
 import { createDb, openDatabase, type Db } from '../index.ts';
 import { applyMigrations, MIGRATIONS_FOLDER } from '../migrate.ts';
-import { getDayItems, getSeasons, getSettings } from './calendar.ts';
+import { getDayData, getDayItems, getSeasons, getSettings } from './calendar.ts';
 
 let sqlite: Database.Database;
 let db: Db;
@@ -68,5 +68,32 @@ describe('getDayItems', () => {
 			{ start: '2027-01-11T22:00:00Z', end: '2027-01-12T01:00:00Z' },
 			{ start: '2027-01-12T11:00:00Z', end: '2027-01-12T12:00:00Z' }
 		]);
+	});
+});
+
+describe('getDayData', () => {
+	it('reads settings, seasons and the items of the day before to the day after', () => {
+		insertBooking('2027-01-10T22:00:00Z', 60); // 23:00 on 10 Jan: before the window
+		insertBooking('2027-01-10T23:00:00Z', 60); // 00:00 on 11 Jan: the window starts
+		insertBooking('2027-01-12T16:00:00Z', 60);
+		insertBooking('2027-01-13T22:00:00Z', 60); // 23:00 on 13 Jan: last in the window
+		insertBooking('2027-01-13T23:00:00Z', 60); // 00:00 on 14 Jan: the window ends
+		insertBlock('2027-01-10T20:00:00Z', '2027-01-11T01:00:00Z'); // runs into the window
+		insertBlock('2027-01-13T23:00:00Z', '2027-01-14T01:00:00Z'); // starts at its end
+		const data = getDayData('2027-01-12', db);
+		expect(data.settings).toEqual(getSettings(db));
+		expect(data.seasons).toEqual(getSeasons(db));
+		expect(data.bookings.map((b) => b.start)).toEqual(['2027-01-10T23:00:00Z', '2027-01-12T16:00:00Z', '2027-01-13T22:00:00Z']);
+		expect(data.blocks).toEqual([{ start: '2027-01-10T20:00:00Z', end: '2027-01-11T01:00:00Z' }]);
+	});
+
+	it('reuses settings and seasons already loaded', () => {
+		const settings = { ...getSettings(db), changeoverMin: 30 };
+		const seasons = [{ startDate: '2027-02-01', endDate: '2027-02-28' }];
+		sqlite.prepare('delete from setting').run(); // would throw if read again
+		sqlite.prepare('delete from season').run(); // would read as [] if read again
+		const data = getDayData('2027-01-12', db, { settings, seasons });
+		expect(data.settings).toBe(settings);
+		expect(data.seasons).toBe(seasons);
 	});
 });

@@ -37,6 +37,16 @@ npm run dev
 - The db layer (everything directly in `src/lib/server/db` except `queries/`, plus `better-sqlite3` and `drizzle-orm`) is importable only by `src/lib/server/commands` and `src/lib/server/db/queries`. The one exception: `src/hooks.server.ts` imports `db/migrate.ts` to migrate at boot.
 - `process.env`, `import.meta.env` and `$env/*` are read only in `src/lib/server/env.ts`.
 
+Server view models and the core files they lean on:
+
+- `src/lib/server/day-view.ts`: the day's view-model types, `buildDayView`, `buildSeasonView` and `loadDayView`.
+- `src/lib/server/book-view.ts`: the booking form view model and its loader.
+- `src/lib/server/booked-view.ts`: the confirmation view model and its loader.
+- `src/lib/server/guest-urls.ts`: guest links, the URL time `hhmm` and the refusal query `?error=…&time=…`.
+- `src/lib/server/notice-text.ts`: the heat notice sentences and the duration-limit and sentence helpers of the day rows.
+- `src/lib/server/db/queries/calendar.ts`: `getDayData`, the one read of a day's settings, seasons, bookings and blocks, over `dayItemsWindow` from `src/lib/domain/start-times.ts`.
+- `src/lib/domain/keybox.ts`: the 24 h keybox cutoff (AD-9), used by the confirmation; the outbox planned for Epic 2 is to use it too.
+
 `src/eslint-boundaries.test.ts` lints a snippet for each rule, so `npm test` fails if a rule stops working. Known gap: inside a pure layer, relative imports between its own subfolders (`domain/a/x.ts` → `../b`) are refused; use `#lib/domain/…` there.
 
 ## Page shell

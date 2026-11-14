@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 import { addMinutes, toInstant, type Instant, type LocalDate } from '#lib/time/index.ts';
 import {
 	bookingHeat,
+	dayItemsWindow,
 	freeHeat,
 	isBookableDay,
 	offeredStartTimes,
@@ -312,5 +313,27 @@ describe('every offered duration is a valid booking', () => {
 				expect(end <= at('22:00')).toBe(true);
 			}
 		}
+	});
+});
+
+describe('dayItemsWindow', () => {
+	it('runs from the day before 00:00 to the day after next 00:00, local time', () => {
+		expect(dayItemsWindow(DAY)).toEqual({ from: '2027-01-10T23:00:00Z', to: '2027-01-13T23:00:00Z' });
+	});
+
+	it('follows the local midnights across the spring clock change', () => {
+		// 27 March 00:00 is UTC+1; 30 March 00:00 is UTC+2 (summer time from 28 March).
+		expect(dayItemsWindow('2027-03-28')).toEqual({ from: '2027-03-26T23:00:00Z', to: '2027-03-29T22:00:00Z' });
+	});
+
+	it('spans 73 real hours across the autumn clock change', () => {
+		// 30 October 00:00 is UTC+2; 2 November 00:00 is UTC+1 (winter time from 31 October).
+		const { from, to } = dayItemsWindow('2027-10-31');
+		expect({ from, to }).toEqual({ from: '2027-10-29T22:00:00Z', to: '2027-11-01T23:00:00Z' });
+		expect((Date.parse(to) - Date.parse(from)) / 3_600_000).toBe(73);
+	});
+
+	it('crosses a month and a year end', () => {
+		expect(dayItemsWindow('2027-01-01')).toEqual({ from: '2026-12-30T23:00:00Z', to: '2027-01-02T23:00:00Z' });
 	});
 });

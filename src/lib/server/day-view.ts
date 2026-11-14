@@ -1,11 +1,12 @@
-// The calendar day view model (AD-26) and the one loader behind `/` and `/day/{date}`.
+// The calendar day view model (AD-26) and the one loader behind `/` and `/day/{date}`: its types,
+// `buildDayView`, `buildSeasonView` and `loadDayView`. The links and the refusal query live in
+// guest-urls.ts, the notice sentences in notice-text.ts, and the day's data comes from `getDayData`.
 // The page data is only this view model: times, durations, heat state, taken start/end, season
 // state and pre-formatted display strings. Never row ids, `created_at`, names or block reasons.
 // All formatting happens here, on the server, so client code never needs src/lib/time.
 import {
 	bookingEnd,
 	calendarState,
-	DURATIONS,
 	isBookableDay,
 	nearestSelectableDay,
 	offeredStartTimes,
@@ -15,13 +16,12 @@ import {
 	type CalendarState,
 	type Duration,
 	type HeatState,
-	type Notice,
 	type Season,
 	type Settings
 } from '#lib/domain/index.ts';
 import type { ResolvedPathname } from '$app/types';
 import { m } from '#lib/paraglide/messages.js';
-import { getDayItems, getSeasons, getSettings } from '#lib/server/db/queries/index.ts';
+import { getDayData, getSeasons, getSettings } from '#lib/server/db/queries/index.ts';
 import {
 	addDays,
 	compareDates,
@@ -34,7 +34,6 @@ import {
 	formatWeekday,
 	formatWeekdayShort,
 	lastBookableDay,
-	minutesBetween,
 	toInstant,
 	today,
 	type Instant,
@@ -42,6 +41,8 @@ import {
 	type Locale
 } from '#lib/time/index.ts';
 import { now as clockNow } from './clock.ts';
+import { bookHref, dayError, dayHref, HOME_HREF } from './guest-urls.ts';
+import { durationLimit, offerNoticeText, sentence } from './notice-text.ts';
 
 export type FreeRow = {
 	kind: 'free';
@@ -129,93 +130,6 @@ export type SeasonView = {
 };
 
 export type DayPage = DayView | SeasonView | { kind: 'redirect'; to: string };
-
-// Links in the view model are root-relative. `resolve()` from `$app/paths` would return paths
-// relative to the request URL during SSR, and a load fetched as `/day/x/__data.json` would get
-// `../../day/…`. The app has no base path, so the root-relative path is the resolved pathname.
-const HOME_HREF = '/' as ResolvedPathname;
-
-/** The link to a day: `/day/{date}`. */
-function dayHref(date: LocalDate): ResolvedPathname {
-	return `/day/${date}` as ResolvedPathname;
-}
-
-/** `/book/{date}/{hhmm}` for a start instant. */
-export function bookHref(date: LocalDate, start: Instant): ResolvedPathname {
-	return `/book/${date}/${formatTime(start).replace(':', '')}` as ResolvedPathname;
-}
-
-/** A URL time `hhmm` ("1800") as its clock text and minute of the day, or null. */
-export function parseHhmm(hhmm: string | null): { clock: string; minute: number } | null {
-	const match = /^([01]\d|2[0-3])([0-5]\d)$/.exec(hhmm ?? '');
-	if (!match) return null;
-	return { clock: `${match[1]}:${match[2]}`, minute: Number(match[1]) * 60 + Number(match[2]) };
-}
-
-/** True for a valid refusal query: `?error=conflict|past&time=hhmm`. */
-function isDayErrorQuery(error: string | null, time: string | null): error is DayError {
-	return parseHhmm(time) !== null && (DAY_ERRORS as readonly (string | null)[]).includes(error);
-}
-
-/** The refusals the book form sends back to the day (FR-6). */
-export const DAY_ERRORS = ['conflict', 'past'] as const;
-export type DayError = (typeof DAY_ERRORS)[number];
-
-/** The day's error message for `?error=…&time=hhmm`, or null for anything else. No guest data. */
-export function dayError(error: string | null, time: string | null, locale: Locale): { text: string } | null {
-	const parsed = parseHhmm(time);
-	if (!parsed || !isDayErrorQuery(error, time)) return null;
-	const clock = parsed.clock;
-	return {
-		text:
-			error === 'conflict'
-				? m.error_conflict({ time: clock }, { locale })
-				: m.error_past({ time: clock }, { locale })
-	};
-}
-
-/** "Nur 60 Min." for one duration, "Bis 90 Min." for a shorter prefix, null for all of them. */
-function durationLimit(durations: Duration[], locale: Locale): string | null {
-	if (durations.length === 1) return m.duration_only({ minutes: durations[0] }, { locale });
-	if (durations.length < DURATIONS.length) {
-		return m.duration_up_to({ minutes: Math.max(...durations) }, { locale });
-	}
-	return null;
-}
-
-/** Screen-reader text reads the parts as sentences: "Up to 90 min" becomes "Up to 90 min." */
-function sentence(text: string | null): string | null {
-	if (!text) return null;
-	return /[.!?]$/.test(text) ? text : `${text}.`;
-}
-
-/**
- * The cold-start notice text. "Already past" and "too little time" are derived here from the
- * notice, the start and `now`; they are never part of the notice itself. Neither is an error:
- * the time stays bookable.
- */
-export function coldNoticeText(notice: Notice, start: Instant, now: Instant, locale: Locale): string {
-	const earliest = notice.earliest;
-	if (earliest === null) throw new Error('A cold notice without an earliest arrival');
-	const lastArrival = notice.latest ?? earliest;
-	if (compareInstants(now, lastArrival) > 0) return m.cold_notice_past({}, { locale });
-	if (notice.latest === null) {
-		const minutes = Math.floor(minutesBetween(earliest, start));
-		return m.cold_notice_short({ minutes, time: formatTime(earliest) }, { locale });
-	}
-	return m.cold_notice({ earliest: formatTime(earliest), latest: formatTime(notice.latest) }, { locale });
-}
-
-/** The heat notice of a free start time, as the row and the booking form show it. */
-export function offerNoticeText(
-	offer: { start: Instant; heat: HeatState; notice: Notice },
-	now: Instant,
-	locale: Locale
-): string {
-	return offer.heat === 'hot'
-		? m.hot_notice({ time: formatTime(offer.start) }, { locale })
-		: coldNoticeText(offer.notice, offer.start, now, locale);
-}
 
 /** Pure: builds the day's view model. `bookings` and `blocks` cover the day before to the day after. */
 export function buildDayView(input: {
@@ -444,7 +358,7 @@ export function loadDayView(
 		day = date;
 	}
 
-	const { bookings, blocks } = getDayItems(toInstant(addDays(day, -1), 0), toInstant(addDays(day, 2), 0), db);
+	const { bookings, blocks } = getDayData(day, db, { settings, seasons });
 	return buildDayView({
 		date: day,
 		now,

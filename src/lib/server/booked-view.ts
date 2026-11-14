@@ -2,7 +2,12 @@
 // formatted here on the server, so client code never needs src/lib/time. The model is built only
 // from the date, start, duration, party size, the notice at booking, the keybox time and the admin
 // contact (AD-26): never the guest's name, email or mobile, and no row ids.
-import { parseNotice, type HeatState, type Notice } from '#lib/domain/index.ts';
+import {
+	keyboxCutoff,
+	parseNotice,
+	type HeatState,
+	type Notice
+} from '#lib/domain/index.ts';
 import type { ResolvedPathname } from '$app/types';
 import { m } from '#lib/paraglide/messages.js';
 import { mailtoHref } from '#lib/mailto.ts';
@@ -18,11 +23,8 @@ import {
 	type Locale
 } from '#lib/time/index.ts';
 import { now as clockNow } from './clock.ts';
-import { coldNoticeText } from './day-view.ts';
 import { isRandomId } from './ids.ts';
-
-/** The keybox email goes out 24 hours of real time before the start (AD-9). */
-const KEYBOX_LEAD_MIN = 24 * 60;
+import { coldNoticeText } from './notice-text.ts';
 
 export type BookedBadge = {
 	heat: HeatState;
@@ -84,7 +86,7 @@ export function badgeText(notice: Notice, start: Instant, createdAt: Instant, lo
  * once it has passed, the code is already on its way.
  */
 export function keyboxText(start: Instant, createdAt: Instant, now: Instant, locale: Locale): string {
-	const at = addMinutes(start, -KEYBOX_LEAD_MIN);
+	const at = keyboxCutoff(start);
 	if (compareInstants(createdAt, at) >= 0 || compareInstants(now, at) >= 0) {
 		return m.booked_keybox_sent({}, { locale });
 	}

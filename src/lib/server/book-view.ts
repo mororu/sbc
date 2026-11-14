@@ -11,15 +11,13 @@ import {
 	type Duration,
 	type HeatState,
 	type OfferedStartTime,
-	type Season,
 	type Settings
 } from '#lib/domain/index.ts';
 import type { ResolvedPathname } from '$app/types';
 import { m } from '#lib/paraglide/messages.js';
 import { PARTY_SIZES } from '#lib/schemas/index.ts';
-import { getDayItems, getSeasons, getSettings } from '#lib/server/db/queries/index.ts';
+import { getDayData, getSettings } from '#lib/server/db/queries/index.ts';
 import {
-	addDays,
 	addMinutes,
 	compareInstants,
 	formatDateLong,
@@ -33,8 +31,9 @@ import {
 	type Locale
 } from '#lib/time/index.ts';
 import { now as clockNow } from './clock.ts';
-import { offerNoticeText, parseHhmm, type DayError } from './day-view.ts';
+import { dayErrorHref, parseHhmm } from './guest-urls.ts';
 import { randomId } from './ids.ts';
+import { offerNoticeText } from './notice-text.ts';
 
 export type DurationOption = {
 	value: Duration;
@@ -92,19 +91,6 @@ export function parseStart(date: string, hhmm: string): Instant | null {
 /** Where a book URL that names no real time goes: its day (which redirects on if needed), or `/`. */
 export function invalidUrlTarget(date: string): string {
 	return isValidDate(date) ? `/day/${date}` : '/';
-}
-
-/** Where a refused booking goes: the refreshed day with the message (no guest data). */
-export function dayErrorHref(date: LocalDate, hhmm: string, code: DayError): string {
-	return `/day/${date}?error=${code}&time=${hhmm}`;
-}
-
-/**
- * Where a booking goes: its confirmation with the one-time flags `?new=1` and, when the notice
- * changed since the form loaded, `&changed=1`. The flags are no guest data, only how it was reached.
- */
-export function bookedHref(publicId: string, changed: boolean): string {
-	return `/booked/${publicId}?new=1${changed ? '&changed=1' : ''}`;
 }
 
 /** "120–180", or "180" when only the longest is out. */
@@ -235,18 +221,6 @@ export function buildBookView(input: {
 	};
 }
 
-type DayData = {
-	settings: Settings;
-	seasons: Season[];
-	bookings: Booking[];
-	blocks: Block[];
-};
-
-function loadDay(date: LocalDate, db?: Parameters<typeof getSettings>[0]): DayData {
-	const { bookings, blocks } = getDayItems(toInstant(addDays(date, -1), 0), toInstant(addDays(date, 2), 0), db);
-	return { settings: getSettings(db), seasons: getSeasons(db), bookings, blocks };
-}
-
 /**
  * The loader. A URL that names no real time goes to the day (or `/`). A stale form, whose time is
  * taken or has begun, goes straight to the day with the conflict or "hat schon angefangen" message.
@@ -266,7 +240,7 @@ export function loadBookView(
 	const start = parseStart(date, hhmm);
 	if (!start) return { kind: 'redirect', to: invalidUrlTarget(date) };
 
-	const day = loadDay(date, options.db);
+	const day = getDayData(date, options.db);
 	if (compareInstants(start, now) <= 0) return { kind: 'redirect', to: dayErrorHref(date, hhmm, 'past') };
 	// A day that is not bookable (outside the seasons or the horizon): the day route redirects on.
 	if (!isBookableDay(date, day.seasons, day.settings, now)) return { kind: 'redirect', to: `/day/${date}` };
