@@ -5,6 +5,7 @@
 // The booking's notice (AD-24) is the offer's notice, computed in the same transaction. It is stored
 // as both the notice at booking (never updated after this insert) and the last-told notice, and
 // compared with the notice the form displayed, so the confirmation can say it just changed.
+// The confirmation email (Story 2.1) is one outbox row, due now, inserted in the same transaction.
 import {
 	DURATIONS,
 	noticeEquals,
@@ -24,7 +25,7 @@ import {
 import { now as clockNow } from '../clock.ts';
 import { getDb, type Db } from '../db/index.ts';
 import { bookingByToken, getDayData, seasonIdFor } from '../db/queries/index.ts';
-import { booking, LOCALES } from '../db/schema.ts';
+import { booking, LOCALES, outbox } from '../db/schema.ts';
 import { isRandomId, randomId } from '../ids.ts';
 
 export type CreateBookingInput = {
@@ -131,7 +132,8 @@ export function createBooking(
 
 		const publicId = randomId();
 		const notice = serializeNotice(offer.notice);
-		db.insert(booking)
+		const inserted = db
+			.insert(booking)
 			.values({
 				startAt: input.start,
 				durationMin: input.durationMin,
@@ -148,6 +150,10 @@ export function createBooking(
 				noticeAtBooking: notice,
 				lastToldNotice: notice
 			})
+			.returning({ id: booking.id })
+			.get();
+		db.insert(outbox)
+			.values({ bookingId: inserted.id, kind: 'confirmation', state: 'pending', dueAt: now })
 			.run();
 		return { ok: true, publicId, changed: !noticeEquals(offer.notice, input.displayedNotice) };
 	});

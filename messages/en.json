@@ -182,5 +182,14 @@
 	"booked_when_value": "{date}, {start}–{end}",
 	"booked_people_term": "People",
 	"booked_cancel_term": "To cancel",
-	"booked_cancel": "Email {address}."
+	"booked_cancel": "Email {address}.",
+	"mail_confirmation_subject": "Booked: Sauna Luegisee, {date}, {time}",
+	"mail_detail_date": "Date",
+	"mail_detail_start": "Start",
+	"mail_detail_duration": "Duration",
+	"mail_detail_people": "People",
+	"mail_notice_may_change": "If that changes, we'll let you know.",
+	"mail_keybox": "We'll send you the keybox code on {at}.",
+	"mail_keybox_now": "The keybox code follows right away in a separate email.",
+	"mail_signature": "See you soon, Sauna Luegisee"
 }

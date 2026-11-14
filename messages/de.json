@@ -182,5 +182,14 @@
 	"booked_when_value": "{date}, {start}–{end}",
 	"booked_people_term": "Personen",
 	"booked_cancel_term": "Absagen",
-	"booked_cancel": "Schreib an {address}."
+	"booked_cancel": "Schreib an {address}.",
+	"mail_confirmation_subject": "Gebucht: Sauna Luegisee, {date}, {time}",
+	"mail_detail_date": "Datum",
+	"mail_detail_start": "Beginn",
+	"mail_detail_duration": "Dauer",
+	"mail_detail_people": "Personen",
+	"mail_notice_may_change": "Falls sich das ändert, sagen wir es dir.",
+	"mail_keybox": "Den Schlüsselcode schicken wir dir am {at}.",
+	"mail_keybox_now": "Der Schlüsselcode folgt gleich in einer eigenen Mail.",
+	"mail_signature": "Bis bald, Sauna Luegisee"
 }

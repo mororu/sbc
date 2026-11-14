@@ -114,3 +114,75 @@ export const block = sqliteTable(
 		check('block_range', sql`${t.startAt} < ${t.endAt}`)
 	]
 );
+
+/** Outbox kinds in drain order (AD-23): the worker's `KIND_ORDER` must match. */
+export const OUTBOX_KINDS = ['confirmation', 'keybox', 'heat_change'] as const;
+export const OUTBOX_STATES = [
+	'pending',
+	'in_flight',
+	'accepted',
+	'refused',
+	'transient_failure',
+	'expired',
+	'cancelled'
+] as const;
+
+const sqlList = (values: readonly string[]) => sql.raw(values.map((v) => `'${v}'`).join(', '));
+
+/**
+ * The transactional outbox (AD-23). Commands insert rows in the same transaction as the mutation;
+ * only the worker sends. A row holds no contact data and no rendered content: the snapshot columns
+ * freeze the mutable state at claim, and the email is rendered from them.
+ */
+export const outbox = sqliteTable(
+	'outbox',
+	{
+		id: integer().primaryKey(),
+		bookingId: integer()
+			.notNull()
+			.references(() => booking.id),
+		kind: text({ enum: OUTBOX_KINDS }).notNull(),
+		state: text({ enum: OUTBOX_STATES }).notNull(),
+		/** When the row may be claimed. A transient failure moves it to the backoff instant. */
+		dueAt: text().notNull(),
+		claimedAt: text(),
+		/** Claims so far: drives the backoff. */
+		attempts: integer().notNull().default(0),
+		/** Canonical Notice JSON, frozen at claim. */
+		snapshotNotice: text(),
+		/** The keybox code that was sent (Story 2.2). */
+		snapshotKeyboxCode: text(),
+		snapshotLocale: text({ enum: LOCALES }),
+		/** Heat change (Story 2.3): 1 urgent, 0 good news. */
+		snapshotUrgent: integer({ mode: 'boolean' }),
+		/** `smtp <code>` or an error code; never the server's text. */
+		reason: text(),
+		outcomeAt: text()
+	},
+	(t) => [
+		index('outbox_state_due_at').on(t.state, t.dueAt),
+		index('outbox_booking_id').on(t.bookingId),
+		/** One confirmation per booking. */
+		uniqueIndex('outbox_one_confirmation').on(t.bookingId).where(sql`${t.kind} = 'confirmation'`),
+		check('outbox_kind', sql`${t.kind} IN (${sqlList(OUTBOX_KINDS)})`),
+		check('outbox_state', sql`${t.state} IN (${sqlList(OUTBOX_STATES)})`),
+		check('outbox_attempts', sql`${t.attempts} >= 0`),
+		check('outbox_snapshot_locale', sql`${t.snapshotLocale} IS NULL OR ${t.snapshotLocale} IN (${sqlList(LOCALES)})`),
+		check('outbox_snapshot_urgent', sql`${t.snapshotUrgent} IS NULL OR ${t.snapshotUrgent} IN (0, 1)`),
+		check('outbox_in_flight_claimed', sql`${t.state} <> 'in_flight' OR ${t.claimedAt} IS NOT NULL`),
+		check(
+			'outbox_instants',
+			sql`${isInstant(t.dueAt)} AND (${t.claimedAt} IS NULL OR ${isInstant(t.claimedAt)}) AND (${t.outcomeAt} IS NULL OR ${isInstant(t.outcomeAt)})`
+		)
+	]
+);
+
+/** The worker's last tick: one row, id 1 (the admin home warns when it is old, Epic 3). */
+export const workerHeartbeat = sqliteTable(
+	'worker_heartbeat',
+	{
+		id: integer().primaryKey(),
+		beatAt: text().notNull()
+	},
+	(t) => [check('worker_heartbeat_single_row', sql`${t.id} = 1`), check('worker_heartbeat_instant', isInstant(t.beatAt))]
+);

@@ -325,3 +325,48 @@ describe('createBooking', () => {
 		}
 	});
 });
+
+describe('createBooking: the confirmation outbox row (Story 2.1)', () => {
+	const outboxRows = () => sqlite.prepare('select * from outbox order by id').all() as Record<string, unknown>[];
+
+	it('inserts one pending confirmation row, due now, with no contact data or snapshot', () => {
+		expect(createBooking(lena(), { now: NOW, db }).ok).toBe(true);
+		const bookingId = rows()[0].id;
+		expect(outboxRows()).toEqual([
+			{
+				id: expect.any(Number),
+				booking_id: bookingId,
+				kind: 'confirmation',
+				state: 'pending',
+				due_at: NOW,
+				claimed_at: null,
+				attempts: 0,
+				snapshot_notice: null,
+				snapshot_keybox_code: null,
+				snapshot_locale: null,
+				snapshot_urgent: null,
+				reason: null,
+				outcome_at: null
+			}
+		]);
+	});
+
+	it('inserts no second row for a resubmit', () => {
+		const token = randomId();
+		createBooking(lena({ submitToken: token }), { now: NOW, db });
+		createBooking(lena({ submitToken: token }), { now: NOW, db });
+		expect(outboxRows()).toHaveLength(1);
+	});
+
+	it('inserts no row for a deleted-booking resubmit, a conflict, a past start or invalid input', () => {
+		const token = randomId();
+		createBooking(lena({ submitToken: token, start: at('17:00'), durationMin: 60 }), { now: NOW, db });
+		sqlite.prepare('delete from outbox').run();
+		expect(createBooking(lena(), { now: NOW, db })).toEqual({ ok: false, code: 'conflict' });
+		expect(createBooking(lena({ start: at('20:00') }), { now: at('20:00'), db })).toEqual({ ok: false, code: 'past' });
+		expect(createBooking(lena({ email: 'nope' }), { now: NOW, db })).toEqual({ ok: false, code: 'invalid' });
+		sqlite.prepare("update booking set deleted_at = '2027-01-12T08:30:00Z'").run();
+		expect(createBooking(lena({ submitToken: token }), { now: NOW, db })).toEqual({ ok: false, code: 'conflict' });
+		expect(outboxRows()).toEqual([]);
+	});
+});

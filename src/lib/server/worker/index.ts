@@ -1,2 +1,209 @@
-// In-process worker: outbox drain, scheduled jobs, heartbeat (AD-5). Built in Epic 2.
-export {};
+// In-process worker (AD-5, AD-23): drains the outbox and records its heartbeat. Started once from
+// hooks.server.ts `init`, behind a `globalThis` guard because dev HMR re-evaluates this module and a
+// module-level flag would reset. Each tick releases stale claims, claims due rows until none is left
+// (so the first tick after downtime catches up), sends each one outside any transaction and records
+// the outcome, then records the heartbeat, but only when the drain did not fail, so an old heartbeat
+// also flags a worker that runs but cannot send. The next tick is scheduled only after the current
+// one has finished. Delivery is at-least-once (AD-23): a stale release may resend a mail the server
+// had already accepted.
+// Log lines name the row id, kind, attempt, state, SMTP code and next due time only: never a guest's
+// name, email, mobile or the keybox code, and never the SMTP server's text.
+import {
+	cancelInFlightOfDeleted,
+	claimDueRow,
+	recordHeartbeat,
+	recordSendOutcome,
+	releaseStaleClaims,
+	type ClaimedRow
+} from '#lib/server/commands/index.ts';
+import { getSendData } from '#lib/server/db/queries/index.ts';
+import {
+	classifySendError,
+	createMailer,
+	renderConfirmation,
+	type Mailer,
+	type RenderedEmail,
+	type SendResult
+} from '#lib/server/mail/index.ts';
+import type { Instant } from '#lib/time/index.ts';
+import { now as clockNow } from '../clock.ts';
+import { getEnv } from '../env.ts';
+
+/** About a minute between the end of one tick and the start of the next. */
+export const TICK_INTERVAL_MS = 60_000;
+
+type Db = NonNullable<NonNullable<Parameters<typeof claimDueRow>[0]>['db']>;
+type SendData = NonNullable<ReturnType<typeof getSendData>>;
+
+export type WorkerDeps = {
+	db?: Db;
+	mailer?: Mailer;
+	now?: () => Instant;
+	log?: (line: string) => void;
+};
+
+type Context = { db: Db | undefined; mailer: Mailer; now: () => Instant; log: (line: string) => void };
+
+const WORKER = Symbol.for('sauna-booking.worker');
+
+type WorkerState = { timer: ReturnType<typeof setTimeout> | null; stopped: boolean };
+
+const defaultLog = (line: string) => console.log(line);
+
+function context(deps: WorkerDeps): Context {
+	return {
+		db: deps.db,
+		// Throws a coded error (SMTP_CONFIG) when production has no SMTP settings.
+		mailer: deps.mailer ?? createMailer(getEnv()),
+		now: deps.now ?? clockNow,
+		log: deps.log ?? defaultLog
+	};
+}
+
+/** An error's code for the log, never its message (which can carry an address). */
+function errorCode(error: unknown): string {
+	const code = (error as { code?: unknown } | null)?.code;
+	return typeof code === 'string' && /^[A-Z][A-Z0-9_]{0,40}$/.test(code) ? code : 'error';
+}
+
+const noTemplate = (kind: string) => Object.assign(new Error(`No template for ${kind}`), { code: 'NO_TEMPLATE' });
+
+function render(row: ClaimedRow, data: SendData): RenderedEmail {
+	switch (row.kind) {
+		case 'confirmation':
+			return renderConfirmation({
+				snapshot: { notice: row.snapshotNotice, locale: row.snapshotLocale },
+				booking: data,
+				claimedAt: row.claimedAt
+			});
+		default:
+			throw noTemplate(row.kind);
+	}
+}
+
+const refused = (reason: string): SendResult => ({ outcome: 'refused', smtpCode: null, reason });
+
+/**
+ * Sends one claimed row. Deterministic failures (no row, no address, no template, a render error)
+ * are terminal; only the transport's own classification can make a row transient. A booking deleted
+ * since the claim is not sent and its row is cancelled. Exported for tests.
+ */
+export async function sendClaimedRow(row: ClaimedRow, deps: WorkerDeps = {}): Promise<void> {
+	const ctx = context(deps);
+	const prefix = `[worker] outbox ${row.id} ${row.kind} attempt=${row.attempts}`;
+	const data = getSendData(row.id, ctx.db);
+	if (data?.deletedAt) {
+		const cancelled = cancelInFlightOfDeleted(row.id, { now: ctx.now(), db: ctx.db });
+		ctx.log(`${prefix} ${cancelled.code}`);
+		return;
+	}
+
+	let result: SendResult;
+	let email: RenderedEmail | null = null;
+	if (!data) result = refused('no_row');
+	// The contact data was erased: no retry can deliver this one.
+	else if (!data.email) result = refused('no_address');
+	else {
+		try {
+			email = render(row, data);
+			result = { outcome: 'accepted', smtpCode: null, reason: null };
+		} catch (error) {
+			result = refused(errorCode(error) === 'NO_TEMPLATE' ? 'no_template' : 'render_error');
+		}
+		if (email) {
+			try {
+				result = await ctx.mailer.send({
+					rowId: row.id,
+					kind: row.kind,
+					attempt: row.attempts,
+					to: data.email,
+					replyTo: data.adminContact,
+					email
+				});
+			} catch (error) {
+				result = classifySendError(error);
+			}
+		}
+	}
+
+	const recorded = recordSendOutcome(row.id, result.outcome, result.reason, { now: ctx.now(), db: ctx.db });
+	const due = recorded.ok && recorded.dueAt ? ` due=${recorded.dueAt}` : '';
+	ctx.log(`${prefix} ${recorded.code} smtp=${result.smtpCode ?? '-'}${due}`);
+}
+
+/** One tick: release stale claims, drain every due row, then record the heartbeat. Never throws. */
+export async function tick(deps: WorkerDeps = {}): Promise<void> {
+	let ctx: Context;
+	try {
+		ctx = context(deps);
+	} catch (error) {
+		(deps.log ?? defaultLog)(`[worker] tick failed: ${errorCode(error)}`);
+		return;
+	}
+	try {
+		const released = releaseStaleClaims({ now: ctx.now(), db: ctx.db });
+		if (released.count > 0) ctx.log(`[worker] released ${released.count} stale claims`);
+		for (;;) {
+			const claim = claimDueRow({ now: ctx.now(), db: ctx.db });
+			if (!claim.ok) break;
+			await sendClaimedRow(claim.row, { ...deps, mailer: ctx.mailer });
+		}
+	} catch (error) {
+		// No heartbeat: the worker runs but cannot drain, and an old heartbeat should say so.
+		ctx.log(`[worker] tick failed: ${errorCode(error)}`);
+		return;
+	}
+	try {
+		recordHeartbeat({ now: ctx.now(), db: ctx.db });
+	} catch (error) {
+		ctx.log(`[worker] heartbeat failed: ${errorCode(error)}`);
+	}
+}
+
+function globalState(): { [WORKER]?: WorkerState } {
+	return globalThis as { [WORKER]?: WorkerState };
+}
+
+/**
+ * Starts the worker once per process: a second call (e.g. after HMR) starts nothing and returns
+ * false. Ticks right away (releasing stale claims first) and about every minute after each tick ends.
+ */
+export function startWorker(deps: WorkerDeps = {}): boolean {
+	const g = globalState();
+	if (g[WORKER]) return false;
+	const state: WorkerState = { timer: null, stopped: false };
+	g[WORKER] = state;
+
+	const schedule = (delay: number) => {
+		if (state.stopped) return;
+		state.timer = setTimeout(run, delay);
+		state.timer.unref();
+	};
+	// One transport for the life of the loop. Without one (SMTP_CONFIG), each tick retries creating
+	// it and logs the code.
+	let loopDeps = deps;
+	try {
+		loopDeps = { ...deps, mailer: deps.mailer ?? createMailer(getEnv()) };
+	} catch (error) {
+		(deps.log ?? defaultLog)(`[worker] mailer failed: ${errorCode(error)}`);
+	}
+	const run = async () => {
+		try {
+			await tick(loopDeps);
+		} finally {
+			schedule(TICK_INTERVAL_MS);
+		}
+	};
+	schedule(0);
+	return true;
+}
+
+/** Stops the loop and clears the guard. For tests; the app's worker runs until the process ends. */
+export function stopWorker(): void {
+	const g = globalState();
+	const state = g[WORKER];
+	if (!state) return;
+	state.stopped = true;
+	if (state.timer) clearTimeout(state.timer);
+	delete g[WORKER];
+}
