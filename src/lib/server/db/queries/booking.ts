@@ -1,9 +1,11 @@
 // Booking read queries (AD-2). The confirmation selects only what the guest page needs: never
 // the guest's contact columns, row ids or the submit token.
 import { and, eq, gte, lte } from 'drizzle-orm';
-import type { Instant, LocalDate } from '#lib/time/index.ts';
+import { bookingNotice, serializeNotice } from '#lib/domain/index.ts';
+import { localDate, type Instant, type LocalDate } from '#lib/time/index.ts';
 import { getDb, type Db } from '../index.ts';
 import { booking, season } from '../schema.ts';
+import { getDayData } from './calendar.ts';
 import { getAdminContact } from './setting.ts';
 
 export type Confirmation = {
@@ -67,4 +69,23 @@ export function seasonIdFor(date: LocalDate, db: Db = getDb()): number | null {
 		.where(and(lte(season.startDate, date), gte(season.endDate, date)))
 		.get();
 	return row?.id ?? null;
+}
+
+/**
+ * The notice a live booking has now (AD-24), as canonical JSON: `bookingNotice` over the day's live
+ * bookings and blocks, with the recorded changeovers and the current pre-heat window. Null for an
+ * unknown or deleted booking.
+ */
+export function currentNotice(bookingId: number, db: Db = getDb()): string | null {
+	const row = db
+		.select({ start: booking.startAt, deletedAt: booking.deletedAt })
+		.from(booking)
+		.where(eq(booking.id, bookingId))
+		.get();
+	if (!row || row.deletedAt) return null;
+	const { settings, bookings, blocks } = getDayData(localDate(row.start), db);
+	const self = bookings.find((b) => b.id === bookingId);
+	if (!self) return null;
+	const preheat = { minMin: settings.preheatMinMin, maxMin: settings.preheatMaxMin };
+	return serializeNotice(bookingNotice(self, bookings, blocks, preheat));
 }

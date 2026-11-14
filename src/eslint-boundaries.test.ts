@@ -41,6 +41,8 @@ const blocked: [string, string, string][] = [
 	['route → db migrate', 'src/routes/x/+page.server.ts', "import '#lib/server/db/migrate.ts';"],
 	['route → better-sqlite3', 'src/routes/x/+page.server.ts', "import 'better-sqlite3';"],
 	['mail → db', 'src/lib/server/mail/x.ts', "import '../db/index.ts';"],
+	['worker → db index', 'src/lib/server/worker/x.ts', "import '../db/index.ts';"],
+	['worker → db schema', 'src/lib/server/worker/x.ts', "import '#lib/server/db/schema.ts';"],
 	['hooks → db index', 'src/hooks.server.ts', "import '#lib/server/db/index.ts';"],
 	// Env is read only in env.ts.
 	['route $env', 'src/routes/x/+page.server.ts', "import '$env/dynamic/private';"],
@@ -60,6 +62,9 @@ const allowed: [string, string, string][] = [
 	['route → commands', 'src/routes/x/+page.server.ts', "import '#lib/server/commands/index.ts';"],
 	['hooks → db migrate', 'src/hooks.server.ts', "import '#lib/server/db/migrate.ts';"],
 	['command → db', 'src/lib/server/commands/x.ts', "import '../db/index.ts';"],
+	['worker → commands', 'src/lib/server/worker/x.ts', "import '#lib/server/commands/index.ts';"],
+	['worker → db/queries', 'src/lib/server/worker/x.ts', "import '#lib/server/db/queries/index.ts';"],
+	['mail → nodemailer', 'src/lib/server/mail/x.ts', "import 'nodemailer';"],
 	['query → db', 'src/lib/server/db/queries/x.ts', "import '../index.ts';"],
 	['env.ts process.env', 'src/lib/server/env.ts', 'export const v = process.env.X;']
 ];

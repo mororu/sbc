@@ -5,8 +5,14 @@
 // The booking's notice (AD-24) is the offer's notice, computed in the same transaction. It is stored
 // as both the notice at booking (never updated after this insert) and the last-told notice, and
 // compared with the notice the form displayed, so the confirmation can say it just changed.
+// The confirmation email (Story 2.1) is one outbox row, due now, inserted in the same transaction.
+// So is the keybox email (Story 2.2), due at the keybox cutoff, or now when booked past it.
+// A new booking can change the notice of the one booking right after it (Story 2.3): the heat-change
+// helper upserts that booking's heat-change row in the same transaction.
 import {
+	affectedBooking,
 	DURATIONS,
+	keyboxDueAt,
 	noticeEquals,
 	offeredStartTimes,
 	parseNotice,
@@ -15,6 +21,7 @@ import {
 } from '#lib/domain/index.ts';
 import { normaliseMobile, PARTY_SIZES, validateContactField } from '#lib/schemas/index.ts';
 import {
+	addMinutes,
 	isValidInstant,
 	localDate,
 	compareInstants,
@@ -24,8 +31,9 @@ import {
 import { now as clockNow } from '../clock.ts';
 import { getDb, type Db } from '../db/index.ts';
 import { bookingByToken, getDayData, seasonIdFor } from '../db/queries/index.ts';
-import { booking, LOCALES } from '../db/schema.ts';
+import { booking, LOCALES, outbox } from '../db/schema.ts';
 import { isRandomId, randomId } from '../ids.ts';
+import { enqueueHeatChanges } from './heat-change.ts';
 
 export type CreateBookingInput = {
 	start: Instant;
@@ -131,7 +139,8 @@ export function createBooking(
 
 		const publicId = randomId();
 		const notice = serializeNotice(offer.notice);
-		db.insert(booking)
+		const inserted = db
+			.insert(booking)
 			.values({
 				startAt: input.start,
 				durationMin: input.durationMin,
@@ -148,7 +157,21 @@ export function createBooking(
 				noticeAtBooking: notice,
 				lastToldNotice: notice
 			})
+			.returning({ id: booking.id })
+			.get();
+		db.insert(outbox)
+			.values([
+				{ bookingId: inserted.id, kind: 'confirmation', state: 'pending', dueAt: now },
+				{ bookingId: inserted.id, kind: 'keybox', state: 'pending', dueAt: keyboxDueAt(input.start, now) }
+			])
 			.run();
+		// `bookings` was read before the insert, so the new booking is never its own affected booking.
+		// It covers the whole affected window even across midnight: `getDayData` reads the items of
+		// day −1 to day +2, and the window ends at most changeover + pre-heat max (≤ 150 min) after
+		// the booking's end, so a late booking's affected booking early next morning is in the list.
+		const end = addMinutes(input.start, input.durationMin);
+		const affected = affectedBooking({ end, bookingId: inserted.id }, bookings, settings);
+		if (affected) enqueueHeatChanges([affected.id], { now, db });
 		return { ok: true, publicId, changed: !noticeEquals(offer.notice, input.displayedNotice) };
 	});
 	return run.immediate();

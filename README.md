@@ -45,7 +45,7 @@ Server view models and the core files they lean on:
 - `src/lib/server/guest-urls.ts`: guest links, the URL time `hhmm` and the refusal query `?error=…&time=…`.
 - `src/lib/server/notice-text.ts`: the heat notice sentences and the duration-limit and sentence helpers of the day rows.
 - `src/lib/server/db/queries/calendar.ts`: `getDayData`, the one read of a day's settings, seasons, bookings and blocks, over `dayItemsWindow` from `src/lib/domain/start-times.ts`.
-- `src/lib/domain/keybox.ts`: the 24 h keybox cutoff (AD-9), used by the confirmation; the outbox planned for Epic 2 is to use it too.
+- `src/lib/domain/keybox.ts`: the 24 h keybox cutoff (AD-9), the keybox row's due time and the held-row check, used by the confirmation and the keybox outbox row.
 
 `src/eslint-boundaries.test.ts` lints a snippet for each rule, so `npm test` fails if a rule stops working. Known gap: inside a pure layer, relative imports between its own subfolders (`domain/a/x.ts` → `../b`) are refused; use `#lib/domain/…` there.
 
@@ -376,6 +376,68 @@ The headings and the footer label are drafted copy. The bodies are placeholders:
 | --- | --- | --- |
 | `skip_to_content` (skip link on pages without start times) | Zum Inhalt | Skip to content |
 | `privacy_tracking_body` (added sentence, still behind `[PLATZHALTER]`) | Das Buchungsformular behält Name, E-Mail und Handynummer im Sitzungsspeicher deines Browsers, bis die Buchung geklappt hat oder du den Tab schliesst. | The booking form keeps your name, email and mobile in your browser's session storage until the booking has gone through or you close the tab. |
+
+## Keybox email (Story 2.2)
+
+### Setting the keybox code and instructions in development
+
+The admin settings UI comes in Story 3.8. Until then, set the keybox code and the access and return instructions (DE and EN) in the dev database by hand, for example with the `sqlite3` CLI:
+
+```sh
+sqlite3 data/dev.sqlite "UPDATE setting SET
+  keybox_code = '4711',
+  keybox_instructions_de = 'Die Box hängt links an der Tür.
+
+Leg den Schlüssel danach wieder in die Box.',
+  keybox_instructions_en = 'The box hangs to the left of the door.
+
+Put the key back in the box afterwards.'
+WHERE id = 1;"
+```
+
+- All three settings start NULL (migration `0005_keybox_settings.sql`). NULL or blank after trimming counts as unset.
+- **Until the code and the instructions in a booking's language are set, its keybox row is held:** it stays `pending`, the worker skips it and logs `[worker] outbox <id> keybox held missing=<setting>` once (again only if the missing setting changes), and it expires at the start. Once set, the next tick (about a minute) sends it, even late.
+- In the instructions, a blank line starts a new paragraph and a single newline is a line break.
+- The code is frozen on the row at claim (`snapshot_keybox_code`): changing it later never resends an accepted email. The instructions are read at send time; if they are blanked between claim and send, the row goes back to `pending`, held.
+- The keybox row waits for its booking's confirmation while that is still open or in flight, so the confirmation always goes out first.
+
+### Drafted copy for operator review (Story 2.2)
+
+| Key | DE | EN |
+| --- | --- | --- |
+| `mail_keybox_subject` | Schlüsselcode für {date}, {time} | Keybox code for {date}, {time} |
+| `mail_keybox_code` (first line, the code's characters spaced) | Code: {code} | Code: {code} |
+| `mail_keybox_counts` (label line above the notice) | Das gilt jetzt | This is what counts now |
+| `mail_keybox_instructions_heading` | Schlüssel holen und zurückbringen | Getting the key and bringing it back |
+| `booked_revisit_past` (confirmation page once the start has come, retro A9) | So stand es bei der Buchung. | This is how it stood when you booked. |
+
+### Drafted copy for operator review (Story 2.3)
+
+The DE good-news subject and body, the DE cold-start subjects and the DE "neue Ankunftszeit" subject are story copy. Everything else, and all EN lines, are drafts:
+
+| Key | DE | EN |
+| --- | --- | --- |
+| `mail_heat_good_subject` | Gute Nachricht: {date}, {time} ist schon heiss | Good news: {date}, {time} is already hot |
+| `mail_heat_good_body` | Vor dir ist jetzt jemand in der Sauna. Komm am {date} einfach um {time}, der Ofen läuft. | Someone is in the sauna before you now. Just come at {time} on {date}, the stove will be going. |
+| `mail_heat_cold_subject` | Wichtig: Kaltstart {date}, {time}, komm zwischen {earliest} und {latest} | Important: cold start {date}, {time}, come between {earliest} and {latest} |
+| `mail_heat_cold_short_subject` (collapsed range) | Wichtig: Kaltstart {date}, {time}, komm um {earliest} | Important: cold start {date}, {time}, come at {earliest} |
+| `mail_heat_cold_past_subject` (arrival already past at the send) | Wichtig: Kaltstart {date}, {time} | Important: cold start {date}, {time} |
+| `mail_heat_now_cold` (lead) | Vor dir ist jetzt niemand mehr in der Sauna. | Nobody is in the sauna before you any more. |
+| `mail_heat_arrival_subject` | Wichtig: neue Ankunftszeit für {date}, {time} | Important: new arrival time for {date}, {time} |
+| `mail_heat_longer_preheat` (lead, earlier latest arrival) | Wir heizen jetzt länger vor. | We now pre-heat for longer. |
+| `mail_heat_later_earliest` (lead, later earliest arrival) | Vor dir ist die Sauna länger belegt. | The sauna is booked for longer before you. |
+| `mail_heat_arrival` | Komm zwischen {earliest} und {latest} und heiz ein. | Come between {earliest} and {latest} and light the fire. |
+
+A collapsed range, or an arrival already past at the send, reuses the day-view cold notice text after the lead.
+
+## Refused and stuck sends (Story 2.4)
+
+- `sendProblems(entry, now)` in `src/lib/domain/call-list.ts` derives, per booking, the rows that make it **call required** (`keybox_refused`, `keybox_expired`, `keybox_overdue`, `warning_refused`, `warning_expired`) and the other unresolved refusals, each ordered by row id. `callList(feed, now)` turns the whole feed into the bookings with a problem, ordered by start, then booking id. `getSendProblemRows(now)` builds the feed; it reads no contact data and no keybox code.
+- **Bookings drop off the call list once they start** (AD-21): the feed holds only live bookings that have not started. Rows expire only at the start, so `keybox_expired` and `warning_expired` do not come out of the feed today; they stay in the core as a safety net.
+- A keybox row that has not gone out is overdue 15 minutes (`KEYBOX_OVERDUE_MIN`) after its original due time, `keyboxDueAt(start, createdAt)`, not after `outbox.due_at`, which every retry moves forward. **The overdue time is clamped to at most 5 minutes before the start (`KEYBOX_OVERDUE_BEFORE_START_MIN`), and never before the due time.** This clamp is what keeps a booking made shortly before its start on the call list before it drops off.
+- A held keybox row (a setting missing, still `pending`) is overdue like any other: the admin must call the guest.
+- "Latest" means highest row id. A heat row that expired unclaimed has no urgent flag and counts as not urgent.
+- Migration `0007_outbox_resolved.sql` adds `outbox.resolved_at`. Only mark called (Story 3.6) writes it; a resolved row never raises an entry again. Nothing displays the call list yet (Epic 3).
 
 ## Scaffold decisions
 

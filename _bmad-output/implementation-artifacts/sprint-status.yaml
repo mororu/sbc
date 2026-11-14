@@ -48,11 +48,11 @@ development_status:
   1-10-epic-1-hardening: done
   epic-1-retrospective: done
 
-  epic-2: backlog
-  2-1-guest-receives-a-confirmation-email: backlog
-  2-2-guest-receives-the-keybox-email-at-the-24-hour-cutoff: backlog
-  2-3-guest-is-emailed-when-the-heat-state-changes: backlog
-  2-4-refused-and-stuck-sends-are-recorded: backlog
+  epic-2: in-progress
+  2-1-guest-receives-a-confirmation-email: review
+  2-2-guest-receives-the-keybox-email-at-the-24-hour-cutoff: review
+  2-3-guest-is-emailed-when-the-heat-state-changes: review
+  2-4-refused-and-stuck-sends-are-recorded: review
   epic-2-retrospective: optional
 
   epic-3: backlog

@@ -29,6 +29,34 @@
       "when": 1794484200399,
       "tag": "0003_booking_notice",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1794651886801,
+      "tag": "0004_outbox",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1794652551230,
+      "tag": "0005_keybox_settings",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1794655901590,
+      "tag": "0006_heat_change",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "6",
+      "when": 1794657306394,
+      "tag": "0007_outbox_resolved",
+      "breakpoints": true
     }
   ]
 }

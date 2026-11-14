@@ -2,3 +2,4 @@
 export * from './calendar.ts';
 export * from './booking.ts';
 export * from './setting.ts';
+export * from './outbox.ts';

@@ -27,3 +27,11 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-1-9-so-funktioniert-s-privacy-statement-and-impressum-pages.md`
   summary: Have the operators (or a legal check) confirm the privacy and Impressum slots fit Swiss law (revDSG, UWG). Possibly missing slots are guest rights (access, correction, deletion), recipients and processors (hosting, mail provider), transfers abroad, server logs, and a UID/register entry in the Impressum.
   evidence: Story 1.9 review; the slots follow the epic's list and partly a German model ("Verantwortlich für den Inhalt"). Adding slots is cheap once the operators say what they need; the content is theirs.
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-2-2-guest-receives-the-keybox-email-at-the-24-hour-cutoff.md`
+  summary: After the 24 h cutoff the confirmation page says the keybox code is on its way, even when the keybox row is held (missing setting), refused or expired.
+  evidence: `keyboxText` in `src/lib/server/booked-view.ts` uses only the cutoff time, never the outbox state. Showing the real state needs an AD-26 decision on what the guest page may reveal.
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-2-3-guest-is-emailed-when-the-heat-state-changes.md`
+  summary: The heat-change debounce has no cap, so changes arriving less than 10 minutes apart can hold the email back until the keybox phase cancels it.
+  evidence: `enqueueOne` resets `due_at` to now + 10 min on every repeat change (AD-6 debounce). A cap measured from the first enqueue would need an AD-6 decision.

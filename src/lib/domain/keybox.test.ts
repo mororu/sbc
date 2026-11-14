@@ -1,7 +1,15 @@
 // Keybox cutoff (AD-9): 24 hours of real time before the start.
 import { describe, expect, it } from 'vitest';
 import { formatTime, localDate, toInstant } from '#lib/time/index.ts';
-import { isPastKeyboxCutoff, KEYBOX_LEAD_MIN, keyboxCutoff } from './keybox.ts';
+import {
+	endsHeatChangeMail,
+	isKeyboxPhase,
+	isPastKeyboxCutoff,
+	KEYBOX_LEAD_MIN,
+	keyboxCutoff,
+	keyboxDueAt,
+	missingKeyboxSetting
+} from './keybox.ts';
 
 /** 18:00 in Zurich on 12 January 2027 (UTC+1). */
 const START = '2027-01-12T17:00:00Z';
@@ -64,5 +72,68 @@ describe('isPastKeyboxCutoff', () => {
 		const start = '2027-11-01T00:30:00Z';
 		expect(isPastKeyboxCutoff(start, '2027-10-31T00:29:59Z')).toBe(false);
 		expect(isPastKeyboxCutoff(start, '2027-10-31T00:30:00Z')).toBe(true);
+	});
+});
+
+describe('keyboxDueAt', () => {
+	it('is the cutoff for a booking made before it', () => {
+		// Tue 12 Jan 2027 18:00, booked on Thu 7 Jan.
+		expect(keyboxDueAt(START, '2027-01-07T10:00:00Z')).toBe('2027-01-11T17:00:00Z');
+	});
+
+	it('is the real-time cutoff across the spring clock change', () => {
+		// Sun 28 Mar 2027 10:00 (UTC+2): 24 hours earlier is 09:00 on Saturday (UTC+1).
+		const start = toInstant('2027-03-28', 600);
+		expect(start).toBe('2027-03-28T08:00:00Z');
+		expect(keyboxDueAt(start, '2027-03-20T10:00:00Z')).toBe('2027-03-27T08:00:00Z');
+	});
+
+	it('is now for a booking made past the cutoff', () => {
+		// 15:30 for 18:00 the same day.
+		const now = '2027-01-12T14:30:00Z';
+		expect(keyboxDueAt(START, now)).toBe(now);
+	});
+
+	it('is the cutoff exactly at it', () => {
+		expect(keyboxDueAt(START, '2027-01-11T17:00:00Z')).toBe('2027-01-11T17:00:00Z');
+	});
+});
+
+describe('missingKeyboxSetting', () => {
+	const filled = { code: '4711', instructions: { de: 'Box links', en: 'Box on the left' } };
+
+	it('is null when the code and the instructions in the locale are set', () => {
+		expect(missingKeyboxSetting(filled, 'de')).toBeNull();
+		expect(missingKeyboxSetting(filled, 'en')).toBeNull();
+	});
+
+	it('names a missing or blank code first', () => {
+		expect(missingKeyboxSetting({ ...filled, code: null }, 'de')).toBe('keybox_code');
+		expect(missingKeyboxSetting({ code: '  ', instructions: { de: null, en: null } }, 'en')).toBe('keybox_code');
+	});
+
+	it('names only the instructions in the booking locale', () => {
+		const deOnly = { ...filled, instructions: { de: 'Box links', en: ' ' } };
+		expect(missingKeyboxSetting(deOnly, 'de')).toBeNull();
+		expect(missingKeyboxSetting(deOnly, 'en')).toBe('keybox_instructions_en');
+		const enOnly = { ...filled, instructions: { de: null, en: 'Box on the left' } };
+		expect(missingKeyboxSetting(enOnly, 'de')).toBe('keybox_instructions_de');
+		expect(missingKeyboxSetting(enOnly, 'en')).toBeNull();
+	});
+});
+
+describe('isKeyboxPhase', () => {
+	it('is true for the terminal keybox states only', () => {
+		for (const state of ['accepted', 'refused', 'expired'] as const) expect(isKeyboxPhase(state)).toBe(true);
+		for (const state of ['pending', 'in_flight', 'transient_failure', 'cancelled'] as const) {
+			expect(isKeyboxPhase(state)).toBe(false);
+		}
+	});
+});
+
+describe('endsHeatChangeMail', () => {
+	it('is true once the keybox row is in flight or finished', () => {
+		for (const state of ['in_flight', 'accepted', 'refused', 'expired'] as const) expect(endsHeatChangeMail(state)).toBe(true);
+		for (const state of ['pending', 'transient_failure', 'cancelled'] as const) expect(endsHeatChangeMail(state)).toBe(false);
 	});
 });

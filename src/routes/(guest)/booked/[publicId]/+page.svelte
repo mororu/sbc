@@ -1,7 +1,8 @@
 <!--
 	The confirmation (FR-7, FR-10; DESIGN.md confirmation): eyebrow date, "Gebucht!", the large state
 	badge carrying the notice at booking, the "changed" or "revisit" line, then below a hairline the
-	keybox sentence and the details list (Wann, Personen, Absagen), and the links on.
+	keybox sentence (left out once the start has come) and the details list (Wann, Personen,
+	Absagen), and the links on.
 	With JavaScript, the one-time flags `?new=1&changed=1` are dropped from the address after the
 	first render (shallow, replacing the entry), so a reload counts as a revisit.
 -->
@@ -50,7 +51,9 @@
 	{/if}
 
 	<div class="body">
-		<p class="keybox">{view.keybox}</p>
+		{#if view.keybox}
+			<p class="keybox">{view.keybox}</p>
+		{/if}
 		<dl class="details">
 			<div>
 				<dt>{view.details.when.term}</dt>

@@ -325,3 +325,112 @@ describe('createBooking', () => {
 		}
 	});
 });
+
+describe('createBooking: the confirmation and keybox outbox rows (Stories 2.1, 2.2)', () => {
+	const outboxRows = () => sqlite.prepare('select * from outbox order by id').all() as Record<string, unknown>[];
+	const pending = (bookingId: unknown, kind: string, dueAt: string) => ({
+		id: expect.any(Number),
+		booking_id: bookingId,
+		kind,
+		state: 'pending',
+		due_at: dueAt,
+		claimed_at: null,
+		attempts: 0,
+		snapshot_notice: null,
+		snapshot_keybox_code: null,
+		snapshot_locale: null,
+		snapshot_urgent: null,
+		snapshot_last_told: null,
+		reason: null,
+		outcome_at: null,
+		resolved_at: null
+	});
+
+	it('inserts a pending confirmation due now and a pending keybox row due at the cutoff, with no contact data or snapshot', () => {
+		// Booked on Thu 7 Jan for Tue 12 Jan 18:00: the keybox row is due Mon 11 Jan 18:00.
+		expect(createBooking(lena(), { now: '2027-01-07T10:00:00Z', db }).ok).toBe(true);
+		const bookingId = rows()[0].id;
+		expect(outboxRows()).toEqual([
+			pending(bookingId, 'confirmation', '2027-01-07T10:00:00Z'),
+			pending(bookingId, 'keybox', '2027-01-11T17:00:00Z')
+		]);
+	});
+
+	it('makes the keybox row due now for a booking made past the cutoff', () => {
+		// 15:30 for 18:00 the same day.
+		const now = '2027-01-12T14:30:00Z';
+		expect(createBooking(lena(), { now, db }).ok).toBe(true);
+		expect(outboxRows().map((r) => [r.kind, r.due_at])).toEqual([
+			['confirmation', now],
+			['keybox', now]
+		]);
+	});
+
+	it('counts the cutoff in real time across the spring clock change', () => {
+		// Sun 28 Mar 2027 10:00 (UTC+2): due Sat 27 Mar 09:00 (UTC+1).
+		const start = at('10:00', '2027-03-28');
+		const displayedNotice: Notice = { heat: 'cold', earliest: '2027-03-28T07:20:00Z', latest: '2027-03-28T07:30:00Z' };
+		const result = createBooking(lena({ start, displayedNotice }), { now: '2027-03-20T10:00:00Z', db });
+		expect(result.ok).toBe(true);
+		expect(outboxRows().find((r) => r.kind === 'keybox')?.due_at).toBe('2027-03-27T08:00:00Z');
+	});
+
+	it('inserts no second rows for a resubmit', () => {
+		const token = randomId();
+		createBooking(lena({ submitToken: token }), { now: NOW, db });
+		createBooking(lena({ submitToken: token }), { now: NOW, db });
+		expect(outboxRows().map((r) => r.kind)).toEqual(['confirmation', 'keybox']);
+	});
+
+	it('inserts no row for a deleted-booking resubmit, a conflict, a past start or invalid input', () => {
+		const token = randomId();
+		createBooking(lena({ submitToken: token, start: at('17:00'), durationMin: 60 }), { now: NOW, db });
+		sqlite.prepare('delete from outbox').run();
+		expect(createBooking(lena(), { now: NOW, db })).toEqual({ ok: false, code: 'conflict' });
+		expect(createBooking(lena({ start: at('20:00') }), { now: at('20:00'), db })).toEqual({ ok: false, code: 'past' });
+		expect(createBooking(lena({ email: 'nope' }), { now: NOW, db })).toEqual({ ok: false, code: 'invalid' });
+		sqlite.prepare("update booking set deleted_at = '2027-01-12T08:30:00Z'").run();
+		expect(createBooking(lena({ submitToken: token }), { now: NOW, db })).toEqual({ ok: false, code: 'conflict' });
+		expect(outboxRows()).toEqual([]);
+	});
+});
+
+describe('createBooking: the heat-change row (Story 2.3)', () => {
+	const EARLY = '2027-01-07T10:00:00Z';
+	const SAT = '2027-01-16';
+	const heatRows = () =>
+		sqlite
+			.prepare("select o.*, b.start_at from outbox o join booking b on b.id = o.booking_id where o.kind = 'heat_change' order by o.id")
+			.all() as Record<string, unknown>[];
+
+	it('upserts one pending row for the booking that turns hot, due now + 10 min (good news)', () => {
+		expect(createBooking(lena({ start: at('16:00', SAT), durationMin: 60 }), { now: EARLY, db }).ok).toBe(true);
+		expect(createBooking(lena({ start: at('18:30', SAT) }), { now: EARLY, db }).ok).toBe(true);
+		expect(rows().find((r) => r.start_at === at('18:30', SAT))?.last_told_notice).toBe(
+			JSON.stringify({ heat: 'cold', earliest: at('17:50', SAT), latest: at('18:00', SAT) })
+		);
+		expect(heatRows()).toEqual([]);
+		const now = '2027-01-07T10:30:00Z';
+		expect(createBooking(lena({ start: at('17:15', SAT), durationMin: 60 }), { now, db }).ok).toBe(true);
+		expect(heatRows()).toEqual([
+			expect.objectContaining({ start_at: at('18:30', SAT), state: 'pending', due_at: '2027-01-07T10:40:00Z', snapshot_notice: null })
+		]);
+	});
+
+	it('upserts one pending row when a booking before collapses the arrival range (urgent)', () => {
+		expect(createBooking(lena({ start: at('18:00', SAT) }), { now: EARLY, db }).ok).toBe(true);
+		expect(createBooking(lena({ start: at('16:30', SAT), durationMin: 60 }), { now: EARLY, db }).ok).toBe(true);
+		expect(heatRows()).toEqual([expect.objectContaining({ start_at: at('18:00', SAT), state: 'pending', due_at: '2027-01-07T10:10:00Z' })]);
+	});
+
+	it('enqueues nothing for a booking after the others, or for a resubmit', () => {
+		const token = randomId();
+		expect(createBooking(lena({ start: at('18:00', SAT) }), { now: EARLY, db }).ok).toBe(true);
+		expect(createBooking(lena({ start: at('20:00', SAT), durationMin: 60 }), { now: EARLY, db }).ok).toBe(true);
+		expect(heatRows()).toEqual([]);
+		createBooking(lena({ start: at('16:30', SAT), durationMin: 60, submitToken: token }), { now: EARLY, db });
+		sqlite.prepare("update outbox set state = 'cancelled' where kind = 'heat_change'").run();
+		createBooking(lena({ start: at('16:30', SAT), durationMin: 60, submitToken: token }), { now: '2027-01-07T10:05:00Z', db });
+		expect(heatRows().map((r) => r.state)).toEqual(['cancelled']);
+	});
+});

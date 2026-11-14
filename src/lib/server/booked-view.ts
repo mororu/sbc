@@ -43,10 +43,13 @@ export type BookedView = {
 	badge: BookedBadge | null;
 	/** "Das hat sich gerade geändert.": only right after a booking whose notice changed. */
 	changed: string | null;
-	/** "So stand es bei der Buchung. …": on every visit but the one right after booking. */
+	/**
+	 * "So stand es bei der Buchung. …": on every visit but the one right after booking. Once the
+	 * start has come, without the promise to email changes: no more mail can come (retro A9).
+	 */
 	revisit: string | null;
-	/** "Den Schlüsselcode bekommst du am Mo 11. Januar um 18:00." */
-	keybox: string;
+	/** "Den Schlüsselcode bekommst du am Mo 11. Januar um 18:00." Null once the start has come. */
+	keybox: string | null;
 	details: {
 		/** "Di 12. Januar, 18:00–19:30", split so the start can be a `<time>`. */
 		when: { term: string; before: string; start: string; datetime: Instant; after: string };
@@ -135,14 +138,17 @@ export function buildBookedView(
 	const date = localDate(start);
 	const notice = storedNotice(confirmation.noticeAtBooking);
 	const end = addMinutes(start, confirmation.durationMin);
+	// From the start on the outbox rows expire, so the page stops talking about mail still to come.
+	const past = compareInstants(now, start) >= 0;
+	const revisit = past ? m.booked_revisit_past({}, { locale }) : m.booked_revisit({}, { locale });
 	return {
 		title: m.booked_title({}, { locale }),
 		date: formatDateLong(date, locale),
 		heading: m.booked_heading({}, { locale }),
 		badge: notice ? { heat: notice.heat, text: badgeText(notice, start, createdAt, locale) } : null,
 		changed: fresh && input.changed && notice ? m.booked_changed({}, { locale }) : null,
-		revisit: fresh ? null : m.booked_revisit({}, { locale }),
-		keybox: keyboxText(start, createdAt, now, locale),
+		revisit: fresh ? null : revisit,
+		keybox: past ? null : keyboxText(start, createdAt, now, locale),
 		details: {
 			when: {
 				term: m.booked_when({}, { locale }),

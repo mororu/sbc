@@ -123,6 +123,19 @@ describe('buildBookedView', () => {
 		});
 	});
 
+	it('drops the promise of mail and the keybox line once the start has come (retro A9)', () => {
+		const before = view({}, { fresh: false, now: at('2027-01-12', '17:59') });
+		expect(before).toMatchObject({
+			revisit: 'So stand es bei der Buchung. Änderungen schicken wir dir per Mail.',
+			keybox: 'Der Schlüsselcode ist schon unterwegs in dein Postfach.'
+		});
+		expect(view({}, { fresh: false, now: START })).toMatchObject({ revisit: 'So stand es bei der Buchung.', keybox: null });
+		expect(view({}, { fresh: false, now: at('2027-01-20', '10:00'), locale: 'en' })).toMatchObject({
+			revisit: 'This is how it stood when you booked.',
+			keybox: null
+		});
+	});
+
 	it('shows the stored notice, never a fresh one', () => {
 		expect(view({ start: at('2027-01-12', '18:15'), noticeAtBooking: serializeNotice(HOT) })).toMatchObject({
 			badge: { heat: 'hot', text: 'Schon heiss um 18:15.' }

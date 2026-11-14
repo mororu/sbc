@@ -62,7 +62,10 @@ describe('applyMigrations', () => {
 				horizon_days: 14,
 				open_minute: 600,
 				close_minute: 1320,
-				admin_contact: 'platzhalter@sauna-luegisee.ch'
+				admin_contact: 'platzhalter@sauna-luegisee.ch',
+				keybox_code: null,
+				keybox_instructions_de: null,
+				keybox_instructions_en: null
 			}
 		]);
 		expect(sqlite.prepare('select * from season').all()).toEqual([
