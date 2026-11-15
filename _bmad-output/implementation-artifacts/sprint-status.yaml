@@ -29,7 +29,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 # - Retrospective appends its action items to action_items; the status view surfaces open ones
 generated: 11-09-2026 19:44
-last_updated: 11-15-2026 10:00
+last_updated: 11-15-2026 12:00
 project: sauna-booking
 project_key: NOKEY
 tracking_system: file-system
@@ -53,7 +53,7 @@ development_status:
   2-2-guest-receives-the-keybox-email-at-the-24-hour-cutoff: done
   2-3-guest-is-emailed-when-the-heat-state-changes: done
   2-4-refused-and-stuck-sends-are-recorded: done
-  epic-2-retrospective: optional
+  epic-2-retrospective: done
 
   epic-3: backlog
   3-1-admin-signs-in: backlog
@@ -142,7 +142,7 @@ action_items:
     epic: 1
     action: "A9: Past-booking wording on the confirmation (with Epic 2 mail wording)"
     owner: "dev"
-    status: open
+    status: done
     ref: "_bmad-output/implementation-artifacts/epic-1-retro-2026-11-12.md"
   - id: "epic-1-retro-item-10-a10-dev-fixtures-follow-dev_now-and-incl"
     epic: 1
@@ -177,7 +177,7 @@ action_items:
     action: "P1: Check that a story PR is merged (gh pr view) before marking the story
       done"
     owner: "build workflow"
-    status: open
+    status: done
     ref: "_bmad-output/implementation-artifacts/epic-1-retro-2026-11-12.md"
   - id: "epic-1-retro-item-15-p2-split-stories-whose-spec-exceeds-abou"
     epic: 1
@@ -198,3 +198,68 @@ action_items:
     owner: "build workflow"
     status: open
     ref: "_bmad-output/implementation-artifacts/epic-1-retro-2026-11-12.md"
+  - id: "epic-2-retro-item-18-b1-make-the-heartbeat-reflect-whether-ma"
+    epic: 2
+    action: "B1: Make the heartbeat reflect whether mail can go out (last accepted
+      send, or no heartbeat when every send failed transiently) and test it"
+    owner: "dev"
+    status: open
+    ref: "_bmad-output/implementation-artifacts/epic-2-retro-2026-11-15.md"
+  - id: "epic-2-retro-item-19-b2-when-a-held-keybox-row-returns-to-pen"
+    epic: 2
+    action: "B2: When a held keybox row returns to pending, re-enqueue the heat-change
+      rows its claim cancelled (or cancel them only once the keybox email is accepted)"
+    owner: "dev"
+    status: open
+    ref: "_bmad-output/implementation-artifacts/epic-2-retro-2026-11-15.md"
+  - id: "epic-2-retro-item-20-b3-call-list-warning-overdue-rule-for-ur"
+    epic: 2
+    action: "B3: Call list: warning-overdue rule for urgent heat-change rows open
+      near the start, urgency known before claim; clear a refused urgent entry once
+      superseded"
+    owner: "dev"
+    status: open
+    ref: "_bmad-output/implementation-artifacts/epic-2-retro-2026-11-15.md"
+  - id: "epic-2-retro-item-21-b4-lint-mail-and-route-boundaries-no-db"
+    epic: 2
+    action: "B4: Lint mail and route boundaries (no db/queries or view models in mail,
+      no worker-only queries in routes); move badgeText into a shared copy module"
+    owner: "dev"
+    status: open
+    ref: "_bmad-output/implementation-artifacts/epic-2-retro-2026-11-15.md"
+  - id: "epic-2-retro-item-22-b5-move-the-outbox-policy-into-src-lib-d"
+    epic: 2
+    action: "B5: Move the outbox policy into src/lib/domain as a pure state machine,
+      split claimDueRow, fold duplicated helpers, fix the stale transport.ts comment"
+    owner: "dev"
+    status: open
+    ref: "_bmad-output/implementation-artifacts/epic-2-retro-2026-11-15.md"
+  - id: "epic-2-retro-item-23-b6-revisit-keybox-waiting-behind-a-retry"
+    epic: 2
+    action: "B6: Revisit keybox waiting behind a retrying confirmation and one instant
+      per drain with the Epic 5 launch check"
+    owner: "dev"
+    status: open
+    ref: "_bmad-output/implementation-artifacts/epic-2-retro-2026-11-15.md"
+  - id: "epic-2-retro-item-24-b7-readme-document-outbox-worker-local-m"
+    epic: 2
+    action: "B7: README: document outbox, worker, local mail sink, settle delay, heartbeat
+      and simulating a refused send"
+    owner: "dev"
+    status: open
+    ref: "_bmad-output/implementation-artifacts/epic-2-retro-2026-11-15.md"
+  - id: "epic-2-retro-item-25-s4-reconcile-spine-and-epics-with-epic-2"
+    epic: 2
+    action: "S4: Reconcile spine and epics with Epic 2 decisions (snapshot migration,
+      release every tick, heartbeat rule, held log once, AD-23 transitions, AD-21
+      clamp); fix spec 2.2/2.4 hygiene"
+    owner: "Manuel"
+    status: open
+    ref: "_bmad-output/implementation-artifacts/epic-2-retro-2026-11-15.md"
+  - id: "epic-2-retro-item-26-p5-add-spec-length-and-internal-consiste"
+    epic: 2
+    action: "P5: Add spec length and internal-consistency checks as a step before
+      showing a spec for approval"
+    owner: "build workflow"
+    status: open
+    ref: "_bmad-output/implementation-artifacts/epic-2-retro-2026-11-15.md"
