@@ -29,7 +29,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 # - Retrospective appends its action items to action_items; the status view surfaces open ones
 generated: 11-09-2026 19:44
-last_updated: 11-14-2026 12:00
+last_updated: 11-15-2026 10:00
 project: sauna-booking
 project_key: NOKEY
 tracking_system: file-system
@@ -48,11 +48,11 @@ development_status:
   1-10-epic-1-hardening: done
   epic-1-retrospective: done
 
-  epic-2: in-progress
-  2-1-guest-receives-a-confirmation-email: review
-  2-2-guest-receives-the-keybox-email-at-the-24-hour-cutoff: review
-  2-3-guest-is-emailed-when-the-heat-state-changes: review
-  2-4-refused-and-stuck-sends-are-recorded: review
+  epic-2: done
+  2-1-guest-receives-a-confirmation-email: done
+  2-2-guest-receives-the-keybox-email-at-the-24-hour-cutoff: done
+  2-3-guest-is-emailed-when-the-heat-state-changes: done
+  2-4-refused-and-stuck-sends-are-recorded: done
   epic-2-retrospective: optional
 
   epic-3: backlog
