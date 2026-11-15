@@ -422,7 +422,31 @@ Every booking gets a confirmation; the keybox email arrives at the 24-hour cutof
 **FRs covered:** FR-10, FR-11, FR-12, FR-14, FR-27
 **NFRs mainly addressed:** NFR-4, NFR-5, NFR-9
 
-### Epic 3: Operators run the wagon from the admin portal
+#### Story 2.5: Epic 2 hardening (retro B1–B3)
+
+As an operator,
+I want a stalled mail delivery, a held keybox email and an unsent urgent warning to show up where I look,
+So that no guest misses a warning because the system quietly could not send it.
+
+Added after the Epic 2 retrospective (2026-11-15, findings F1–F3 and F8, action items B1–B3). Spec: `_bmad-output/implementation-artifacts/spec-2-5-epic-2-hardening.md`.
+
+**Acceptance Criteria:**
+
+**Given** an SMTP outage where every send ends in `transient_failure`
+**When** the worker keeps ticking
+**Then** the heartbeat still records that the worker runs, and also records since when sending fails, cleared by the next accepted send; a pure `workerHealth` tells "ok", "stale" (no beat for 5 min) and "failing" (failing for 15 min) apart for the Epic 3 admin warning (B1)
+
+**Given** a keybox row whose claim cancelled the booking's open heat-change rows
+**When** it is held again because a setting was unset before the send
+**Then** the heat changes are re-enqueued in the same transaction, so the guest is still warned (B2)
+
+**Given** an urgent heat change that has not gone out
+**When** the call-list core runs
+**Then** the row is urgent from the moment it is enqueued, an open urgent row is call required from 60 minutes before the start ("warning_overdue"), and a refused urgent row no longer asks for a call once a newer heat-change email was accepted (B3)
+
+**Covers:** FR-12, FR-13, FR-14, NFR-4; AD-5, AD-6, AD-21, AD-23; retro B1–B3
+
+## Epic 3: Operators run the wagon from the admin portal
 Admins sign in with the shared password, see bookings by day, create and delete blocks, delete bookings with an impact preview, manage settings incl. seasons and keybox code rotation, work the call list and reply reminders, and see a warning when the worker stops.
 **FRs covered:** FR-13, FR-15, FR-16, FR-17, FR-18, FR-19, FR-20, FR-21, FR-31
 **NFRs mainly addressed:** NFR-7

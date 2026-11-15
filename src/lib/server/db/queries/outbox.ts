@@ -5,7 +5,7 @@ import { and, eq, gt, inArray, isNull, lte } from 'drizzle-orm';
 import { missingKeyboxSetting, type KeyboxSettingName, type SendProblemEntry } from '#lib/domain/index.ts';
 import type { Instant } from '#lib/time/index.ts';
 import { getDb, type Db } from '../index.ts';
-import { booking, outbox } from '../schema.ts';
+import { booking, outbox, setting } from '../schema.ts';
 import { getAdminContact, getKeyboxSettings } from './setting.ts';
 
 /** The immutable booking facts and the address a row's email needs, read at send time. */
@@ -82,8 +82,8 @@ export function getHeldKeyboxRows(now: Instant, db: Db = getDb()): HeldKeyboxRow
 }
 
 /**
- * The outbox rows of every live booking that has not started at `now` (AD-21), by booking id, for
- * `callList`/`sendProblems`. A booking drops off once it starts. Selects no contact
+ * The outbox rows of every live booking that has not started at `now` (AD-21), by booking id, with
+ * the current pre-heat maximum, for `callList`/`sendProblems`. A booking drops off once it starts. Selects no contact
  * data and no keybox code.
  */
 export function getSendProblemRows(now: Instant, db: Db = getDb()): Map<number, SendProblemEntry> {
@@ -103,10 +103,13 @@ export function getSendProblemRows(now: Instant, db: Db = getDb()): Map<number, 
 		.where(and(isNull(booking.deletedAt), gt(booking.startAt, now)))
 		.orderBy(booking.startAt, booking.id, outbox.id)
 		.all();
+	const settings = db.select({ preheatMaxMin: setting.preheatMaxMin }).from(setting).where(eq(setting.id, 1)).get();
+	if (!settings) throw new Error('The setting row is missing');
+	const { preheatMaxMin } = settings;
 	const byBooking = new Map<number, SendProblemEntry>();
 	for (const { bookingId, start, createdAt, ...row } of rows) {
 		let entry = byBooking.get(bookingId);
-		if (!entry) byBooking.set(bookingId, (entry = { start, createdAt, rows: [] }));
+		if (!entry) byBooking.set(bookingId, (entry = { start, createdAt, preheatMaxMin, rows: [] }));
 		entry.rows.push(row);
 	}
 	return byBooking;

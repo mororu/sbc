@@ -227,6 +227,30 @@ describe('applyMigrations', () => {
 		sqlite.close();
 	});
 
+	it('keeps the heartbeat row through migration 0008 and checks failing_since (Story 2.5)', () => {
+		const folder = join(dir, 'migrations');
+		cpSync(MIGRATIONS_FOLDER, folder, { recursive: true });
+		const journalPath = join(folder, 'meta', '_journal.json');
+		const journal = JSON.parse(readFileSync(journalPath, 'utf8')) as { entries: { tag: string }[] };
+		const full = JSON.stringify(journal);
+		writeFileSync(journalPath, JSON.stringify({ ...journal, entries: journal.entries.filter((e) => e.tag < '0008') }));
+		const sqlite = openDatabase(join(dir, 'beat.sqlite'));
+		const db = createDb(sqlite);
+		applyMigrations(db, folder);
+		sqlite.prepare("insert into worker_heartbeat (id, beat_at) values (1, '2027-01-10T09:00:00Z')").run();
+		writeFileSync(journalPath, full);
+		applyMigrations(db, folder);
+		expect(sqlite.prepare('select * from worker_heartbeat').all()).toEqual([
+			{ id: 1, beat_at: '2027-01-10T09:00:00Z', failing_since: null }
+		]);
+		const set = (value: string | null) => () =>
+			sqlite.prepare('update worker_heartbeat set failing_since = ? where id = 1').run(value);
+		expect(set('2027-01-10T09:05:00Z')().changes).toBe(1);
+		expect(set(null)().changes).toBe(1);
+		expect(set('2027-01-10 09:05')).toThrow(/CHECK constraint failed: worker_heartbeat_failing_since/);
+		sqlite.close();
+	});
+
 	it('fails with a clear message when the migrations folder is missing', () => {
 		const db = createDb(openDatabase(':memory:'));
 		expect(() => applyMigrations(db, join(dir, 'nowhere'))).toThrow(/No migrations found/);

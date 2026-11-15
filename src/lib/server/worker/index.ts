@@ -2,12 +2,20 @@
 // hooks.server.ts `init`, behind a `globalThis` guard because dev HMR re-evaluates this module and a
 // module-level flag would reset. Each tick releases stale claims, claims due rows until none is left
 // (so the first tick after downtime catches up), sends each one outside any transaction and records
-// the outcome, then records the heartbeat, but only when the drain did not fail, so an old heartbeat
-// also flags a worker that runs but cannot send. The next tick is scheduled only after the current
-// one has finished. Delivery is at-least-once (AD-23): a stale release may resend a mail the server
-// had already accepted. A keybox row whose settings are unset is held: the claim skips it, and after
-// the drain the tick logs a `held` line for each row that is newly held or now misses another
-// setting (the last held set is kept in memory), so an unset setting is not logged every minute.
+// the outcome, then records the heartbeat. The next tick is scheduled only after the current one
+// has finished.
+// The heartbeat row says two things (`workerHealth`, Story 2.5):
+// - `beat_at` is the last tick whose drain did not throw, so an old one flags a worker that has
+//   stopped or cannot reach its database. It does not say that mail goes out: a transient SMTP
+//   failure is an outcome, not a thrown error, and backoff leaves many ticks with nothing to send.
+// - `failing_since`, written with each outcome, is the first transient failure since the last
+//   accepted send; the drain's last claim clears it once no row is left retrying. So an outage
+//   shows while `beat_at` stays fresh. It is installation-wide and coarse: one recipient's
+//   deferrals can set it, and one accepted send clears it.
+// Delivery is at-least-once (AD-23): a stale release may resend a mail the server had already
+// accepted. A keybox row whose settings are unset is held: the claim skips it, and after the drain
+// the tick logs a `held` line for each row that is newly held or now misses another setting (the
+// last held set is kept in memory), so an unset setting is not logged every minute.
 // Log lines name the row id, kind, attempt, state, SMTP code and next due time only: never a guest's
 // name, email, mobile or the keybox code, and never the SMTP server's text.
 import {
@@ -155,9 +163,11 @@ export async function sendClaimedRow(row: ClaimedRow, deps: WorkerDeps = {}): Pr
 	// The contact data was erased: no retry can deliver this one.
 	else if (!data.email) result = refused('no_address');
 	else if (held) {
-		const released = releaseHeldKeybox(row.id, { db: ctx.db });
-		if (released.ok) logHeld(ctx, row.id, held);
-		else ctx.log(`${prefix} ${released.code}`);
+		const released = releaseHeldKeybox(row.id, { now: ctx.now(), db: ctx.db });
+		if (released.ok) {
+			logHeld(ctx, row.id, held);
+			ctx.log(`[worker] outbox ${row.id} keybox held heat_change=${released.heatChange}`);
+		} else ctx.log(`${prefix} ${released.code}`);
 		return;
 	} else {
 		try {
@@ -213,7 +223,7 @@ export async function tick(deps: WorkerDeps = {}): Promise<void> {
 			await sendClaimedRow(claim.row, { ...deps, mailer: ctx.mailer });
 		}
 	} catch (error) {
-		// No heartbeat: the worker runs but cannot drain, and an old heartbeat should say so.
+		// No heartbeat: the worker runs but cannot drain (e.g. the database), and an old heartbeat says so.
 		ctx.log(`[worker] tick failed: ${errorCode(error)}`);
 		drained = false;
 	}

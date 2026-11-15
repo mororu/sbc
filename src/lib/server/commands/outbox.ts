@@ -3,8 +3,9 @@
 // snapshot), outcome (`in_flight` → `accepted`/`refused`/`transient_failure`), expiry at the start
 // time, cancellation for a deleted booking, and the per-tick release of stale claims.
 // Only an accepted keybox or heat-change row of a live booking writes `last_told_notice`, from its
-// snapshot; an accepted confirmation leaves it unchanged (AD-24).
-import { and, desc, eq, inArray, isNotNull, lte, sql } from 'drizzle-orm';
+// snapshot; an accepted confirmation leaves it unchanged (AD-24). Each outcome also keeps the
+// heartbeat's `failing_since` (Story 2.5): set by a transient failure, cleared by an accepted send.
+import { and, desc, eq, inArray, isNotNull, isNull, lte, sql } from 'drizzle-orm';
 import {
 	classifyHeatChange,
 	endsHeatChangeMail,
@@ -21,7 +22,13 @@ import { now as clockNow } from '../clock.ts';
 import { getDb, type Db } from '../db/index.ts';
 import { currentNotice, getKeyboxSettings } from '../db/queries/index.ts';
 import { booking, outbox, workerHeartbeat } from '../db/schema.ts';
-import { cancelOpenHeatChanges, OPEN_STATES, openHeatChangesOf } from './heat-change.ts';
+import {
+	cancelOpenHeatChanges,
+	enqueueHeatChanges,
+	OPEN_STATES,
+	openHeatChangesOf,
+	type HeatChangeAction
+} from './heat-change.ts';
 
 type Options = { now?: Instant; db?: Db };
 
@@ -144,10 +151,11 @@ export function releaseStaleClaims(options: Options = {}): ReleaseResult {
 /**
  * Claims the next row to send, in one transaction:
  * 1. Sweep: open rows of deleted bookings are cancelled; open rows of bookings whose start has come
- *    expire; open heat-change rows whose keybox row is in flight or finished are cancelled.
+ *    expire; open heat-change rows whose keybox row is in flight, retrying or finished are cancelled.
  * 2. Pick: due open rows of a sendable kind, by due time, kind and id. Skipped (left as they are):
  *    a keybox or heat-change row while its booking's confirmation is open or in flight, and a held
- *    keybox row whose code or instructions in the booking's locale are unset (the worker logs it).
+ *    keybox row whose code or instructions in the booking's locale are unset (the worker logs it);
+ *    a held row that was retrying goes back to `pending` and the heat changes are enqueued again.
  * 3. Recheck a heat-change row against the last-told notice: `none` (or a missing notice) cancels
  *    it, a notice that cannot be compared cancels it with reason `invalid_notice`; either way the
  *    next candidate is tried.
@@ -176,7 +184,7 @@ export function claimDueRow(options: Options = {}): ClaimResult {
 			.where(and(open, inArray(outbox.bookingId, started)))
 			.run();
 
-		// Once the keybox row is in flight or finished, no heat-change email goes out.
+		// Once the keybox row is in flight, retrying or finished, no heat-change email goes out.
 		const keyboxDone = db
 			.select({ id: outbox.bookingId })
 			.from(outbox)
@@ -207,6 +215,7 @@ export function claimDueRow(options: Options = {}): ClaimResult {
 				id: outbox.id,
 				bookingId: outbox.bookingId,
 				kind: outbox.kind,
+				state: outbox.state,
 				attempts: outbox.attempts,
 				noticeAtBooking: booking.noticeAtBooking,
 				lastToldNotice: booking.lastToldNotice,
@@ -220,7 +229,11 @@ export function claimDueRow(options: Options = {}): ClaimResult {
 
 		for (const due of candidates) {
 			if (due.kind !== 'confirmation' && awaitingConfirmation.has(due.bookingId)) continue;
-			if (due.kind === 'keybox' && missingKeyboxSetting(keybox, due.locale) !== null) continue;
+			if (due.kind === 'keybox' && missingKeyboxSetting(keybox, due.locale) !== null) {
+				// A retrying row is held like a fresh one: back to `pending`, so heat changes go through again.
+				if (due.state === 'transient_failure') holdKeyboxRow(due.id, due.bookingId, now, db);
+				continue;
+			}
 
 			let snapshot: Omit<ClaimedRow, 'id' | 'bookingId' | 'kind' | 'claimedAt' | 'attempts'>;
 			if (due.kind === 'heat_change') {
@@ -275,16 +288,59 @@ export function claimDueRow(options: Options = {}): ClaimResult {
 				row: { id: due.id, bookingId: due.bookingId, kind: due.kind, claimedAt: now, attempts, ...snapshot }
 			};
 		}
+		// The end of the drain: a failure whose retries ended otherwise must not stick.
+		clearRecoveredSendFailure(db);
 		return { ok: false, code: 'none' };
 	});
 	return run.immediate();
 }
 
 /**
+ * The send side of the heartbeat (Story 2.5), inside the outcome's transaction: a transient failure
+ * starts `failing_since` unless it is already set; an accepted send clears it. A refusal leaves it
+ * alone: a refused recipient is not an outage. Without a heartbeat row (the worker has not beaten
+ * yet) nothing is written: no row already reads `stale`. The drain's last claim also clears it once
+ * no row is left retrying (`clearRecoveredSendFailure`).
+ */
+function recordSendHealth(outcome: SendOutcome, now: Instant, db: Db): void {
+	if (outcome === 'transient_failure') {
+		db.update(workerHeartbeat)
+			.set({ failingSince: now })
+			.where(and(eq(workerHeartbeat.id, 1), isNull(workerHeartbeat.failingSince)))
+			.run();
+	} else if (outcome === 'accepted') {
+		db.update(workerHeartbeat).set({ failingSince: null }).where(eq(workerHeartbeat.id, 1)).run();
+	}
+}
+
+/**
+ * Clears `failing_since` when no outbox row is left in `transient_failure`: the retries ended
+ * otherwise (expired, cancelled, superseded, refused, held), so the failure must not stick.
+ */
+function clearRecoveredSendFailure(db: Db): void {
+	const retrying = db.select({ id: outbox.id }).from(outbox).where(eq(outbox.state, 'transient_failure')).limit(1).get();
+	if (!retrying) {
+		db.update(workerHeartbeat).set({ failingSince: null }).where(isNotNull(workerHeartbeat.failingSince)).run();
+	}
+}
+
+/**
+ * Returns a keybox row to `pending`, held, and enqueues the booking's heat changes again against the
+ * last-told notice (Story 2.5): its claim cancelled the open heat-change rows, and a retrying keybox
+ * row blocked them. A held (`pending`) keybox row lets heat changes through. Inside the caller's
+ * transaction; returns what the heat-change helper did.
+ */
+function holdKeyboxRow(id: number, bookingId: number, now: Instant, db: Db): HeatChangeAction {
+	db.update(outbox).set({ state: 'pending', claimedAt: null }).where(eq(outbox.id, id)).run();
+	return enqueueHeatChanges([bookingId], { now, db })[0].action;
+}
+
+/**
  * Records a send's outcome on an `in_flight` row. A transient failure is due again after the
  * backoff. `reason` is `smtp <code>` or an error code, never the server's text. An accepted keybox
  * or heat-change row of a live booking also writes the booking's `last_told_notice` from its snapshot, in the
- * same transaction. Any other state: nothing is written.
+ * same transaction, and the outcome updates the heartbeat's `failing_since` (`recordSendHealth`).
+ * Any other state: nothing is written.
  */
 export function recordSendOutcome(
 	id: number,
@@ -308,6 +364,7 @@ export function recordSendOutcome(
 			.where(eq(outbox.id, id))
 			.get();
 		if (!row || row.state !== 'in_flight') return { ok: false, code: 'not_in_flight' };
+		recordSendHealth(outcome, now, db);
 		if (outcome === 'transient_failure' && row.kind === 'heat_change' && hasOtherOpenHeatChange(row.bookingId, id, db)) {
 			db.update(outbox).set({ state: 'cancelled', reason, outcomeAt: now }).where(eq(outbox.id, id)).run();
 			return { ok: true, code: 'superseded' };
@@ -359,25 +416,31 @@ export function cancelInFlightOfDeleted(
 /**
  * Returns an `in_flight` keybox row to `pending` when a setting it needs was unset between the claim
  * and the send: it is held again and goes out once the setting is fixed (or expires at the start).
- * The attempt count stays. Any other row is left alone.
+ * The attempt count stays. The keybox claim cancelled the booking's open heat-change rows, so heat
+ * changes are enqueued again (`holdKeyboxRow`, Story 2.5); `heatChange` says what that did. Any
+ * other row is left alone.
  */
 export function releaseHeldKeybox(
 	id: number,
 	options: Options = {}
-): { ok: true; code: 'held' } | { ok: false; code: 'not_in_flight' } {
-	const { db } = resolve(options);
+): { ok: true; code: 'held'; heatChange: HeatChangeAction } | { ok: false; code: 'not_in_flight' } {
+	const { db, now } = resolve(options);
 	const run = db.$client.transaction(() => {
-		const row = db.select({ state: outbox.state, kind: outbox.kind }).from(outbox).where(eq(outbox.id, id)).get();
+		const row = db
+			.select({ state: outbox.state, kind: outbox.kind, bookingId: outbox.bookingId })
+			.from(outbox)
+			.where(eq(outbox.id, id))
+			.get();
 		if (!row || row.state !== 'in_flight' || row.kind !== 'keybox') {
 			return { ok: false as const, code: 'not_in_flight' as const };
 		}
-		db.update(outbox).set({ state: 'pending', claimedAt: null }).where(eq(outbox.id, id)).run();
-		return { ok: true as const, code: 'held' as const };
+		const heatChange = holdKeyboxRow(id, row.bookingId, now, db);
+		return { ok: true as const, code: 'held' as const, heatChange };
 	});
 	return run.immediate();
 }
 
-/** The worker's heartbeat: the one row's `beat_at` becomes `now`. */
+/** The worker's heartbeat: the one row's `beat_at` becomes `now` (the worker ran a tick); `failing_since` is kept. */
 export function recordHeartbeat(options: Options = {}): { ok: true; code: 'recorded' } {
 	const { db, now } = resolve(options);
 	const run = db.$client.transaction(() => {

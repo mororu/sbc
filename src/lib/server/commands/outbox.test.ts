@@ -7,11 +7,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type Database from 'better-sqlite3';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { callList, KIND_ORDER, OUTBOX_STATE_LIST, sendProblems, type Notice } from '#lib/domain/index.ts';
+import { callList, KIND_ORDER, OUTBOX_STATE_LIST, sendProblems, workerHealth, type Notice } from '#lib/domain/index.ts';
 import { addMinutes, toInstant } from '#lib/time/index.ts';
 import { createDb, openDatabase, type Db } from '../db/index.ts';
 import { applyMigrations, MIGRATIONS_FOLDER } from '../db/migrate.ts';
-import { getHeldKeyboxRows, getSendData, getSendProblemRows } from '../db/queries/index.ts';
+import { getHeartbeat, getHeldKeyboxRows, getSendData, getSendProblemRows } from '../db/queries/index.ts';
 import { OUTBOX_KINDS, OUTBOX_STATES } from '../db/schema.ts';
 import { randomId } from '../ids.ts';
 import { createBooking, type CreateBookingInput } from './create-booking.ts';
@@ -341,8 +341,119 @@ describe('recordHeartbeat', () => {
 		expect(recordHeartbeat({ now: NOW, db })).toEqual({ ok: true, code: 'recorded' });
 		recordHeartbeat({ now: '2027-01-12T08:01:00Z', db });
 		expect(sqlite.prepare('select * from worker_heartbeat').all()).toEqual([
-			{ id: 1, beat_at: '2027-01-12T08:01:00Z' }
+			{ id: 1, beat_at: '2027-01-12T08:01:00Z', failing_since: null }
 		]);
+	});
+
+	it('keeps failing_since while it records the beat', () => {
+		recordHeartbeat({ now: NOW, db });
+		sqlite.prepare("update worker_heartbeat set failing_since = '2027-01-12T07:55:00Z'").run();
+		recordHeartbeat({ now: '2027-01-12T08:01:00Z', db });
+		expect(getHeartbeat(db)).toEqual({ beatAt: '2027-01-12T08:01:00Z', failingSince: '2027-01-12T07:55:00Z' });
+	});
+});
+
+describe('failing_since (Story 2.5)', () => {
+	const T = (hhmm: string) => at(hhmm);
+
+	it('is set by the first transient failure, kept by the next, untouched by a refusal and cleared by an accepted send', () => {
+		recordHeartbeat({ now: T('09:00'), db });
+		const first = book().id;
+		const second = book({ start: at('20:00') }).id;
+		// 10:00 and 10:05: both sends fail transiently.
+		claimDueRow({ now: T('10:00'), db });
+		recordSendOutcome(first, 'transient_failure', 'smtp 421', { now: T('10:00'), db });
+		expect(getHeartbeat(db)).toEqual({ beatAt: T('09:00'), failingSince: T('10:00') });
+		claimDueRow({ now: T('10:05'), db });
+		recordSendOutcome(second, 'transient_failure', 'ECONNECTION', { now: T('10:05'), db });
+		expect(getHeartbeat(db)?.failingSince).toBe(T('10:00'));
+		expect(workerHealth({ beatAt: T('10:14'), failingSince: T('10:00') }, T('10:14'))).toBe('ok');
+		// Refused only: a refused recipient is not an outage.
+		expect(claimDueRow({ now: T('10:10'), db })).toMatchObject({ ok: true, row: { id: first } });
+		recordSendOutcome(first, 'refused', 'smtp 550', { now: T('10:10'), db });
+		expect(getHeartbeat(db)?.failingSince).toBe(T('10:00'));
+		// Recovery at 10:20.
+		expect(claimDueRow({ now: T('10:20'), db })).toMatchObject({ ok: true, row: { id: second } });
+		recordSendOutcome(second, 'accepted', null, { now: T('10:20'), db });
+		expect(getHeartbeat(db)).toEqual({ beatAt: T('09:00'), failingSince: null });
+	});
+
+	it('writes no heartbeat row when a send fails before the first beat: no row already reads stale', () => {
+		const id = book().id;
+		claimDueRow({ now: NOW, db });
+		recordSendOutcome(id, 'transient_failure', 'smtp 421', { now: NOW, db });
+		expect(getHeartbeat(db)).toBeNull();
+		expect(workerHealth(getHeartbeat(db), NOW)).toBe('stale');
+		claimDueRow({ now: '2027-01-12T08:01:00Z', db });
+		recordSendOutcome(id, 'accepted', null, { now: '2027-01-12T08:01:00Z', db });
+		expect(getHeartbeat(db)).toBeNull();
+	});
+
+	describe('is cleared by the drain once no row is left retrying', () => {
+		const failed = (id: number, now = NOW) => {
+			recordHeartbeat({ now, db });
+			expect(claimDueRow({ now, db })).toMatchObject({ ok: true, row: { id } });
+			recordSendOutcome(id, 'transient_failure', 'smtp 421', { now, db });
+			expect(getHeartbeat(db)?.failingSince).toBe(now);
+		};
+
+		it('stays while a row is still retrying', () => {
+			failed(book().id);
+			expect(claimDueRow({ now: NOW, db })).toEqual({ ok: false, code: 'none' });
+			expect(getHeartbeat(db)?.failingSince).toBe(NOW);
+		});
+
+		it('clears when the retrying row expires at the start', () => {
+			failed(book({ start: at('12:00') }).id);
+			expect(claimDueRow({ now: at('12:00'), db })).toEqual({ ok: false, code: 'none' });
+			expect(getHeartbeat(db)?.failingSince).toBeNull();
+		});
+
+		it('clears when the retrying row is cancelled for a deleted booking', () => {
+			const id = book().id;
+			failed(id);
+			sqlite.prepare('update booking set deleted_at = ?').run('2027-01-12T08:00:30Z');
+			expect(claimDueRow({ now: '2027-01-12T08:01:00Z', db })).toEqual({ ok: false, code: 'none' });
+			expect(row(id).state).toBe('cancelled');
+			expect(getHeartbeat(db)?.failingSince).toBeNull();
+		});
+
+		it('clears when the retry is refused', () => {
+			const id = book().id;
+			failed(id);
+			claimDueRow({ now: '2027-01-12T08:01:00Z', db });
+			recordSendOutcome(id, 'refused', 'smtp 550', { now: '2027-01-12T08:01:00Z', db });
+			expect(getHeartbeat(db)?.failingSince).toBe(NOW);
+			expect(claimDueRow({ now: '2027-01-12T08:01:00Z', db })).toEqual({ ok: false, code: 'none' });
+			expect(getHeartbeat(db)?.failingSince).toBeNull();
+		});
+
+		it('clears when the retrying heat-change row is superseded', () => {
+			recordHeartbeat({ now: NOW, db });
+			const bookingId = row(book().id).booking_id;
+			sqlite.prepare("update outbox set state = 'accepted'").run();
+			const insert = sqlite.prepare("insert into outbox (booking_id, kind, state, due_at, claimed_at) values (?, 'heat_change', ?, ?, ?)");
+			const inFlight = Number(insert.run(bookingId, 'in_flight', NOW, NOW).lastInsertRowid);
+			// The newer change is not due yet.
+			insert.run(bookingId, 'pending', '2027-01-12T09:00:00Z', null);
+			expect(recordSendOutcome(inFlight, 'transient_failure', 'smtp 421', { now: NOW, db })).toEqual({ ok: true, code: 'superseded' });
+			expect(getHeartbeat(db)?.failingSince).toBe(NOW);
+			expect(claimDueRow({ now: NOW, db })).toEqual({ ok: false, code: 'none' });
+			expect(getHeartbeat(db)?.failingSince).toBeNull();
+		});
+	});
+
+	it('is set when a transient heat-change failure is superseded, and untouched by a row not in flight', () => {
+		recordHeartbeat({ now: NOW, db });
+		const id = book().id;
+		expect(recordSendOutcome(id, 'transient_failure', 'smtp 421', { now: NOW, db })).toEqual({ ok: false, code: 'not_in_flight' });
+		expect(getHeartbeat(db)?.failingSince).toBeNull();
+		const bookingId = row(id).booking_id;
+		const insert = sqlite.prepare("insert into outbox (booking_id, kind, state, due_at, claimed_at) values (?, 'heat_change', ?, ?, ?)");
+		const inFlight = Number(insert.run(bookingId, 'in_flight', NOW, NOW).lastInsertRowid);
+		insert.run(bookingId, 'pending', NOW, null);
+		expect(recordSendOutcome(inFlight, 'transient_failure', 'smtp 421', { now: NOW, db })).toEqual({ ok: true, code: 'superseded' });
+		expect(getHeartbeat(db)?.failingSince).toBe(NOW);
 	});
 });
 
@@ -490,7 +601,7 @@ describe('the keybox row (Story 2.2)', () => {
 		const id = bookEarly();
 		drainConfirmations();
 		claimKeybox(CUTOFF);
-		expect(releaseHeldKeybox(id, { db })).toEqual({ ok: true, code: 'held' });
+		expect(releaseHeldKeybox(id, { db })).toEqual({ ok: true, code: 'held', heatChange: 'none' });
 		expect(row(id)).toMatchObject({ state: 'pending', claimed_at: null, attempts: 1 });
 		expect(releaseHeldKeybox(id, { db })).toEqual({ ok: false, code: 'not_in_flight' });
 		// It goes out once the setting is back.
@@ -914,6 +1025,97 @@ describe('the heat-change row (Story 2.3)', () => {
 	});
 });
 
+describe('heat change around a held or retrying keybox row (Story 2.5)', () => {
+	const EARLY = '2027-01-07T10:00:00Z';
+	const SAT = '2027-01-16';
+	const CUTOFF = '2027-01-15T17:00:00Z';
+	const drainConfirmations = () => sqlite.prepare("update outbox set state = 'accepted' where kind = 'confirmation'").run();
+	const heatRowsOf = (bookingId: number) =>
+		sqlite.prepare("select * from outbox where kind = 'heat_change' and booking_id = ? order by id").all(bookingId) as Record<string, unknown>[];
+	/** 18:00 told 17:20–17:30, then 16:30–17:30 is booked: an urgent heat-change row for 18:00. */
+	const urgentExample = () => {
+		setKeybox('4711');
+		const confirmation = book({ start: at('18:00', SAT), locale: 'de' }, EARLY).id;
+		const target = row(confirmation).booking_id as number;
+		const before = row(book({ start: at('16:30', SAT), durationMin: 60 }, EARLY).id).booking_id as number;
+		drainConfirmations();
+		sqlite.prepare("update outbox set state = 'accepted' where kind = 'keybox' and booking_id = ?").run(before);
+		const [heat] = heatRowsOf(target);
+		expect(heat).toMatchObject({ state: 'pending', snapshot_urgent: 1 });
+		return { target, keybox: keyboxOf(confirmation), heat: heat.id as number };
+	};
+
+	it('enqueues the heat change again when the keybox row is held after its claim cancelled it (matrix: held keybox)', () => {
+		const { target, keybox, heat } = urgentExample();
+		// Retried to the cutoff, the heat-change row is still open when the keybox row is claimed.
+		setRow(heat, { due_at: CUTOFF });
+		expect(claimDueRow({ now: CUTOFF, db })).toMatchObject({ ok: true, row: { id: keybox } });
+		expect(row(heat).state).toBe('cancelled');
+		// The code is unset before the send: the keybox row is held.
+		setKeybox(null);
+		const held = '2027-01-15T17:00:30Z';
+		expect(releaseHeldKeybox(keybox, { now: held, db })).toEqual({ ok: true, code: 'held', heatChange: 'upserted' });
+		const rows = heatRowsOf(target);
+		expect(rows).toHaveLength(2);
+		expect(rows[1]).toMatchObject({ state: 'pending', due_at: addMinutes(held, 10), snapshot_urgent: 1 });
+		// The keybox row stays held; the warning goes out after the settle delay.
+		expect(claimDueRow({ now: addMinutes(held, 10), db })).toMatchObject({
+			ok: true,
+			row: { id: rows[1].id, kind: 'heat_change', snapshotUrgent: true }
+		});
+	});
+
+	it('upserts no heat-change row while the keybox row is retrying, and cancels open ones (matrix: keybox retry)', () => {
+		const { target, keybox, heat } = urgentExample();
+		setRow(keybox, { state: 'transient_failure', attempts: 1, due_at: addMinutes(CUTOFF, 1) });
+		// A notice-changing command runs the helper: the notice still differs from the last-told one,
+		// but the retrying keybox row re-freezes the current notice, so no heat-change mail goes out.
+		const result = db.$client.transaction(() => enqueueHeatChanges([target], { now: CUTOFF, db })).immediate();
+		expect(result).toEqual([{ bookingId: target, action: 'cancelled' }]);
+		expect(heatRowsOf(target)).toEqual([expect.objectContaining({ id: heat, state: 'cancelled', outcome_at: CUTOFF })]);
+	});
+
+	it('puts an urgent warning that was never claimed on the call list from 60 minutes before the start (matrix: overdue)', () => {
+		const { target, keybox, heat } = urgentExample();
+		// The keybox row is held, so the warning stays open; it was never claimed.
+		setKeybox(null);
+		expect(row(heat)).toMatchObject({ state: 'pending', attempts: 0 });
+		const start = at('18:00', SAT);
+		const problems = (now: string) => sendProblems(getSendProblemRows(now, db).get(target)!, now).callRequired;
+		expect(problems(addMinutes(start, -61))).toEqual([{ rowId: keybox, reason: 'keybox_overdue' }]);
+		expect(problems(addMinutes(start, -60))).toEqual([
+			{ rowId: keybox, reason: 'keybox_overdue' },
+			{ rowId: heat, reason: 'warning_overdue' }
+		]);
+	});
+
+	it('holds a retrying keybox row whose setting was unset: back to pending, heat changes enqueued again', () => {
+		const { target, keybox, heat } = urgentExample();
+		setRow(keybox, { state: 'transient_failure', attempts: 1, due_at: CUTOFF, reason: 'smtp 421' });
+		setKeybox(null);
+		// The sweep cancels the open heat-change row (the keybox row is retrying), then the pick holds the keybox row.
+		expect(claimDueRow({ now: CUTOFF, db })).toEqual({ ok: false, code: 'none' });
+		expect(row(keybox)).toMatchObject({ state: 'pending', claimed_at: null, attempts: 1 });
+		const rows = heatRowsOf(target);
+		expect(rows.map((r) => [r.id === heat, r.state])).toEqual([
+			[true, 'cancelled'],
+			[false, 'pending']
+		]);
+		expect(rows[1]).toMatchObject({ due_at: addMinutes(CUTOFF, 10), snapshot_urgent: 1 });
+		// The warning goes out while the keybox row stays held.
+		expect(claimDueRow({ now: addMinutes(CUTOFF, 10), db })).toMatchObject({ ok: true, row: { id: rows[1].id, kind: 'heat_change' } });
+		expect(row(keybox).state).toBe('pending');
+	});
+
+	it('cancels an open heat-change row in the claim sweep while the keybox row is retrying', () => {
+		const { target, keybox, heat } = urgentExample();
+		setRow(keybox, { state: 'transient_failure', attempts: 1, due_at: '2027-01-15T18:00:00Z' });
+		setRow(heat, { due_at: CUTOFF });
+		expect(claimDueRow({ now: CUTOFF, db })).toEqual({ ok: false, code: 'none' });
+		expect(heatRowsOf(target)).toEqual([expect.objectContaining({ id: heat, state: 'cancelled', outcome_at: CUTOFF })]);
+	});
+});
+
 describe('refused and stuck sends (Story 2.4)', () => {
 	const rowCount = () => (sqlite.prepare('select count(*) as n from outbox').get() as { n: number }).n;
 	/** Books like `book` and returns the booking id. */
@@ -1010,11 +1212,15 @@ describe('refused and stuck sends (Story 2.4)', () => {
 		expect(feed.get(live)).toEqual({
 			start: at('18:00'),
 			createdAt: NOW,
+			// The default pre-heat maximum, for the urgent-warning window (Story 2.5).
+			preheatMaxMin: 40,
 			rows: [
 				{ id: liveConfirmation, kind: 'confirmation', state: 'refused', urgent: null, resolvedAt: null },
 				{ id: liveKeybox, kind: 'keybox', state: 'in_flight', urgent: null, resolvedAt: null }
 			]
 		});
+		sqlite.prepare('update setting set preheat_max_min = 90 where id = 1').run();
+		expect(getSendProblemRows(now, db).get(live)?.preheatMaxMin).toBe(90);
 		const serialized = JSON.stringify([...feed.entries()]);
 		for (const secret of ['4711', 'Lena', 'lena@example.ch', '+41791234567', 'Box']) expect(serialized).not.toContain(secret);
 

@@ -432,12 +432,27 @@ A collapsed range, or an arrival already past at the send, reuses the day-view c
 
 ## Refused and stuck sends (Story 2.4)
 
-- `sendProblems(entry, now)` in `src/lib/domain/call-list.ts` derives, per booking, the rows that make it **call required** (`keybox_refused`, `keybox_expired`, `keybox_overdue`, `warning_refused`, `warning_expired`) and the other unresolved refusals, each ordered by row id. `callList(feed, now)` turns the whole feed into the bookings with a problem, ordered by start, then booking id. `getSendProblemRows(now)` builds the feed; it reads no contact data and no keybox code.
+- `sendProblems(entry, now)` in `src/lib/domain/call-list.ts` derives, per booking, the rows that make it **call required** (`keybox_refused`, `keybox_expired`, `keybox_overdue`, `warning_refused`, `warning_expired`, and `warning_overdue` since Story 2.5) and the other unresolved refusals, each ordered by row id. `callList(feed, now)` turns the whole feed into the bookings with a problem, ordered by start, then booking id. `getSendProblemRows(now)` builds the feed; it reads no contact data and no keybox code.
 - **Bookings drop off the call list once they start** (AD-21): the feed holds only live bookings that have not started. Rows expire only at the start, so `keybox_expired` and `warning_expired` do not come out of the feed today; they stay in the core as a safety net.
 - A keybox row that has not gone out is overdue 15 minutes (`KEYBOX_OVERDUE_MIN`) after its original due time, `keyboxDueAt(start, createdAt)`, not after `outbox.due_at`, which every retry moves forward. **The overdue time is clamped to at most 5 minutes before the start (`KEYBOX_OVERDUE_BEFORE_START_MIN`), and never before the due time.** This clamp is what keeps a booking made shortly before its start on the call list before it drops off.
 - A held keybox row (a setting missing, still `pending`) is overdue like any other: the admin must call the guest.
-- "Latest" means highest row id. A heat row that expired unclaimed has no urgent flag and counts as not urgent.
+- "Latest" means highest row id. A heat row written before Story 2.5 that expired unclaimed has no urgent flag and counts as not urgent.
 - Migration `0007_outbox_resolved.sql` adds `outbox.resolved_at`. Only mark called (Story 3.6) writes it; a resolved row never raises an entry again. Nothing displays the call list yet (Epic 3).
+
+## Epic 2 hardening (Story 2.5)
+
+- **Worker health.** `worker_heartbeat.beat_at` is the last tick whose drain did not throw: an old one means the worker stopped or cannot reach its database. It does not say mail goes out, because a transient SMTP failure is a recorded outcome, not an error. So migration `0008_heartbeat_failing_since.sql` adds `failing_since`:
+  - Each send outcome writes it in the same transaction: a `transient_failure` sets it (if unset) to the outcome time, an `accepted` send clears it, a `refused` one leaves it alone. Without a heartbeat row nothing is written (no row already reads `stale`).
+  - The drain's last claim clears it once no row is left in `transient_failure`, so retries that end expired, cancelled, superseded, refused or held do not leave it stuck.
+  - **It is a coarse, installation-wide signal:** one recipient's deferrals (e.g. a greylisting server) can set it, and any one accepted send clears it.
+  - `workerHealth(getHeartbeat(), now)` in `src/lib/domain/worker-health.ts` returns `stale` (no row, or `beat_at` at least 5 minutes old, `HEARTBEAT_STALE_MIN`), `failing` (`failing_since` at least 15 minutes old, `SEND_FAILING_MIN`) or `ok`; `stale` wins. The admin home shows it in Epic 3.
+- **Held keybox row.** The keybox claim cancels the booking's open heat-change rows. If the row is then held (a setting was unset before the send), `releaseHeldKeybox` enqueues heat changes again in its own transaction, so a pending warning is not lost while the keybox email waits. The worker logs `[worker] outbox <id> keybox held heat_change=<action>`.
+- **Retrying keybox row.** A keybox row in `transient_failure` also ends heat-change mail (`endsHeatChangeMail`): every retry re-freezes the current notice. Only a `pending` keybox row lets heat changes through. A retrying keybox row whose setting is unset is held by the claim: back to `pending`, and heat changes are enqueued again the same way.
+- **Call list.** A heat-change row carries `snapshot_urgent` from its upsert on (the claim re-freezes it). `sendProblems` reads the latest heat-change row of any urgency:
+  - urgent and `refused`/`expired` gives `warning_refused`/`warning_expired`;
+  - urgent and still not sent (`pending`, `in_flight`, `transient_failure`) from `start − (pre-heat maximum + 20 min)` (`WARNING_OVERDUE_MARGIN_MIN`; 60 minutes with the default 30–40 window) gives `warning_overdue`. The feed carries the pre-heat maximum setting.
+  - An urgent change enqueued inside that window is call required at once, before its settle delay ends: a late urgent change should be phoned. An `in_flight` urgent row past the window counts as overdue until its send outcome is recorded.
+  - A newer non-urgent row (good news, or a change cancelled at recheck or by the keybox claim) supersedes an older urgent one: no call from the warning, and an older refused row is listed under refusals only. The keybox rules still apply, e.g. a refused keybox row still raises `keybox_refused`.
 
 ## Scaffold decisions
 

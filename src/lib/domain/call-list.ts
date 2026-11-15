@@ -7,6 +7,7 @@ import { keyboxDueAt } from './keybox.ts';
 import {
 	KEYBOX_OVERDUE_BEFORE_START_MIN,
 	KEYBOX_OVERDUE_MIN,
+	WARNING_OVERDUE_MARGIN_MIN,
 	type OutboxKind,
 	type OutboxState
 } from './outbox.ts';
@@ -16,16 +17,28 @@ export type SendProblemRow = {
 	id: number;
 	kind: OutboxKind;
 	state: OutboxState;
-	/** `snapshot_urgent`, frozen at claim: null for a row never claimed and for non-heat kinds. */
+	/**
+	 * `snapshot_urgent`: for a heat-change row, set when it is upserted and re-frozen at claim (Story
+	 * 2.5). Null for other kinds and for a heat-change row written before 2.5 and never claimed.
+	 */
 	urgent: boolean | null;
 	/** Set once an admin marked the guest called: the row never raises an entry again. */
 	resolvedAt: Instant | null;
 };
 
-/** One booking's input: its immutable start and booking time, and its outbox rows. */
-export type SendProblemEntry = { start: Instant; createdAt: Instant; rows: SendProblemRow[] };
+/**
+ * One booking's input: its immutable start and booking time, its outbox rows, and the pre-heat
+ * maximum setting (minutes) that places the urgent-warning window.
+ */
+export type SendProblemEntry = { start: Instant; createdAt: Instant; preheatMaxMin: number; rows: SendProblemRow[] };
 
-export type CallReason = 'keybox_refused' | 'keybox_expired' | 'keybox_overdue' | 'warning_refused' | 'warning_expired';
+export type CallReason =
+	| 'keybox_refused'
+	| 'keybox_expired'
+	| 'keybox_overdue'
+	| 'warning_refused'
+	| 'warning_expired'
+	| 'warning_overdue';
 
 export type SendProblems = {
 	/** The rows that make the booking call required, with the reason, by row id. */
@@ -34,8 +47,8 @@ export type SendProblems = {
 	refusals: { rowId: number; kind: OutboxKind }[];
 };
 
-/** States in which a keybox row has not gone out yet but still may (a held row stays `pending`). */
-const KEYBOX_OPEN: readonly OutboxState[] = ['pending', 'in_flight', 'transient_failure'];
+/** States in which a row has not gone out yet but still may (a held keybox row stays `pending`). */
+const NOT_SENT_YET: readonly OutboxState[] = ['pending', 'in_flight', 'transient_failure'];
 
 const latest = (rows: SendProblemRow[]) => rows.reduce<SendProblemRow | null>((a, r) => (a && a.id > r.id ? a : r), null);
 const later = (a: Instant, b: Instant) => (compareInstants(a, b) >= 0 ? a : b);
@@ -53,30 +66,47 @@ export function keyboxOverdueAt(start: Instant, createdAt: Instant): Instant {
 }
 
 /**
+ * When an urgent heat-change row still not sent becomes overdue: 20 minutes before the earliest
+ * possible arrival, `start − (preheatMaxMin + 20)` (60 minutes before the start with the defaults).
+ */
+export function warningOverdueAt(start: Instant, preheatMaxMin: number): Instant {
+	return addMinutes(start, -(preheatMaxMin + WARNING_OVERDUE_MARGIN_MIN));
+}
+
+/**
  * The send problems of one booking at `now`. Call required, each only while the row is unresolved:
  * - the latest keybox row is `refused` or `expired`;
  * - the latest keybox row is still open at `keyboxOverdueAt` (held rows included: the admin must call);
- * - the latest urgent heat-change row is `refused` or `expired`.
- * "Latest" is the highest id; a resolved latest row gives no entry and no older row stands in.
+ * - the latest heat-change row, of any urgency, is urgent and `refused` or `expired`, or urgent and
+ *   still not sent (`pending`, `in_flight`, `transient_failure`) at `warningOverdueAt`. An urgent
+ *   change enqueued inside the window is call required at once, before its settle delay ends: a
+ *   late urgent change must be phoned. An `in_flight` urgent row past the window counts as overdue
+ *   until its send outcome is recorded.
+ * "Latest" is the highest id; a resolved latest row gives no entry and no older row stands in. A newer
+ * heat-change row that is not urgent (good news, or a change taken back) supersedes an older urgent
+ * one: no call, and an older refused row is listed under `refusals` only.
  * The expired reasons are a safety net: rows expire at the start, when the feed drops the booking.
  */
 export function sendProblems(entry: SendProblemEntry, now: Instant): SendProblems {
-	const { start, createdAt, rows } = entry;
+	const { start, createdAt, preheatMaxMin, rows } = entry;
 	const callRequired: SendProblems['callRequired'] = [];
 
 	const keybox = latest(rows.filter((r) => r.kind === 'keybox'));
 	if (keybox && keybox.resolvedAt === null) {
 		if (keybox.state === 'refused') callRequired.push({ rowId: keybox.id, reason: 'keybox_refused' });
 		else if (keybox.state === 'expired') callRequired.push({ rowId: keybox.id, reason: 'keybox_expired' });
-		else if (KEYBOX_OPEN.includes(keybox.state) && compareInstants(now, keyboxOverdueAt(start, createdAt)) >= 0) {
+		else if (NOT_SENT_YET.includes(keybox.state) && compareInstants(now, keyboxOverdueAt(start, createdAt)) >= 0) {
 			callRequired.push({ rowId: keybox.id, reason: 'keybox_overdue' });
 		}
 	}
 
-	const warning = latest(rows.filter((r) => r.kind === 'heat_change' && r.urgent === true));
-	if (warning && warning.resolvedAt === null) {
+	const warning = latest(rows.filter((r) => r.kind === 'heat_change'));
+	if (warning && warning.urgent === true && warning.resolvedAt === null) {
 		if (warning.state === 'refused') callRequired.push({ rowId: warning.id, reason: 'warning_refused' });
 		else if (warning.state === 'expired') callRequired.push({ rowId: warning.id, reason: 'warning_expired' });
+		else if (NOT_SENT_YET.includes(warning.state) && compareInstants(now, warningOverdueAt(start, preheatMaxMin)) >= 0) {
+			callRequired.push({ rowId: warning.id, reason: 'warning_overdue' });
+		}
 	}
 	callRequired.sort((a, b) => a.rowId - b.rowId);
 
