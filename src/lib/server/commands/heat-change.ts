@@ -5,9 +5,10 @@
 // For each booking it recomputes the current notice and compares it with what the guest has been, or
 // is about to be, told: the snapshot of an in-flight heat-change row, else the last-told notice.
 // A change worth an email upserts the booking's one open heat-change row, due after the settle
-// delay; a repeat change resets the due time. Once the keybox row is in flight or finished, no
-// heat-change mail goes out: open heat-change rows are cancelled instead. A change that only widens
-// the arrival range writes nothing; an open row is left for the claim to recheck.
+// delay, with its urgency; a repeat change resets the due time and the urgency. Once the keybox row
+// is in flight, retrying or finished, no heat-change mail goes out: open heat-change rows are
+// cancelled instead. A change that only widens the arrival range writes nothing; an open row is
+// left for the claim to recheck.
 import { and, desc, eq, inArray } from 'drizzle-orm';
 import { classifyHeatChange, endsHeatChangeMail, parseNotice, SETTLE_DELAY_MIN, type Notice } from '#lib/domain/index.ts';
 import { addMinutes, compareInstants, type Instant } from '#lib/time/index.ts';
@@ -75,16 +76,20 @@ function enqueueOne(bookingId: number, now: Instant, db: Db): HeatChangeAction {
 	const told = storedNotice(inFlight ? inFlight.notice : row.lastTold);
 	const current = storedNotice(currentNotice(bookingId, db));
 	if (!told || !current) return 'none';
-	if (classifyHeatChange(told, current) === 'none') return 'none';
+	const classification = classifyHeatChange(told, current);
+	if (classification === 'none') return 'none';
 
+	// Urgency is known from the upsert on, so the call list sees an urgent warning that never goes
+	// out (Story 2.5); the claim re-freezes it against the last-told notice.
 	const dueAt = addMinutes(now, SETTLE_DELAY_MIN);
+	const snapshotUrgent = classification === 'urgent';
 	const updated = db
 		.update(outbox)
-		.set({ state: 'pending', dueAt, reason: null })
+		.set({ state: 'pending', dueAt, reason: null, snapshotUrgent })
 		.where(openHeatChangesOf(bookingId))
 		.run();
 	if (updated.changes === 0) {
-		db.insert(outbox).values({ bookingId, kind: 'heat_change', state: 'pending', dueAt }).run();
+		db.insert(outbox).values({ bookingId, kind: 'heat_change', state: 'pending', dueAt, snapshotUrgent }).run();
 	}
 	return 'upserted';
 }

@@ -30,6 +30,13 @@ export const KEYBOX_OVERDUE_MIN = 15;
  */
 export const KEYBOX_OVERDUE_BEFORE_START_MIN = 5;
 
+/**
+ * An urgent heat-change row still not sent this many minutes before the earliest possible arrival
+ * (the start minus the pre-heat maximum) makes the booking call required (Story 2.5): 60 minutes
+ * before the start with the default 30–40 minute pre-heat window.
+ */
+export const WARNING_OVERDUE_MARGIN_MIN = 20;
+
 /** An `in_flight` row claimed this many minutes ago or longer is stale: boot returns it to `pending`. */
 export const IN_FLIGHT_TIMEOUT_MIN = 10;
 

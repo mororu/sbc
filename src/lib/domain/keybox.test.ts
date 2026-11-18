@@ -132,8 +132,10 @@ describe('isKeyboxPhase', () => {
 });
 
 describe('endsHeatChangeMail', () => {
-	it('is true once the keybox row is in flight or finished', () => {
-		for (const state of ['in_flight', 'accepted', 'refused', 'expired'] as const) expect(endsHeatChangeMail(state)).toBe(true);
-		for (const state of ['pending', 'transient_failure', 'cancelled'] as const) expect(endsHeatChangeMail(state)).toBe(false);
+	it('is true once the keybox row is in flight, retrying or finished (Story 2.5)', () => {
+		for (const state of ['in_flight', 'transient_failure', 'accepted', 'refused', 'expired'] as const) {
+			expect(endsHeatChangeMail(state)).toBe(true);
+		}
+		for (const state of ['pending', 'cancelled'] as const) expect(endsHeatChangeMail(state)).toBe(false);
 	});
 });

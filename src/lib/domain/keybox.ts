@@ -61,9 +61,11 @@ export function isKeyboxPhase(state: OutboxState): boolean {
 }
 
 /**
- * True when a keybox row in `state` ends heat-change mail for its booking (Story 2.3): once it is
- * `in_flight` or has finished, nothing is upserted and open heat-change rows are cancelled.
+ * True when a keybox row in `state` ends heat-change mail for its booking (Stories 2.3, 2.5): once it
+ * is `in_flight`, retrying (`transient_failure`: each retry re-freezes the current notice) or
+ * finished, nothing is upserted and open heat-change rows are cancelled. Only a `pending` keybox row
+ * (not yet claimed, or held) lets heat changes through.
  */
 export function endsHeatChangeMail(state: OutboxState): boolean {
-	return state === 'in_flight' || isKeyboxPhase(state);
+	return state === 'in_flight' || state === 'transient_failure' || isKeyboxPhase(state);
 }

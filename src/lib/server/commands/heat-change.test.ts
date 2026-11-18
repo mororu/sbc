@@ -90,7 +90,32 @@ describe('enqueueHeatChanges', () => {
 		const id = book();
 		sqlite.prepare('update setting set preheat_min_min = 40, preheat_max_min = 50 where id = 1').run();
 		expect(enqueue([id])).toEqual([{ bookingId: id, action: 'upserted' }]);
-		expect(heatRows(id)).toHaveLength(1);
+		expect(heatRows(id)).toEqual([expect.objectContaining({ state: 'pending', snapshot_urgent: 1, attempts: 0 })]);
+	});
+
+	it('marks the row urgent or good news when it upserts, before any claim (Story 2.5 matrix: urgent at enqueue)', () => {
+		const id = book();
+		addBlock('16:00', '17:25');
+		enqueue([id]);
+		expect(heatRows(id)).toEqual([expect.objectContaining({ state: 'pending', snapshot_urgent: 1, claimed_at: null })]);
+		// Good news on another day: cold → hot, from a booking right before.
+		const day = '2027-01-13';
+		book({ start: at('16:00', day), durationMin: 60 });
+		const target = book({ start: at('18:30', day) });
+		book({ start: at('17:15', day), durationMin: 60 });
+		expect(heatRows(target)).toEqual([expect.objectContaining({ state: 'pending', snapshot_urgent: 0 })]);
+	});
+
+	it('updates the urgency when a repeat change turns an urgent change into good news', () => {
+		const target = book();
+		// 16:30–17:30 moves the earliest arrival of 18:00 later: urgent.
+		const before = book({ start: at('16:30'), durationMin: 60 });
+		const [urgent] = heatRows(target);
+		expect(urgent).toMatchObject({ state: 'pending', snapshot_urgent: 1 });
+		// Gone again, and 16:45–17:45 makes 18:00 hot: the same row, now good news.
+		sqlite.prepare('update booking set deleted_at = ? where id = ?').run(NOW, before);
+		book({ start: at('16:45'), durationMin: 60 }, LATER);
+		expect(heatRows(target)).toEqual([{ ...urgent, due_at: '2027-01-07T10:14:00Z', snapshot_urgent: 0 }]);
 	});
 
 	it('writes nothing when a booking was made and then deleted, and leaves an open row for the recheck', () => {
@@ -197,6 +222,16 @@ describe('enqueueHeatChanges', () => {
 			expect(enqueue([id], '2027-01-07T10:06:00Z')).toEqual([{ bookingId: id, action: 'none' }]);
 			expect(heatRows(id).map((r) => r.state)).toEqual(['in_flight']);
 		});
+	});
+
+	it('enqueues nothing while the keybox row is retrying, and cancels the open row (Story 2.5 matrix: keybox retry)', () => {
+		const id = book();
+		addBlock('16:00', '17:25');
+		enqueue([id]);
+		setKeyboxState(id, 'transient_failure');
+		addBlock('16:00', '17:26');
+		expect(enqueue([id], '2027-01-07T10:09:00Z')).toEqual([{ bookingId: id, action: 'cancelled' }]);
+		expect(heatRows(id)).toEqual([expect.objectContaining({ state: 'cancelled', outcome_at: '2027-01-07T10:09:00Z' })]);
 	});
 
 	it('never opens its own transaction', () => {

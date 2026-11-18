@@ -2,11 +2,13 @@
 // Tue 12 Jan 2027 18:00 Zurich start; booked early, the keybox row is due Mon 11 Jan 18:00 (17:00Z).
 import { describe, expect, it } from 'vitest';
 import { addMinutes, type Instant } from '#lib/time/index.ts';
-import { callList, keyboxOverdueAt, sendProblems, type SendProblemEntry, type SendProblemRow } from './call-list.ts';
+import { callList, keyboxOverdueAt, sendProblems, warningOverdueAt, type SendProblemEntry, type SendProblemRow } from './call-list.ts';
 
 const START: Instant = '2027-01-12T17:00:00Z';
 const CUTOFF: Instant = '2027-01-11T17:00:00Z';
 const BOOKED_EARLY: Instant = '2027-01-07T10:00:00Z';
+/** The default pre-heat maximum (30–40 window): the warning window opens 60 minutes before the start. */
+const PREHEAT_MAX = 40;
 
 const r = (id: number, kind: SendProblemRow['kind'], state: SendProblemRow['state'], over: Partial<SendProblemRow> = {}) =>
 	({ id, kind, state, urgent: null, resolvedAt: null, ...over }) satisfies SendProblemRow;
@@ -15,7 +17,12 @@ const confirmation = (state: SendProblemRow['state'] = 'accepted', over: Partial
 const keybox = (state: SendProblemRow['state'], over: Partial<SendProblemRow> = {}) => r(2, 'keybox', state, over);
 const heat = (id: number, state: SendProblemRow['state'], urgent: boolean | null, over: Partial<SendProblemRow> = {}) =>
 	r(id, 'heat_change', state, { urgent, ...over });
-const early = (rows: SendProblemRow[]): SendProblemEntry => ({ start: START, createdAt: BOOKED_EARLY, rows });
+const early = (rows: SendProblemRow[], preheatMaxMin = PREHEAT_MAX): SendProblemEntry => ({
+	start: START,
+	createdAt: BOOKED_EARLY,
+	preheatMaxMin,
+	rows
+});
 
 const NONE = { callRequired: [], refusals: [] };
 
@@ -47,14 +54,14 @@ describe('sendProblems: keybox', () => {
 	);
 
 	it('measures from the booking time for a booking made past its cutoff', () => {
-		const entry = { start: START, createdAt: '2027-01-12T08:00:00Z', rows: [confirmation(), keybox('pending')] };
+		const entry = { start: START, createdAt: '2027-01-12T08:00:00Z', preheatMaxMin: PREHEAT_MAX, rows: [confirmation(), keybox('pending')] };
 		expect(sendProblems(entry, '2027-01-12T08:14:00Z')).toEqual(NONE);
 		expect(sendProblems(entry, '2027-01-12T08:15:00Z').callRequired).toEqual([{ rowId: 2, reason: 'keybox_overdue' }]);
 	});
 
 	it('is overdue 5 minutes before the start for a booking made 10 minutes before it', () => {
 		const createdAt = addMinutes(START, -10);
-		const entry = { start: START, createdAt, rows: [confirmation(), keybox('transient_failure')] };
+		const entry = { start: START, createdAt, preheatMaxMin: PREHEAT_MAX, rows: [confirmation(), keybox('transient_failure')] };
 		expect(keyboxOverdueAt(START, createdAt)).toBe(addMinutes(START, -5));
 		expect(sendProblems(entry, addMinutes(START, -6))).toEqual(NONE);
 		expect(sendProblems(entry, addMinutes(START, -5)).callRequired).toEqual([{ rowId: 2, reason: 'keybox_overdue' }]);
@@ -62,7 +69,7 @@ describe('sendProblems: keybox', () => {
 
 	it('is overdue right at its due time for a booking made 3 minutes before the start', () => {
 		const createdAt = addMinutes(START, -3);
-		const entry = { start: START, createdAt, rows: [confirmation('pending'), keybox('pending')] };
+		const entry = { start: START, createdAt, preheatMaxMin: PREHEAT_MAX, rows: [confirmation('pending'), keybox('pending')] };
 		expect(keyboxOverdueAt(START, createdAt)).toBe(createdAt);
 		expect(sendProblems(entry, createdAt).callRequired).toEqual([{ rowId: 2, reason: 'keybox_overdue' }]);
 	});
@@ -91,12 +98,30 @@ describe('sendProblems: urgent heat change', () => {
 		});
 	});
 
-	it('still reports a refused urgent row when the newer change was cancelled (stale warning)', () => {
-		// B was cancelled at recheck or by the keybox claim before its claim froze an urgent flag.
-		const entry = early([confirmation(), keybox('accepted'), heat(3, 'refused', true), heat(4, 'cancelled', null)]);
-		expect(sendProblems(entry, addMinutes(CUTOFF, 30))).toEqual({
-			callRequired: [{ rowId: 3, reason: 'warning_refused' }],
-			refusals: []
+	it('lists a refused urgent row as a refusal only once a newer heat row was cancelled (Story 2.5)', () => {
+		// The newer change was cancelled at recheck (taken back) or by the keybox claim (the keybox email counts).
+		for (const urgent of [true, false, null]) {
+			const entry = early([confirmation(), keybox('accepted'), heat(3, 'refused', true), heat(4, 'cancelled', urgent)]);
+			expect(sendProblems(entry, addMinutes(CUTOFF, 30))).toEqual({
+				callRequired: [],
+				refusals: [{ rowId: 3, kind: 'heat_change' }]
+			});
+		}
+	});
+
+	it('supersedes a refused urgent row by a newer accepted good-news row (Story 2.5 matrix: superseded)', () => {
+		const entry = early([confirmation(), keybox('pending'), heat(3, 'refused', true), heat(4, 'accepted', false)]);
+		expect(sendProblems(entry, '2027-01-08T10:00:00Z')).toEqual({
+			callRequired: [],
+			refusals: [{ rowId: 3, kind: 'heat_change' }]
+		});
+	});
+
+	it('supersedes an urgent row by a newer open good-news row, even past the warning window', () => {
+		const entry = early([confirmation(), heat(3, 'refused', true), heat(4, 'pending', false)]);
+		expect(sendProblems(entry, addMinutes(START, -30))).toEqual({
+			callRequired: [],
+			refusals: [{ rowId: 3, kind: 'heat_change' }]
 		});
 	});
 
@@ -116,6 +141,70 @@ describe('sendProblems: urgent heat change', () => {
 		});
 	});
 
+	it('opens the urgent warning window 20 minutes before the earliest possible arrival', () => {
+		// Default 30–40 pre-heat: 17:00 Zurich for an 18:00 start; a 90-minute pre-heat: 16:10.
+		expect(warningOverdueAt(START, 40)).toBe('2027-01-12T16:00:00Z');
+		expect(warningOverdueAt(START, 90)).toBe('2027-01-12T15:10:00Z');
+	});
+
+	it('moves the overdue time with a 90-minute pre-heat maximum to 16:10', () => {
+		const entry = early([confirmation(), heat(3, 'pending', true)], 90);
+		expect(sendProblems(entry, '2027-01-12T15:09:00Z')).toEqual(NONE);
+		expect(sendProblems(entry, '2027-01-12T15:10:00Z').callRequired).toEqual([{ rowId: 3, reason: 'warning_overdue' }]);
+	});
+
+	it('makes an urgent change enqueued inside the window call required at once, before its settle delay', () => {
+		// Enqueued at 17:30 Zurich, due 17:40 after the settle delay: phoned right away.
+		const entry = early([confirmation(), heat(3, 'pending', true)]);
+		expect(sendProblems(entry, '2027-01-12T16:30:00Z').callRequired).toEqual([{ rowId: 3, reason: 'warning_overdue' }]);
+	});
+
+	it('still calls through keybox_refused when an older urgent row was refused and the newer one cancelled by the keybox claim', () => {
+		const entry = early([confirmation(), heat(3, 'refused', true), heat(4, 'cancelled', true), keybox('refused')]);
+		expect(sendProblems(entry, addMinutes(CUTOFF, 30))).toEqual({
+			callRequired: [{ rowId: 2, reason: 'keybox_refused' }],
+			refusals: [{ rowId: 3, kind: 'heat_change' }]
+		});
+	});
+
+	it.each(['pending', 'in_flight', 'transient_failure'] as const)(
+		'reports a %s urgent row from 60 minutes before the start, nothing at 61 (Story 2.5 matrix: overdue)',
+		(state) => {
+			// No keybox row, to isolate the rule: in the app a held keybox row is overdue by then too.
+			const entry = early([confirmation(), heat(3, state, true)]);
+			// 16:59 and 17:00 Zurich for an 18:00 start.
+			expect(sendProblems(entry, '2027-01-12T15:59:00Z')).toEqual(NONE);
+			expect(sendProblems(entry, '2027-01-12T16:00:00Z')).toEqual({
+				callRequired: [{ rowId: 3, reason: 'warning_overdue' }],
+				refusals: []
+			});
+		}
+	);
+
+	it('reports an overdue warning next to an overdue keybox row', () => {
+		const late: SendProblemEntry = {
+			start: START,
+			createdAt: '2027-01-12T15:30:00Z',
+			preheatMaxMin: PREHEAT_MAX,
+			rows: [keybox('pending'), heat(3, 'pending', true)]
+		};
+		expect(sendProblems(late, addMinutes(START, -5)).callRequired).toEqual([
+			{ rowId: 2, reason: 'keybox_overdue' },
+			{ rowId: 3, reason: 'warning_overdue' }
+		]);
+	});
+
+	it('never reports an open good-news row or an open row of unknown urgency as overdue', () => {
+		for (const urgent of [false, null]) {
+			expect(sendProblems(early([confirmation(), heat(3, 'pending', urgent)]), addMinutes(START, -10))).toEqual(NONE);
+		}
+	});
+
+	it('raises nothing for an overdue urgent row once it is resolved', () => {
+		const entry = early([confirmation(), heat(3, 'transient_failure', true, { resolvedAt: '2027-01-12T16:05:00Z' })]);
+		expect(sendProblems(entry, addMinutes(START, -10))).toEqual(NONE);
+	});
+
 	it('counts an unclaimed expired heat row (urgent null) as not urgent', () => {
 		expect(sendProblems(early([confirmation(), keybox('accepted'), heat(3, 'expired', null)]), START)).toEqual(NONE);
 	});
@@ -124,21 +213,21 @@ describe('sendProblems: urgent heat change', () => {
 describe('sendProblems: ordering', () => {
 	it('orders callRequired and refusals by row id, whatever the row order', () => {
 		const entry = early([
-			heat(7, 'refused', false),
-			heat(5, 'refused', true),
+			heat(7, 'refused', true),
+			heat(5, 'refused', false),
 			r(2, 'keybox', 'refused'),
-			heat(6, 'refused', false),
+			heat(6, 'refused', true),
 			confirmation('refused')
 		]);
 		expect(sendProblems(entry, START)).toEqual({
 			callRequired: [
 				{ rowId: 2, reason: 'keybox_refused' },
-				{ rowId: 5, reason: 'warning_refused' }
+				{ rowId: 7, reason: 'warning_refused' }
 			],
 			refusals: [
 				{ rowId: 1, kind: 'confirmation' },
-				{ rowId: 6, kind: 'heat_change' },
-				{ rowId: 7, kind: 'heat_change' }
+				{ rowId: 5, kind: 'heat_change' },
+				{ rowId: 6, kind: 'heat_change' }
 			]
 		});
 	});
@@ -196,7 +285,7 @@ describe('sendProblems: resolved rows', () => {
 });
 
 describe('callList', () => {
-	const at = (start: Instant, rows: SendProblemRow[]): SendProblemEntry => ({ start, createdAt: BOOKED_EARLY, rows });
+	const at = (start: Instant, rows: SendProblemRow[]): SendProblemEntry => ({ start, createdAt: BOOKED_EARLY, preheatMaxMin: PREHEAT_MAX, rows });
 	const LATER = '2027-01-13T17:00:00Z';
 
 	it('lists only bookings with a problem, by start, then booking id', () => {

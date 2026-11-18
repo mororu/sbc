@@ -192,12 +192,23 @@ export const outbox = sqliteTable(
 	]
 );
 
-/** The worker's last tick: one row, id 1 (the admin home warns when it is old, Epic 3). */
+/**
+ * The worker's health: one row, id 1, judged by `workerHealth` (the admin home warns, Epic 3).
+ * `beatAt` is the last tick that ran; `failingSince` is the outcome time of the first transient send
+ * failure since the last accepted send (null while sends go out, and cleared once no row is left
+ * retrying), so an outage shows even while the worker keeps ticking (Story 2.5). It is a coarse,
+ * installation-wide signal: one recipient's deferrals can set it, and one accepted send clears it.
+ */
 export const workerHeartbeat = sqliteTable(
 	'worker_heartbeat',
 	{
 		id: integer().primaryKey(),
-		beatAt: text().notNull()
+		beatAt: text().notNull(),
+		failingSince: text()
 	},
-	(t) => [check('worker_heartbeat_single_row', sql`${t.id} = 1`), check('worker_heartbeat_instant', isInstant(t.beatAt))]
+	(t) => [
+		check('worker_heartbeat_single_row', sql`${t.id} = 1`),
+		check('worker_heartbeat_instant', isInstant(t.beatAt)),
+		check('worker_heartbeat_failing_since', sql`${t.failingSince} IS NULL OR ${isInstant(t.failingSince)}`)
+	]
 );

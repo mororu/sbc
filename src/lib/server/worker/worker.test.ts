@@ -4,16 +4,17 @@ import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { callList, sendProblems, type Notice } from '#lib/domain/index.ts';
+import { callList, RETRY_BACKOFF_MIN, sendProblems, workerHealth, type Notice } from '#lib/domain/index.ts';
 import { claimDueRow, createBooking } from '#lib/server/commands/index.ts';
 import { createMailer, type Mailer } from '#lib/server/mail/index.ts';
-import { getSendProblemRows } from '#lib/server/db/queries/index.ts';
+import { getHeartbeat, getSendProblemRows } from '#lib/server/db/queries/index.ts';
 // The test sets up its own temp database; app code reaches the db only through commands and queries.
 // eslint-disable-next-line no-restricted-imports
 import { createDb, openDatabase, type Db } from '../db/index.ts';
 // eslint-disable-next-line no-restricted-imports
 import { applyMigrations, MIGRATIONS_FOLDER } from '../db/migrate.ts';
 import { randomId } from '../ids.ts';
+import { addMinutes } from '#lib/time/index.ts';
 import type { ClaimedRow } from '#lib/server/commands/index.ts';
 import { sendClaimedRow, startWorker, stopWorker, tick, TICK_INTERVAL_MS } from './index.ts';
 
@@ -166,6 +167,40 @@ describe('tick', () => {
 		expect(lines).toEqual(['[worker] tick failed: SQLITE_ERROR', '[worker] held check failed: SQLITE_ERROR']);
 	});
 
+	it('turns failing after 15 minutes of transient failures while beat_at stays fresh, and ok after an accepted send (Story 2.5)', async () => {
+		let now = NOW;
+		let outcome: 'transient_failure' | 'accepted' = 'transient_failure';
+		const sends: string[] = [];
+		const flaky: Mailer = {
+			send: async () => {
+				sends.push(now);
+				return outcome === 'accepted'
+					? { outcome, smtpCode: 250, reason: null }
+					: { outcome, smtpCode: 421, reason: 'smtp 421' };
+			}
+		};
+		const health = () => workerHealth(getHeartbeat(db), now);
+		// An earlier tick beat with nothing to send: without a heartbeat row a failure writes nothing.
+		await tick({ ...deps(), now: () => addMinutes(NOW, -1), mailer: flaky });
+		book();
+		// One tick a minute; the backoff (1, 2, 5, 10 min) leaves most ticks with nothing to send.
+		for (let minute = 0; minute <= 15; minute++) {
+			now = addMinutes(NOW, minute);
+			await tick({ ...deps(), now: () => now, mailer: flaky });
+			expect(getHeartbeat(db)).toEqual({ beatAt: now, failingSince: NOW });
+			expect(health()).toBe(minute < 15 ? 'ok' : 'failing');
+		}
+		// Each send waits the backoff step after the previous one: 0, 1, 3, 8 (and next 18) minutes.
+		const offsets = RETRY_BACKOFF_MIN.reduce<number[]>((acc, step) => [...acc, acc.at(-1)! + step], [0]);
+		expect(sends).toEqual(offsets.filter((m) => m <= 15).map((m) => addMinutes(NOW, m)));
+		// The server is back: the next due send is accepted and the health is ok again.
+		outcome = 'accepted';
+		now = addMinutes(NOW, offsets.find((m) => m > 15)!);
+		await tick({ ...deps(), now: () => now, mailer: flaky });
+		expect(getHeartbeat(db)).toEqual({ beatAt: now, failingSince: null });
+		expect(health()).toBe('ok');
+	});
+
 	it('records the heartbeat with nothing to send', async () => {
 		await tick(deps());
 		expect(sqlite.prepare('select beat_at from worker_heartbeat').get()).toEqual({ beat_at: NOW });
@@ -278,7 +313,8 @@ describe('tick: the keybox email (Story 2.2)', () => {
 		await sendClaimedRow(claim.row, lateDeps());
 		expect(rows()[1]).toMatchObject({ state: 'pending', reason: null });
 		const held = `[worker] outbox ${claim.row.id} keybox held missing=keybox_instructions_de`;
-		expect(lines.at(-1)).toBe(held);
+		// The re-enqueue result names the row and the action only.
+		expect(lines.slice(-2)).toEqual([held, `[worker] outbox ${claim.row.id} keybox held heat_change=none`]);
 		// The next tick does not log it again; once fixed, it goes out.
 		await tick(lateDeps());
 		expect(lines.filter((l) => l === held)).toHaveLength(1);
