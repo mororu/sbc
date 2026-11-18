@@ -1,7 +1,8 @@
 <!--
 	Text field (DESIGN.md text-field): a visible label above the input, an underline in `line-strong`
-	(2 px `focus` when focused, 2 px `error` with a message below when invalid), and a purpose line.
-	Purpose and error are tied to the input with aria-describedby; errors are not announced live.
+	(2 px `focus` when focused, 2 px `error` with a message below when invalid), and an optional
+	purpose line. Purpose and error are tied to the input with aria-describedby; errors are not
+	announced live.
 -->
 <script lang="ts">
 	import type { HTMLInputAttributes } from 'svelte/elements';
@@ -17,7 +18,7 @@
 	}: {
 		id: string;
 		label: string;
-		purpose: string;
+		purpose?: string;
 		error?: string | null;
 		value?: string;
 	} & Omit<HTMLInputAttributes, 'id' | 'value'> = $props();
@@ -29,13 +30,15 @@
 		{id}
 		bind:value
 		aria-invalid={error ? 'true' : undefined}
-		aria-describedby={error ? `${id}-error ${id}-purpose` : `${id}-purpose`}
+		aria-describedby={[error ? `${id}-error` : '', purpose ? `${id}-purpose` : ''].filter(Boolean).join(' ') || undefined}
 		{...rest}
 	/>
 	{#if error}
 		<p class="error" id="{id}-error"><Icon name="error" /><span>{error}</span></p>
 	{/if}
-	<p class="purpose" id="{id}-purpose">{purpose}</p>
+	{#if purpose}
+		<p class="purpose" id="{id}-purpose">{purpose}</p>
+	{/if}
 </div>
 
 <style>

@@ -35,3 +35,23 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-2-3-guest-is-emailed-when-the-heat-state-changes.md`
   summary: The heat-change debounce has no cap, so changes arriving less than 10 minutes apart can hold the email back until the keybox phase cancels it.
   evidence: `enqueueOne` resets `due_at` to now + 10 min on every repeat change (AD-6 debounce). A cap measured from the first enqueue would need an AD-6 decision.
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-3-1-admin-signs-in.md`
+  summary: Behind Caddy, the sign-in rate limit keys on the proxy address unless adapter-node's `ADDRESS_HEADER`/`XFF_DEPTH` are set in compose, so one client's wrong tries would slow every admin's sign-in.
+  evidence: `signIn` uses `getClientAddress()` (Story 3.1). The compose file and its env come in Epic 5; set the headers there and test the limit through the proxy.
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-3-1-admin-signs-in.md`
+  summary: When a session ends mid-form, an `enhance`d admin form action gets the guard's redirect, and the unsaved input is lost without a message.
+  evidence: The guard in `src/hooks.server.ts` throws `redirect(303, loginHref(...))` for every request, including action POSTs. Story 3.1 has no enhanced forms; 3.3, 3.5 and 3.7 add them and should decide how to handle this.
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-3-1-admin-signs-in.md`
+  summary: The guard tests in `src/hooks.server.test.ts` import SvelteKit's internal `with_request_store`, so a kit upgrade can break them.
+  evidence: `sequence` needs the request store. Exporting the guard handle and testing it directly would avoid the internal import.
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-3-1-admin-signs-in.md`
+  summary: An admin who is already signed in and opens `/admin/login` sees the form again, and signing in again leaves the old session row behind.
+  evidence: The login load does not check the session cookie (Story 3.1 review). Redirecting a valid session to `/admin` (or the `to` target) is a small follow-up.
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-3-1-admin-signs-in.md`
+  summary: The nav badge counts run `getCallFeed` on every admin navigation, and it computes the current notice for every future booking day.
+  evidence: The `(portal)` layout load reruns on each navigation. That is fine at the current booking volume; limit the work to keybox-phase bookings if admin pages get slow.

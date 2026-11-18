@@ -41,7 +41,9 @@ export const setting = sqliteTable(
 		keyboxCode: text(),
 		/** The access and return instructions in the keybox email, per locale. NULL or blank: unset. */
 		keyboxInstructionsDe: text(),
-		keyboxInstructionsEn: text()
+		keyboxInstructionsEn: text(),
+		/** The shared admin password as an argon2id hash (Story 3.1), set by `npm run set-admin-password`. NULL: not set yet, nobody can sign in. */
+		adminPasswordHash: text()
 	},
 	(t) => [
 		check('setting_single_row', sql`${t.id} = 1`),
@@ -84,7 +86,13 @@ export const booking = sqliteTable(
 		/** The notice at booking (AD-24): canonical JSON from `serializeNotice`, never updated after insert. */
 		noticeAtBooking: text(),
 		/** The notice the guest was last told (AD-24): canonical JSON; starts as the notice at booking. */
-		lastToldNotice: text()
+		lastToldNotice: text(),
+		/**
+		 * When an admin marked the reply to a deleted booking's guest done (Story 3.4). The reply
+		 * reminder is `deleted_at IS NOT NULL AND reply_done_at IS NULL AND email IS NOT NULL`.
+		 * Added without a CHECK: one would rebuild the table (like `outbox.resolved_at`).
+		 */
+		replyDoneAt: text()
 	},
 	(t) => [
 		index('booking_start_at').on(t.startAt),
@@ -211,4 +219,19 @@ export const workerHeartbeat = sqliteTable(
 		check('worker_heartbeat_instant', isInstant(t.beatAt)),
 		check('worker_heartbeat_failing_since', sql`${t.failingSince} IS NULL OR ${isInstant(t.failingSince)}`)
 	]
+);
+
+/**
+ * Admin sessions (AD-10, Story 3.1): the cookie holds `id` (`randomId()`, 128 bits, stored as is).
+ * A session is valid while `now < expires_at`; each guarded request moves `expires_at` to now + 30
+ * days. Sign-out deletes the row; a password reset deletes every row.
+ */
+export const adminSession = sqliteTable(
+	'admin_session',
+	{
+		id: text().primaryKey(),
+		createdAt: text().notNull(),
+		expiresAt: text().notNull()
+	},
+	(t) => [check('admin_session_instants', sql`${isInstant(t.createdAt)} AND ${isInstant(t.expiresAt)}`)]
 );

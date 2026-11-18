@@ -206,5 +206,55 @@
 	"mail_heat_arrival_subject": "Important: new arrival time for {date}, {time}",
 	"mail_heat_longer_preheat": "We now pre-heat for longer.",
 	"mail_heat_later_earliest": "The sauna is booked for longer before you.",
-	"mail_heat_arrival": "Come between {earliest} and {latest} and light the fire."
+	"mail_heat_arrival": "Come between {earliest} and {latest} and light the fire.",
+	"admin_login_title": "Sign in",
+	"admin_password_label": "Password",
+	"admin_sign_in": "Sign in",
+	"admin_password_wrong": "That password isn't right.",
+	"admin_rate_limited": "Too many tries. Try again in a minute.",
+	"admin_session_ended": "Please sign in again.",
+	"admin_action_failed": "That didn't work. Nothing changed. Please try again.",
+	"admin_password_too_short": "The password needs at least 12 characters.",
+	"admin_password_too_long": "That password is too long.",
+	"admin_nav_name": "Admin",
+	"admin_nav_home": "Overview",
+	"admin_nav_day": "Bookings",
+	"admin_nav_blocks": "Blocks",
+	"admin_nav_settings": "Settings",
+	"admin_nav_analytics": "Analytics",
+	"admin_nav_sign_out": "Sign out",
+	"admin_badge_calls": [
+		{
+			"declarations": [
+				"input count",
+				"local countPlural = count: plural"
+			],
+			"selectors": [
+				"countPlural"
+			],
+			"match": {
+				"countPlural=one": "{count} call open",
+				"countPlural=*": "{count} calls open"
+			}
+		}
+	],
+	"admin_badge_replies": [
+		{
+			"declarations": [
+				"input count",
+				"local countPlural = count: plural"
+			],
+			"selectors": [
+				"countPlural"
+			],
+			"match": {
+				"countPlural=one": "{count} reply open",
+				"countPlural=*": "{count} replies open"
+			}
+		}
+	],
+	"admin_home_title": "Overview",
+	"admin_worker_not_running": "Sending isn't running.",
+	"admin_worker_stale": "Sending hasn't run since {time}.",
+	"admin_worker_failing": "No email has gone out since {time}. Sending keeps trying."
 }

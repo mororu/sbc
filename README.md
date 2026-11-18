@@ -26,6 +26,7 @@ npm run dev
 | `npm run lint` | ESLint, including the layer boundary rules |
 | `npm run i18n:types` | Compiles `messages/` into `src/lib/paraglide` (also run by `check` and `lint`) |
 | `npm run db:generate` | Generates a SQL migration from `src/lib/server/db/schema.ts` |
+| `npm run set-admin-password` | Sets the shared admin password from stdin (`-- --reset` replaces it and signs out every admin) |
 
 ## Layers
 
@@ -453,6 +454,84 @@ A collapsed range, or an arrival already past at the send, reuses the day-view c
   - urgent and still not sent (`pending`, `in_flight`, `transient_failure`) from `start − (pre-heat maximum + 20 min)` (`WARNING_OVERDUE_MARGIN_MIN`; 60 minutes with the default 30–40 window) gives `warning_overdue`. The feed carries the pre-heat maximum setting.
   - An urgent change enqueued inside that window is call required at once, before its settle delay ends: a late urgent change should be phoned. An `in_flight` urgent row past the window counts as overdue until its send outcome is recorded.
   - A newer non-urgent row (good news, or a change cancelled at recheck or by the keybox claim) supersedes an older urgent one: no call from the warning, and an older refused row is listed under refusals only. The keybox rules still apply, e.g. a refused keybox row still raises `keybox_refused`.
+
+## Admin sign-in (Story 3.1)
+
+### The admin password
+
+The shared password is set with a CLI that reads it from stdin. Only its argon2id hash goes into `setting.admin_password_hash`:
+
+```bash
+npm run set-admin-password                 # asks twice, with no echo
+printf '%s\n' "$PW" | npm run set-admin-password   # or piped (one trailing newline is dropped)
+npm run set-admin-password -- --reset      # replace it: also deletes every admin session
+```
+
+- It needs at least 12 characters. It refuses to replace an existing hash without `--reset`, and then stores nothing (exit 1).
+- The password is never an argument or env value. It is never echoed, logged or printed. The command takes only `--reset`.
+- It reads the app env through `src/lib/server/env.ts`, so it needs what the app needs: in development `DATABASE_PATH` and `GUEST_KEY_SECRET` (from `.env`), in the production container the full production env, which `docker compose exec app npm run set-admin-password` already has (Epic 5). It applies the migrations first, so it also works before the first start.
+- It refuses a password with a line break or any other control character (one trailing line break of piped input is dropped first). On the terminal prompt, arrow keys and other escape sequences are ignored. A failure prints one short line, never a stack trace: "The database is busy. …" on a lock timeout, else "The password could not be stored.".
+- The password is normalised to Unicode NFC before hashing and verifying, so a decomposed "ü" from a terminal matches the browser's.
+- It prints "Admin password set." for a first password and "Admin password replaced. Signed out sessions: N." when `--reset` replaced one.
+- Until a password is set, every sign-in fails with the wrong-password message, and the app logs `[admin] sign-in refused: no admin password is set. Run \`npm run set-admin-password\`.`
+
+### Sessions and the guard (AD-10, AD-11)
+
+- Migration `0009_admin_session.sql` adds `setting.admin_password_hash`, `booking.reply_done_at` (for Story 3.4; a plain `ALTER TABLE ADD` without a CHECK, so `booking` is not rebuilt) and `admin_session(id, created_at, expires_at)` with instant GLOB checks.
+- The sign-in command (`src/lib/server/commands/admin-session.ts`) checks the password with argon2 outside the transaction. Inside the transaction it reads the hash again, so a password reset during the check wins, and inserts a session. The session id is `randomId()` (128 bits). It is stored as is and expires 30 days after its last use.
+- The cookie is `admin_session`: `Path=/admin; HttpOnly; Secure; SameSite=Lax; Max-Age=2592000`. It is the only cookie besides the language cookie. Safari may refuse a `Secure` cookie on plain `http://localhost`; use Chrome or Firefox in development.
+- `src/hooks.server.ts` runs the guard first (`sequence(guard, paraglide)`). Every `/admin` path except `/admin/login` needs a valid session. The guard decodes the path the way the router does, so `/%61dmin` is guarded too, and it also checks the route id.
+  - Without a cookie, the request gets a 303 to `/admin/login?to=<path and query>`. No route code runs.
+  - With an unknown or expired session, the cookie is deleted and the redirect adds `expired=1` ("Bitte melde dich wieder an.").
+  - A valid session is extended (row and cookie) and set as `locals.adminSession`. Every `/admin` response gets `cache-control: private, no-store`.
+- `safeReturnTarget` (`src/lib/server/admin-auth.ts`) accepts only a same-origin path under `/admin` (normalised, so `/admin/../x` is refused). It refuses the sign-in and sign-out paths, backslashes and control characters. Anything else goes to `/admin`.
+- Sign-out is `POST /admin/logout`, a form styled as the last nav tab: a GET link could be preloaded. It deletes the row, clears the cookie and redirects to sign-in. With no or an ended session the guard just clears the cookie and redirects to plain `/admin/login` (no "Bitte melde dich wieder an."); a lock timeout on the delete still signs the browser out.
+- A lock timeout during the guard's session check answers 503 with "Das hat nicht geklappt. Nichts wurde geändert. …" (never cached) instead of a 500. Each sign-in also deletes ended session rows.
+
+### Rate limit (FR-15)
+
+`src/lib/domain/sign-in-limit.ts` is the pure gate. The `Map` of records per client address lives in the sign-in command, in memory, so a restart resets it. From the 5th failure on, the next try is allowed only 60 s after the last failure. It is refused as `rate_limited` with `retryAt` and is not checked. A correct password deletes the record. Records are dropped 15 minutes after their last failure. A try is counted before the slow verify, so parallel tries cannot slip past the gate; if the session insert then throws, the record is put back. The map holds at most 10,000 records: past that, expired ones are pruned, then the oldest evicted (a full prune also runs at most once a minute). **Behind Caddy the client address is the proxy's unless adapter-node's `ADDRESS_HEADER`/`XFF_DEPTH` are set (Epic 5): without them every client shares one record, and wrong tries slow everyone's sign-in to one a minute.** The sign-in page then shows "Zu viele Versuche. …" and disables the button until `retryAt`, using a timer; without JavaScript, a reload brings the button back.
+
+### Admin shell and home
+
+- `src/routes/admin/(portal)/+layout.svelte` holds the app header, the nav (Übersicht · Buchungen · Blocks · Einstellungen · Auswertung · Abmelden) and `main`, capped at `--admin-max`. Nav hrefs live in `src/lib/admin-nav.ts`. The targets behind Buchungen, Blocks, Einstellungen and Auswertung come with later stories and are 404s until then.
+- The Übersicht tab carries two badges: a phone icon with the call-list count and a mail icon with the reply-reminder count. Each shows "0" when empty and has a hidden singular/plural text. The counts come from `loadNavCounts` (`src/lib/server/admin-view.ts`):
+  - calls: `deriveCallList(getCallFeed(now), now).length`;
+  - replies: `countReplyReminders()` (`deleted_at IS NOT NULL AND reply_done_at IS NULL AND email IS NOT NULL`).
+- The admin home has the `h1` "Übersicht" (visually hidden, as in the mockup) and the worker warning from `workerHealth`:
+  - no heartbeat: "Der Versand läuft nicht.";
+  - `stale`: "Der Versand läuft seit 09:55 nicht.";
+  - `failing`: "Seit 09:45 geht keine Mail raus. …".
+  The time is the clock time when it falls on today, else "Mo 11. Januar, 22:30". Below the warning is the empty two-column grid (two columns from 1024 px).
+
+### Call list core (AD-21)
+
+`deriveCallList(feed, now)` in `src/lib/domain/call-list.ts` derives the call list from `CallFeedEntry` (the send-problem entry plus `lastTold` and `current` notices). It is never stored.
+
+- It drops bookings that have started.
+- Trigger (a): only while the latest keybox row is in the keybox phase (`isKeyboxPhase`: accepted, refused, expired), `classifyHeatChange(lastTold, current)`. `urgent` is `call_required` and `good_news` is `optional`.
+- Trigger (b): `sendProblems(…).callRequired` is `call_required`, with its reasons.
+- Each booking gets one entry, and `call_required` wins. The list is ordered `call_required` first, then by start.
+- `getCallFeed(now)` (`src/lib/server/db/queries/admin.ts`) reads each day once and selects no contact data. Story 3.6 displays the list.
+
+### Drafted copy for operator review (Story 3.1)
+
+The nav labels, the plural badge texts, "Das Passwort stimmt nicht.", "Zu viele Versuche. …", "Bitte melde dich wieder an." and "Das hat nicht geklappt. Nichts wurde geändert. …" come from EXPERIENCE.md, DE and EN. The DE stale warning is the epics' draft. Everything else is a draft:
+
+| Key | DE | EN |
+| --- | --- | --- |
+| `admin_login_title` (`h1`, `<title>`) | Anmelden | Sign in |
+| `admin_sign_in` (button) | Anmelden | Sign in |
+| `admin_password_label` | Passwort | Password |
+| `admin_home_title` (`h1`, `<title>`) | Übersicht | Overview |
+| `admin_nav_name` (nav `aria-label`) | Admin | Admin |
+| `admin_badge_calls` (singular) | 1 Anruf offen | 1 call open |
+| `admin_badge_replies` (singular) | 1 Antwort offen | 1 reply open |
+| `admin_worker_not_running` (no heartbeat yet) | Der Versand läuft nicht. | Sending isn't running. |
+| `admin_worker_stale` | Der Versand läuft seit {time} nicht. | Sending hasn't run since {time}. |
+| `admin_worker_failing` (sends failing for 15 min) | Seit {time} geht keine Mail raus. Der Versand versucht es weiter. | No email has gone out since {time}. Sending keeps trying. |
+| `admin_password_too_short` (for Story 3.7) | Das Passwort braucht mindestens 12 Zeichen. | The password needs at least 12 characters. |
+| `admin_password_too_long` (for Story 3.7) | Das Passwort ist zu lang. | That password is too long. |
 
 ## Scaffold decisions
 

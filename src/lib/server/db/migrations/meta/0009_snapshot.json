@@ -1,0 +1,697 @@
+{
+  "version": "6",
+  "dialect": "sqlite",
+  "id": "2a26f259-c63e-4c0c-9824-a60fb98cbdf0",
+  "prevId": "cb243c6a-aa40-4729-b33c-a5457e97cfef",
+  "tables": {
+    "admin_session": {
+      "name": "admin_session",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "expires_at": {
+          "name": "expires_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "admin_session_instants": {
+          "name": "admin_session_instants",
+          "value": "\"admin_session\".\"created_at\" GLOB '[0-9][0-9][0-9][0-9]-[01][0-9]-[0-3][0-9]T[0-2][0-9]:[0-5][0-9]:[0-5][0-9]Z' AND \"admin_session\".\"expires_at\" GLOB '[0-9][0-9][0-9][0-9]-[01][0-9]-[0-3][0-9]T[0-2][0-9]:[0-5][0-9]:[0-5][0-9]Z'"
+        }
+      }
+    },
+    "block": {
+      "name": "block",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "integer",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "start_at": {
+          "name": "start_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "end_at": {
+          "name": "end_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "reason": {
+          "name": "reason",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "block_start_at": {
+          "name": "block_start_at",
+          "columns": [
+            "start_at"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "block_reason": {
+          "name": "block_reason",
+          "value": "\"block\".\"reason\" IN ('cleaning', 'maintenance', 'private_use')"
+        },
+        "block_instants": {
+          "name": "block_instants",
+          "value": "\"block\".\"start_at\" GLOB '[0-9][0-9][0-9][0-9]-[01][0-9]-[0-3][0-9]T[0-2][0-9]:[0-5][0-9]:[0-5][0-9]Z' AND \"block\".\"end_at\" GLOB '[0-9][0-9][0-9][0-9]-[01][0-9]-[0-3][0-9]T[0-2][0-9]:[0-5][0-9]:[0-5][0-9]Z'"
+        },
+        "block_range": {
+          "name": "block_range",
+          "value": "\"block\".\"start_at\" < \"block\".\"end_at\""
+        }
+      }
+    },
+    "booking": {
+      "name": "booking",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "integer",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "start_at": {
+          "name": "start_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "duration_min": {
+          "name": "duration_min",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "changeover_min": {
+          "name": "changeover_min",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "season_id": {
+          "name": "season_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "deleted_at": {
+          "name": "deleted_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "party_size": {
+          "name": "party_size",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "locale": {
+          "name": "locale",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "name": {
+          "name": "name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "email": {
+          "name": "email",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "mobile": {
+          "name": "mobile",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "public_id": {
+          "name": "public_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "submit_token": {
+          "name": "submit_token",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "notice_at_booking": {
+          "name": "notice_at_booking",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "last_told_notice": {
+          "name": "last_told_notice",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "reply_done_at": {
+          "name": "reply_done_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "booking_start_at": {
+          "name": "booking_start_at",
+          "columns": [
+            "start_at"
+          ],
+          "isUnique": false
+        },
+        "booking_public_id": {
+          "name": "booking_public_id",
+          "columns": [
+            "public_id"
+          ],
+          "isUnique": true
+        },
+        "booking_submit_token": {
+          "name": "booking_submit_token",
+          "columns": [
+            "submit_token"
+          ],
+          "isUnique": true
+        }
+      },
+      "foreignKeys": {
+        "booking_season_id_season_id_fk": {
+          "name": "booking_season_id_season_id_fk",
+          "tableFrom": "booking",
+          "tableTo": "season",
+          "columnsFrom": [
+            "season_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "booking_duration": {
+          "name": "booking_duration",
+          "value": "\"booking\".\"duration_min\" IN (60, 90, 120, 150, 180)"
+        },
+        "booking_changeover": {
+          "name": "booking_changeover",
+          "value": "\"booking\".\"changeover_min\" BETWEEN 0 AND 60"
+        },
+        "booking_party_size": {
+          "name": "booking_party_size",
+          "value": "\"booking\".\"party_size\" BETWEEN 1 AND 6"
+        },
+        "booking_locale": {
+          "name": "booking_locale",
+          "value": "\"booking\".\"locale\" IN ('de', 'en')"
+        },
+        "booking_instants": {
+          "name": "booking_instants",
+          "value": "\"booking\".\"start_at\" GLOB '[0-9][0-9][0-9][0-9]-[01][0-9]-[0-3][0-9]T[0-2][0-9]:[0-5][0-9]:[0-5][0-9]Z' AND \"booking\".\"created_at\" GLOB '[0-9][0-9][0-9][0-9]-[01][0-9]-[0-3][0-9]T[0-2][0-9]:[0-5][0-9]:[0-5][0-9]Z' AND (\"booking\".\"deleted_at\" IS NULL OR \"booking\".\"deleted_at\" GLOB '[0-9][0-9][0-9][0-9]-[01][0-9]-[0-3][0-9]T[0-2][0-9]:[0-5][0-9]:[0-5][0-9]Z')"
+        }
+      }
+    },
+    "outbox": {
+      "name": "outbox",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "integer",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "booking_id": {
+          "name": "booking_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "kind": {
+          "name": "kind",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "state": {
+          "name": "state",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "due_at": {
+          "name": "due_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "claimed_at": {
+          "name": "claimed_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "attempts": {
+          "name": "attempts",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 0
+        },
+        "snapshot_notice": {
+          "name": "snapshot_notice",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "snapshot_keybox_code": {
+          "name": "snapshot_keybox_code",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "snapshot_locale": {
+          "name": "snapshot_locale",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "snapshot_urgent": {
+          "name": "snapshot_urgent",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "snapshot_last_told": {
+          "name": "snapshot_last_told",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "reason": {
+          "name": "reason",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "outcome_at": {
+          "name": "outcome_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "resolved_at": {
+          "name": "resolved_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "outbox_state_due_at": {
+          "name": "outbox_state_due_at",
+          "columns": [
+            "state",
+            "due_at"
+          ],
+          "isUnique": false
+        },
+        "outbox_booking_id": {
+          "name": "outbox_booking_id",
+          "columns": [
+            "booking_id"
+          ],
+          "isUnique": false
+        },
+        "outbox_one_confirmation": {
+          "name": "outbox_one_confirmation",
+          "columns": [
+            "booking_id"
+          ],
+          "isUnique": true,
+          "where": "\"outbox\".\"kind\" = 'confirmation'"
+        },
+        "outbox_one_keybox": {
+          "name": "outbox_one_keybox",
+          "columns": [
+            "booking_id"
+          ],
+          "isUnique": true,
+          "where": "\"outbox\".\"kind\" = 'keybox'"
+        },
+        "outbox_one_open_heat_change": {
+          "name": "outbox_one_open_heat_change",
+          "columns": [
+            "booking_id"
+          ],
+          "isUnique": true,
+          "where": "\"outbox\".\"kind\" = 'heat_change' AND \"outbox\".\"state\" IN ('pending', 'transient_failure')"
+        }
+      },
+      "foreignKeys": {
+        "outbox_booking_id_booking_id_fk": {
+          "name": "outbox_booking_id_booking_id_fk",
+          "tableFrom": "outbox",
+          "tableTo": "booking",
+          "columnsFrom": [
+            "booking_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "outbox_kind": {
+          "name": "outbox_kind",
+          "value": "\"outbox\".\"kind\" IN ('confirmation', 'keybox', 'heat_change')"
+        },
+        "outbox_state": {
+          "name": "outbox_state",
+          "value": "\"outbox\".\"state\" IN ('pending', 'in_flight', 'accepted', 'refused', 'transient_failure', 'expired', 'cancelled')"
+        },
+        "outbox_attempts": {
+          "name": "outbox_attempts",
+          "value": "\"outbox\".\"attempts\" >= 0"
+        },
+        "outbox_snapshot_locale": {
+          "name": "outbox_snapshot_locale",
+          "value": "\"outbox\".\"snapshot_locale\" IS NULL OR \"outbox\".\"snapshot_locale\" IN ('de', 'en')"
+        },
+        "outbox_snapshot_urgent": {
+          "name": "outbox_snapshot_urgent",
+          "value": "\"outbox\".\"snapshot_urgent\" IS NULL OR \"outbox\".\"snapshot_urgent\" IN (0, 1)"
+        },
+        "outbox_in_flight_claimed": {
+          "name": "outbox_in_flight_claimed",
+          "value": "\"outbox\".\"state\" <> 'in_flight' OR \"outbox\".\"claimed_at\" IS NOT NULL"
+        },
+        "outbox_instants": {
+          "name": "outbox_instants",
+          "value": "\"outbox\".\"due_at\" GLOB '[0-9][0-9][0-9][0-9]-[01][0-9]-[0-3][0-9]T[0-2][0-9]:[0-5][0-9]:[0-5][0-9]Z' AND (\"outbox\".\"claimed_at\" IS NULL OR \"outbox\".\"claimed_at\" GLOB '[0-9][0-9][0-9][0-9]-[01][0-9]-[0-3][0-9]T[0-2][0-9]:[0-5][0-9]:[0-5][0-9]Z') AND (\"outbox\".\"outcome_at\" IS NULL OR \"outbox\".\"outcome_at\" GLOB '[0-9][0-9][0-9][0-9]-[01][0-9]-[0-3][0-9]T[0-2][0-9]:[0-5][0-9]:[0-5][0-9]Z')"
+        }
+      }
+    },
+    "season": {
+      "name": "season",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "integer",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "start_date": {
+          "name": "start_date",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "end_date": {
+          "name": "end_date",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "season_date_format": {
+          "name": "season_date_format",
+          "value": "\"season\".\"start_date\" GLOB '[0-9][0-9][0-9][0-9]-[01][0-9]-[0-3][0-9]' AND \"season\".\"end_date\" GLOB '[0-9][0-9][0-9][0-9]-[01][0-9]-[0-3][0-9]'"
+        },
+        "season_dates": {
+          "name": "season_dates",
+          "value": "\"season\".\"start_date\" <= \"season\".\"end_date\""
+        }
+      }
+    },
+    "setting": {
+      "name": "setting",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "integer",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "changeover_min": {
+          "name": "changeover_min",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "preheat_min_min": {
+          "name": "preheat_min_min",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "preheat_max_min": {
+          "name": "preheat_max_min",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "horizon_days": {
+          "name": "horizon_days",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "open_minute": {
+          "name": "open_minute",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "close_minute": {
+          "name": "close_minute",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "admin_contact": {
+          "name": "admin_contact",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "keybox_code": {
+          "name": "keybox_code",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "keybox_instructions_de": {
+          "name": "keybox_instructions_de",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "keybox_instructions_en": {
+          "name": "keybox_instructions_en",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "admin_password_hash": {
+          "name": "admin_password_hash",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "setting_single_row": {
+          "name": "setting_single_row",
+          "value": "\"setting\".\"id\" = 1"
+        },
+        "setting_changeover": {
+          "name": "setting_changeover",
+          "value": "\"setting\".\"changeover_min\" BETWEEN 0 AND 60"
+        },
+        "setting_preheat": {
+          "name": "setting_preheat",
+          "value": "\"setting\".\"preheat_min_min\" BETWEEN 15 AND 90 AND \"setting\".\"preheat_max_min\" BETWEEN 15 AND 90 AND \"setting\".\"preheat_min_min\" <= \"setting\".\"preheat_max_min\""
+        },
+        "setting_horizon": {
+          "name": "setting_horizon",
+          "value": "\"setting\".\"horizon_days\" BETWEEN 1 AND 60"
+        },
+        "setting_hours": {
+          "name": "setting_hours",
+          "value": "\"setting\".\"open_minute\" >= 0 AND \"setting\".\"open_minute\" < \"setting\".\"close_minute\" AND \"setting\".\"close_minute\" <= 1440"
+        }
+      }
+    },
+    "worker_heartbeat": {
+      "name": "worker_heartbeat",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "integer",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "beat_at": {
+          "name": "beat_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "failing_since": {
+          "name": "failing_since",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "worker_heartbeat_single_row": {
+          "name": "worker_heartbeat_single_row",
+          "value": "\"worker_heartbeat\".\"id\" = 1"
+        },
+        "worker_heartbeat_instant": {
+          "name": "worker_heartbeat_instant",
+          "value": "\"worker_heartbeat\".\"beat_at\" GLOB '[0-9][0-9][0-9][0-9]-[01][0-9]-[0-3][0-9]T[0-2][0-9]:[0-5][0-9]:[0-5][0-9]Z'"
+        },
+        "worker_heartbeat_failing_since": {
+          "name": "worker_heartbeat_failing_since",
+          "value": "\"worker_heartbeat\".\"failing_since\" IS NULL OR \"worker_heartbeat\".\"failing_since\" GLOB '[0-9][0-9][0-9][0-9]-[01][0-9]-[0-3][0-9]T[0-2][0-9]:[0-5][0-9]:[0-5][0-9]Z'"
+        }
+      }
+    }
+  },
+  "views": {},
+  "enums": {},
+  "_meta": {
+    "schemas": {},
+    "tables": {},
+    "columns": {}
+  },
+  "internal": {
+    "indexes": {}
+  }
+}

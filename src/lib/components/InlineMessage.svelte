@@ -1,6 +1,7 @@
 <!--
 	Inline message (DESIGN.md inline-message): a bordered note with an icon, at the top of the content
 	it refers to. Errors use `role="alert"` and the error colour; info uses `role="status"` and text.
+	`id`: lets a field point at the message with aria-describedby.
 	`focus`: focusable (tabindex -1) and focused when it appears. `autofocus` does it on a plain page
 	load without JavaScript, and SvelteKit honours it after a client navigation; the mount effect
 	covers a message that appears without a navigation (an enhanced form's failure).
@@ -12,8 +13,9 @@
 	let {
 		text,
 		kind = 'error',
-		focus = false
-	}: { text: string; kind?: 'error' | 'info'; focus?: boolean } = $props();
+		focus = false,
+		id
+	}: { text: string; kind?: 'error' | 'info'; focus?: boolean; id?: string } = $props();
 
 	let element: HTMLElement | undefined = $state();
 	onMount(() => {
@@ -23,6 +25,7 @@
 
 <!-- svelte-ignore a11y_autofocus, a11y_no_noninteractive_tabindex -->
 <div
+	{id}
 	class="inline-message {kind}"
 	role={kind === 'error' ? 'alert' : 'status'}
 	tabindex={focus ? -1 : undefined}
