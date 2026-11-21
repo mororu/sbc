@@ -617,6 +617,41 @@ From EXPERIENCE.md (DE and EN): "Buchung löschen?" (DE), the what line "Anna Me
 | `impact_new_notice_hot` | Neuer Hinweis: schon heiss um {time}. | New notice: already hot at {time}. |
 | `impact_new_notice_other` (collapsed window, arrival already past: the cold notice text) | Neuer Hinweis: {notice} | New notice: {notice} |
 
+## Admin answers cancelled guests (Story 3.4)
+
+Every booking deletion leaves a reply reminder (FR-31): `deleted_at IS NOT NULL AND reply_done_at IS NULL AND email IS NOT NULL`. The admins answer the guest from their own mail program; the app never sends the reply.
+
+- **Query**: `getReplyReminders({ date? })` (`db/queries/admin.ts`) lists the open reminders oldest deletion first (`deleted_at`, then `id`) with id, name, email, locale, start and duration; `date` limits it to bookings starting that local day. It shares its predicate with `countReplyReminders` (a blank or whitespace-only email counts as none), so the home's "Antworten" count (the length of the same list) and the nav badge always agree. `adminDayAccepted` also accepts a day whose deleted booking has an open reminder, so its day view never 404s while the reminder is open.
+- **Command**: `markReplyDone({ bookingId }, { now })` (`commands/mark-reply-done.ts`), one `BEGIN IMMEDIATE`, the only writer of `reply_done_at`. Refusals, writing nothing: `not_found` (unknown id or a live booking), then `conflict` (already done, or the email was purged or is blank). Otherwise `reply_done_at = now`.
+- **View model**: `src/lib/server/reply-view.ts`. The line "Di 12. Januar, 16:00–17:00 · gelöscht" is in the admin's locale; the prepared reply is in the booking's stored locale: subject, then the body lines greeting ("Hallo Lena,", the first word of the name; "Hallo," without one), a blank line, the sentence with `formatDateShort` + the start time, a blank line, the brand. `mailtoHref(email, { subject, body })` (`src/lib/mailto.ts`) encodes both with `encodeURIComponent` and joins the body lines with CRLF. "Text kopieren" copies address, subject, a blank line and the body.
+- **Action**: `replyDone` on `/admin` and `/admin/day/{date}` (`src/lib/server/reply-action.ts`): `{ done: true }`, `fail(409, { code: 'already_done', bookingId })` for `conflict` or `not_found`, `fail(503, { code: 'failed', bookingId })` on a lock timeout, an admin 404 for a missing or malformed id. Without JavaScript the pages pass `form` down: "Schon erledigt." or "Erledigt. Antworten: {n}." in the status, or the failure line at the reminder `bookingId` names.
+- **UI** (`ReplyReminders.svelte`, `ReplyReminder.svelte`): on the home, the left column's "Antworten" with its count badge, always shown, the empty line "Keine offenen Antworten." when none are open; on the day view, the day's reminders above the bookings, only while there are any (a deletion redirects to the booking's day, so the deleted guest's reminder is right there, also after a reload). Each reminder: the name (`h3`), the muted line, the address as text inside the `mailto:` link with the mail icon, "Text kopieren" and "Erledigt" (`aria-disabled` while it runs). After "Erledigt" the page data reloads (list and badges), focus moves to the next reminder's `h3`, else the section `h2`, else (day view, none left) the page `h1`, and the polite status says "Erledigt. Antworten: {n}." (every open reminder). Already done elsewhere: the same refresh and "Schon erledigt.". Only a failed command (503, an error result or a network error) shows the inline "Das hat nicht geklappt …" at the reminder, focused; the reminder stays. A failing reload after a written result never does. A redirect (an ended session) is applied with `applyAction`. The result mapping and the focus target live in `src/lib/reply-outcome.ts`. "Text kopieren" uses `navigator.clipboard.writeText` ("Kopiert."); without a clipboard, or when it refuses, a readonly textarea with the text appears, focused and selected, with the hint.
+- **Checked by hand** (no browser test layer yet, P3): clipboard success and fallback, focus after "Erledigt", 320 px and dark mode.
+
+### Drafted copy for operator review (Story 3.4)
+
+Source per key: "EXPERIENCE" means the text is in EXPERIENCE.md (Microcopy and Voice and Tone); "drafted" means it was written for this story under the voice rules and needs a check by the operators.
+
+| Key | DE | DE source | EN | EN source |
+| --- | --- | --- | --- | --- |
+| `admin_replies_heading` | Antworten | EXPERIENCE | Replies | EXPERIENCE |
+| `admin_replies_empty` | Keine offenen Antworten. | EXPERIENCE | No replies waiting. | EXPERIENCE |
+| `admin_reply_when` | {date}, {time} · gelöscht | EXPERIENCE | {date}, {time} · deleted | EXPERIENCE |
+| `admin_reply_copy` | Text kopieren | EXPERIENCE | Copy text | EXPERIENCE |
+| `admin_reply_done` | Erledigt | EXPERIENCE | Done | EXPERIENCE |
+| `admin_reply_status_done` | Erledigt. Antworten: {count}. | EXPERIENCE | Done. Replies: {count}. | EXPERIENCE |
+| `admin_reply_already_done` | Schon erledigt. | EXPERIENCE | Already done. | EXPERIENCE |
+| `admin_reply_copied` (status after "Text kopieren") | Kopiert. | drafted | Copied. | drafted |
+| `admin_reply_copy_hint` (label of the fallback textarea) | Kopieren ging nicht. Markier den Text und kopier ihn selbst. | drafted | Copying didn't work. Select the text and copy it yourself. | drafted |
+| `admin_reply_subject` | Deine Sauna-Buchung ist gelöscht | EXPERIENCE | Your sauna booking is cancelled | EXPERIENCE |
+| `admin_reply_greeting` | Hallo {name}, | EXPERIENCE | Hello {name}, | drafted |
+| `admin_reply_greeting_no_name` (the name is blank or erased) | Hallo, | drafted | Hello, | drafted |
+| `admin_reply_body` | wir haben deine Buchung vom {date}, {time} gelöscht. Danke für die Nachricht, bis bald an der Sauna! | EXPERIENCE | we have cancelled your booking for {date}, {time}. Thanks for letting us know, see you soon at the sauna! | drafted |
+
+- **Layout of the body**: EXPERIENCE gives the reply as one run of text ("Hallo Lena, wir haben … gelöscht. Danke für die Nachricht, bis bald an der Sauna! Sauna Luegisee"). The app splits it into the greeting, a blank line, the sentence, a blank line and the brand (`brand`).
+- **"cancelled" vs "deleted"**: the EN guest subject and body say "cancelled" on purpose: the guest asked to cancel, and "deleted" reads like a system action to them. The admin's own line says "deleted" ("· gelöscht"), the word the admins use for the action.
+- **Example dates**: the two EXPERIENCE examples are different bookings. The reminder line "Di 12. Januar, 16:00–17:00 · gelöscht" is Anna's 16:00–17:00 booking from UJ-4; the reply body "Hallo Lena, … vom Di 12. Januar, 18:00 …" is Lena's 18:00 booking from Voice and Tone. Both are generated from the same booking start: for Anna the body says "vom Di 12. Januar, 16:00". The line shows the time range, the body only the start.
+
 ## Scaffold decisions
 
 1. **Instants are UTC ISO 8601 text** with seconds and `Z`, e.g. `2027-01-12T17:00:00Z`, everywhere, including the notice JSON. It is readable in the database and in logs, sorts correctly as text, and round-trips through Temporal without loss. Wall-clock dates in URLs stay `yyyy-mm-dd`, times `hhmm`.

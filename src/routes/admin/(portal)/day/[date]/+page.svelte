@@ -2,7 +2,7 @@
 	import AdminDayView from '#lib/components/AdminDayView.svelte';
 	import type { PageProps } from './$types';
 
-	let { data }: PageProps = $props();
+	let { data, form }: PageProps = $props();
 </script>
 
-<AdminDayView view={data.view} />
+<AdminDayView view={data.view} {form} />

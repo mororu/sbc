@@ -1,9 +1,17 @@
 // Story 3.1 matrix, "Health": the admin home's worker warning at Tue 12 Jan 2027, 10:00 Zurich.
 // Story 3.2 matrix, "Home" and "Flag": the next bookings (Heute/Morgen) and the home flags.
-import { describe, expect, it } from 'vitest';
-import type { AdminBooking } from '#lib/server/db/queries/index.ts';
+// Story 3.4 matrix, "Home list" and "Empty": the home's reply reminders on an in-memory database.
+// The test migrates and edits its own in-memory database.
+// eslint-disable-next-line no-restricted-imports
+import type Database from 'better-sqlite3';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+// eslint-disable-next-line no-restricted-imports
+import { createDb, openDatabase, type Db } from '#lib/server/db/index.ts';
+// eslint-disable-next-line no-restricted-imports
+import { applyMigrations, MIGRATIONS_FOLDER } from '#lib/server/db/migrate.ts';
+import { countReplyReminders, type AdminBooking } from '#lib/server/db/queries/index.ts';
 import type { AdminRowContext } from './admin-day-view.ts';
-import { buildHomeFlags, buildNextBookings, workerWarning } from './admin-view.ts';
+import { buildHomeFlags, buildNextBookings, loadAdminHome, workerWarning } from './admin-view.ts';
 
 const NOW = '2027-01-12T09:00:00Z';
 
@@ -129,5 +137,51 @@ describe('buildHomeFlags', () => {
 	it('flags nothing for a booking that has started, or when nothing applies', () => {
 		expect(buildHomeFlags([candidate(1, '2027-01-12T06:00:00Z', { refused: true })], context())).toEqual([]);
 		expect(buildHomeFlags([candidate(1, '2027-01-13T16:00:00Z')], context())).toEqual([]);
+	});
+});
+
+describe('loadAdminHome: replies (Story 3.4)', () => {
+	let sqlite: Database.Database;
+	let db: Db;
+	let n = 0;
+
+	beforeEach(() => {
+		sqlite = openDatabase(':memory:');
+		db = createDb(sqlite);
+		applyMigrations(db, MIGRATIONS_FOLDER);
+	});
+
+	afterEach(() => sqlite.close());
+
+	const insert = (name: string, locale: string, email: string | null, deletedAt: string | null, replyDoneAt: string | null = null) => {
+		const id = `HM${String(++n).padStart(20, '0')}`;
+		return Number(
+			sqlite
+				.prepare(
+					"insert into booking (start_at, duration_min, changeover_min, created_at, season_id, party_size, locale, public_id, submit_token, name, email, deleted_at, reply_done_at) values ('2027-01-12T15:00:00Z', 60, 15, '2027-01-07T10:00:00Z', 1, 2, ?, ?, ?, ?, ?, ?, ?)"
+				)
+				.run(locale, id, id, name, email, deletedAt, replyDoneAt).lastInsertRowid
+		);
+	};
+
+	it('lists Ben then Anna (oldest deletion first); the count is the nav count (Home list)', () => {
+		insert('Anna Meier', 'de', 'anna@example.ch', '2027-01-12T08:00:00Z');
+		insert('Ben Arnold', 'en', 'ben@example.ch', '2027-01-12T07:00:00Z');
+		insert('Cleo Done', 'de', 'cleo@example.ch', '2027-01-12T06:00:00Z', '2027-01-12T06:30:00Z');
+		insert('Dan Nomail', 'de', null, '2027-01-12T06:00:00Z');
+		insert('Eva Live', 'de', 'eva@example.ch', null);
+		const { replies } = loadAdminHome('de', NOW, db);
+		expect(replies.heading).toBe('Antworten');
+		expect(replies.items.map((r) => [r.name, r.when])).toEqual([
+			['Ben Arnold', 'Di 12. Januar, 16:00–17:00 · gelöscht'],
+			['Anna Meier', 'Di 12. Januar, 16:00–17:00 · gelöscht']
+		]);
+		expect(replies.count).toBe(2);
+		expect(replies.count).toBe(countReplyReminders(db));
+	});
+
+	it('shows the heading, 0 and the empty line without open reminders (Empty)', () => {
+		insert('Eva Live', 'de', 'eva@example.ch', null);
+		expect(loadAdminHome('de', NOW, db).replies).toEqual({ heading: 'Antworten', count: 0, empty: 'Keine offenen Antworten.', items: [] });
 	});
 });

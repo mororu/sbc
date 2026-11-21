@@ -1,8 +1,10 @@
 <!--
 	Admin day view (EXPERIENCE "Bookings by day"; Story 3.2): the date heading with the arrows, the
 	date strip (season days plus later booking and block days; flagged days carry a dot), a polite
-	status region and the bookings (#bookings, the skip link's target): rows below 1024 px, the admin
-	day table from 1024 px, or the empty line. Read-only.
+	status region, the open reply reminders of the day's deleted bookings (Story 3.4; only when there
+	are any, so right after a deletion the deleted guest's reminder is at the top) and the bookings
+	(#bookings, the skip link's target): rows below 1024 px, the admin day table from 1024 px, or the
+	empty line. Only the reminders write ("Erledigt").
 	Day switching mirrors the guest day view: while another admin day loads, the strip selects it at
 	once, the list is dimmed and busy, "Lädt …" appears after 1 s, and on arrival the status announces
 	"Dienstag, 12. Januar: 2 Buchungen" (or the empty line). If focus fell to body, the heading takes it.
@@ -16,11 +18,14 @@
 	import DateStrip from './DateStrip.svelte';
 	import Icon from './Icon.svelte';
 	import PageTitle from './PageTitle.svelte';
+	import ReplyReminders from './ReplyReminders.svelte';
 	import { isAdminDayPath, pendingAdminDay } from '#lib/admin-nav.ts';
 	import { shouldAnnounce } from '#lib/day-nav.ts';
+	import type { ReplyFormResult } from '#lib/reply-outcome.ts';
 	import type { AdminDayView } from '#lib/server/admin-day-view.ts';
 
-	let { view }: { view: AdminDayView } = $props();
+	/** `form`: the `replyDone` result of a native POST (no JavaScript), for the reply reminders. */
+	let { view, form = null }: { view: AdminDayView; form?: ReplyFormResult } = $props();
 
 	const SLOW_MS = 1000;
 
@@ -94,6 +99,10 @@
 
 <div class="status-slot">
 	<p class:visually-hidden={statusHidden} role="status" aria-live="polite">{status}</p>
+</div>
+
+<div class="replies">
+	<ReplyReminders replies={view.replies} variant="day" {form} />
 </div>
 
 <div id="bookings" class="bookings" class:busy tabindex="-1" aria-busy={busy}>
@@ -171,6 +180,9 @@
 		font-weight: var(--type-note-weight);
 		line-height: var(--type-note-leading);
 		color: var(--muted);
+	}
+	.replies:has(:global(section)) {
+		margin: var(--space-1) 0 var(--space-5);
 	}
 	.bookings {
 		margin: var(--space-1) 0 var(--space-6);

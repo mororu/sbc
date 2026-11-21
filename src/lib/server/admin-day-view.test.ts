@@ -9,7 +9,10 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createDb, openDatabase, type Db } from '#lib/server/db/index.ts';
 // eslint-disable-next-line no-restricted-imports
 import { applyMigrations, MIGRATIONS_FOLDER } from '#lib/server/db/migrate.ts';
-import type { AdminBooking, AdminKeyboxRow } from '#lib/server/db/queries/index.ts';
+import { getDeletionImpact, type AdminBooking, type AdminKeyboxRow } from '#lib/server/db/queries/index.ts';
+import { deleteBooking, markReplyDone } from '#lib/server/commands/index.ts';
+import { buildReplies } from './reply-view.ts';
+import { impactToken } from '#lib/domain/index.ts';
 import {
 	adminHomeDay,
 	adminStripDates,
@@ -180,7 +183,7 @@ describe('adminStripDates and adminHomeDay', () => {
 
 describe('buildAdminDayView', () => {
 	const view = (date: string, stripDates: string[], bookings: AdminBooking[] = [], flagged: string[] = []) =>
-		buildAdminDayView({ date, bookings, stripDates, flaggedDates: new Set(flagged), context: context() });
+		buildAdminDayView({ date, bookings, stripDates, flaggedDates: new Set(flagged), context: context(), replies: buildReplies([], 0, 'de') });
 
 	it('has the heading, title, rows and status', () => {
 		const v = view('2027-01-12', ['2027-01-12'], [booking(), booking({ id: 8, start: '2027-01-12T18:00:00Z' })]);
@@ -377,6 +380,39 @@ describe('loaders', () => {
 		expect(loadAdminDayView('2027-01-12', 'de', opts())?.rows.map((r) => r.id)).toEqual([live]);
 		const gone = loadAdminDayView('2027-01-13', 'de', opts());
 		expect(gone?.rows).toEqual([]);
+	});
+
+	it('After delete: the day view lists the open reply reminder of the deleted guest (Story 3.4)', () => {
+		const anna = insertBooking('2027-01-12T15:00:00Z');
+		sqlite.prepare("update booking set name = 'Anna Meier', email = 'anna@example.ch' where id = ?").run(anna);
+		const other = insertBooking('2027-01-13T15:00:00Z', '2027-01-11T08:00:00Z');
+		sqlite.prepare("update booking set email = 'tom@example.ch' where id = ?").run(other);
+		expect(loadAdminDayView('2027-01-12', 'de', opts())?.replies.items).toEqual([]);
+		const deletion = getDeletionImpact(anna, NOW, db);
+		if (!deletion) throw new Error('no impact');
+		expect(deleteBooking({ bookingId: anna, impactToken: impactToken(deletion.impact) }, opts())).toMatchObject({ ok: true });
+		const v = loadAdminDayView('2027-01-12', 'de', opts());
+		expect(v?.replies.items.map((r) => [r.id, r.name, r.when, r.email])).toEqual([
+			[anna, 'Anna Meier', 'Di 12. Januar, 16:00–17:00 · gelöscht', 'anna@example.ch']
+		]);
+		expect(v?.replies.count).toBe(2);
+		expect(v?.rows).toEqual([]);
+		expect(loadAdminDayView('2027-01-13', 'de', opts())?.replies.items.map((r) => r.id)).toEqual([other]);
+	});
+
+	it('accepts a day outside the season while its deleted booking has an open reminder (Story 3.4)', () => {
+		// 3 May 2027: after the season, not in the strip, its only booking deleted.
+		const gone = insertBooking('2027-05-03T15:00:00Z', '2027-01-12T08:00:00Z');
+		sqlite.prepare("update booking set email = 'anna@example.ch' where id = ?").run(gone);
+		expect(loadAdminDayView('2027-05-03', 'de', opts())?.replies.items.map((r) => r.id)).toEqual([gone]);
+		expect(markReplyDone({ bookingId: gone }, opts())).toEqual({ ok: true });
+		expect(loadAdminDayView('2027-05-03', 'de', opts())).toBeNull();
+	});
+
+	it('refuses such a day when the reminder has no email to answer', () => {
+		const gone = insertBooking('2027-05-03T15:00:00Z', '2027-01-12T08:00:00Z');
+		sqlite.prepare("update booking set email = '  ' where id = ?").run(gone);
+		expect(loadAdminDayView('2027-05-03', 'de', opts())).toBeNull();
 	});
 
 	it('loads a live booking detail; unknown and malformed ids are null', () => {

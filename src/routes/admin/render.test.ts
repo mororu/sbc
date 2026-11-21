@@ -5,6 +5,8 @@
 // with aria-current, rows and the table, empty line), the booking detail, the home's next bookings
 // and flags, and the admin 404. Story 3.3: the delete button and the impact dialog on the detail
 // (title, what line, mini row, buttons, ids), the gone view and the started detail without a button.
+// Story 3.4: the home's "Antworten" (list, count badge, empty line) and the day view's reminders at
+// the top (mailto href, ids, headings, buttons).
 import { createRawSnippet } from 'svelte';
 import { render } from 'svelte/server';
 import { readdirSync, readFileSync, statSync } from 'node:fs';
@@ -23,7 +25,8 @@ import {
 	type AdminRowContext
 } from '#lib/server/admin-day-view.ts';
 import { buildHomeFlags, buildNextBookings } from '#lib/server/admin-view.ts';
-import type { AdminBooking, DeletionImpact } from '#lib/server/db/queries/index.ts';
+import type { AdminBooking, DeletionImpact, ReplyReminderRow } from '#lib/server/db/queries/index.ts';
+import { buildReplies } from '#lib/server/reply-view.ts';
 
 const state = vi.hoisted(() => ({
 	locale: 'de' as 'de' | 'en',
@@ -185,7 +188,18 @@ const booking = (over: Partial<AdminBooking> = {}): AdminBooking => ({
 	refusals: [],
 	...over
 });
-const emptyHome = { warning: null, next: buildNextBookings([], context), flags: [] };
+const emptyHome = { warning: null, next: buildNextBookings([], context), flags: [], replies: buildReplies([], 0, 'de') };
+const reminder = (over: Partial<ReplyReminderRow> = {}): ReplyReminderRow => ({
+	id: 21,
+	name: 'Anna Meier',
+	email: 'anna+sauna@example.ch',
+	locale: 'de',
+	start: '2027-01-12T15:00:00Z',
+	durationMin: 60,
+	...over
+});
+/** The text of an HTML fragment, tags dropped and whitespace collapsed. */
+const textOf = (html: string) => html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
 
 describe('admin home', () => {
 	it('has the h1, its title, the warning and the grid', () => {
@@ -204,7 +218,7 @@ describe('admin home', () => {
 
 	it('lists the next bookings under two h3 labels, the empty line, and the flags with links', () => {
 		const home = {
-			warning: null,
+			...emptyHome,
 			next: buildNextBookings([booking()], context),
 			flags: buildHomeFlags([{ id: 9, start: '2027-01-12T20:30:00Z', durationMin: 90, name: 'Mia Keller', refused: false }], context)
 		};
@@ -219,6 +233,66 @@ describe('admin home', () => {
 	});
 });
 
+describe('admin home: Antworten (Story 3.4)', () => {
+	const home = (replies = buildReplies([reminder({ id: 22, name: 'Ben Arnold', locale: 'en' }), reminder()], 2, 'de')) =>
+		render(HomePage, { props: { data: { home: { ...emptyHome, replies } } } as never }).body;
+
+	it('lists the reminders in the left column under the h2 with the count badge', () => {
+		const body = home();
+		const left = body.slice(body.indexOf('class="column'), body.indexOf('next-heading'));
+		expect(left).toMatch(/<section class="replies[^"]*" aria-labelledby="replies-heading">/);
+		const h2 = left.match(/<h2 id="replies-heading"[^>]*>(.*?)<\/h2>/s);
+		expect(h2?.[0]).toContain('tabindex="-1"');
+		expect(textOf(h2?.[1] ?? '')).toBe('Antworten 2');
+		expect(h2?.[1]).toMatch(/<span class="count[^"]*">2<\/span>/);
+		expect([...left.matchAll(/<h3 id="(reply-\d+)"[^>]*tabindex="-1"[^>]*>(.*?)<\/h3>/g)].map((h) => [h[1], h[2]])).toEqual([
+			['reply-22', 'Ben Arnold'],
+			['reply-21', 'Anna Meier']
+		]);
+		expect(left).toContain('Di 12. Januar, 16:00–17:00 · gelöscht');
+		expect(left).not.toContain('Keine offenen Antworten.');
+	});
+
+	it('links the address as text with the prefilled mailto and has both buttons and the form', () => {
+		const body = home(buildReplies([reminder()], 1, 'de'));
+		const link = body.match(/<a class="mail[^"]*" href="([^"]*)"[^>]*>(.*?)<\/a>/s);
+		expect(link?.[1]).toBe(
+			'mailto:anna%2Bsauna@example.ch?subject=Deine%20Sauna-Buchung%20ist%20gel%C3%B6scht&amp;body=Hallo%20Anna%2C%0D%0A%0D%0Awir%20haben%20deine%20Buchung%20vom%20Di%2012.%20Januar%2C%2016%3A00%20gel%C3%B6scht.%20Danke%20f%C3%BCr%20die%20Nachricht%2C%20bis%20bald%20an%20der%20Sauna!%0D%0A%0D%0ASauna%20Luegisee'
+		);
+		expect(link?.[2]).toContain('aria-hidden="true"');
+		expect(textOf(link?.[2] ?? '')).toBe('anna+sauna@example.ch');
+		expect(body).toMatch(/<button class="secondary[^"]*" type="button"[^>]*>Text kopieren<\/button>/);
+		expect(body).toMatch(/<form method="POST" action="\?\/replyDone"[^>]*>.*<input type="hidden" name="bookingId" value="21"[^>]*>.*<button class="secondary[^"]*" type="submit"[^>]*>Erledigt<\/button>/s);
+		expect(body).not.toMatch(/aria-disabled="true"/);
+		expect(body).toMatch(/role="status" aria-live="polite"/);
+	});
+
+	it('without JavaScript shows the failure at the reminder the form names, or the status line', () => {
+		const render2 = (form: unknown) =>
+			render(HomePage, {
+				props: { data: { home: { ...emptyHome, replies: buildReplies([reminder({ id: 22 }), reminder()], 2, 'de') } }, form } as never
+			}).body;
+		const failed = render2({ code: 'failed', bookingId: 21 });
+		const alerts = [...failed.matchAll(/role="alert"/g)];
+		expect(alerts).toHaveLength(1);
+		expect(failed.slice(failed.indexOf('id="reply-21"'))).toMatch(/role="alert"[^>]*autofocus[^>]*>.*Das hat nicht geklappt/s);
+		expect(render2({ code: 'already_done', bookingId: 21 })).toMatch(/role="status" aria-live="polite"[^>]*>Schon erledigt\.<\/p>/);
+		expect(render2({ done: true })).toMatch(/role="status" aria-live="polite"[^>]*>Erledigt\. Antworten: 2\.<\/p>/);
+		expect(render2(null)).toMatch(/role="status" aria-live="polite"[^>]*><\/p>/);
+	});
+
+	it('makes the visually hidden home h1 focusable for the focus fallback', () => {
+		expect(home()).toMatch(/<h1 class="visually-hidden[^"]*" tabindex="-1">Übersicht<\/h1>/);
+	});
+
+	it('keeps the section with "0" and the empty line when nothing is open (Empty)', () => {
+		const body = home(buildReplies([], 0, 'de'));
+		expect(textOf(body.match(/<h2 id="replies-heading"[^>]*>(.*?)<\/h2>/s)?.[1] ?? '')).toBe('Antworten 0');
+		expect(body).toContain('Keine offenen Antworten.');
+		expect(body).not.toContain('<h3 id="reply-');
+	});
+});
+
 describe('admin day view', () => {
 	const view = (bookings: AdminBooking[]) =>
 		buildAdminDayView({
@@ -226,7 +300,8 @@ describe('admin day view', () => {
 			bookings,
 			stripDates: ['2027-01-11', '2027-01-12', '2027-04-05'],
 			flaggedDates: new Set(['2027-04-05']),
-			context
+			context,
+			replies: buildReplies([], 0, 'de')
 		});
 	const page = (bookings: AdminBooking[] = [booking()]) => render(DayPage, { props: { data: { view: view(bookings) } } as never });
 
@@ -266,6 +341,23 @@ describe('admin day view', () => {
 		expect(body).not.toContain('<table');
 	});
 
+	it('puts the reply reminders of the day above the bookings, without a count badge (After delete)', () => {
+		const v = { ...view([booking()]), replies: buildReplies([reminder()], 3, 'de') };
+		const { body } = render(DayPage, { props: { data: { view: v } } as never });
+		const section = body.indexOf('aria-labelledby="replies-heading"');
+		expect(section).toBeGreaterThan(-1);
+		expect(section).toBeLessThan(body.indexOf('id="bookings"'));
+		expect(textOf(body.match(/<h2 id="replies-heading"[^>]*>(.*?)<\/h2>/s)?.[1] ?? '')).toBe('Antworten');
+		expect(body).toMatch(/<h3 id="reply-21"[^>]*>Anna Meier<\/h3>/);
+		expect(body.match(/<h1[\s>]/g)).toHaveLength(1);
+	});
+
+	it('has no reply section on a day without open reminders', () => {
+		const { body } = page();
+		expect(body).not.toContain('replies-heading');
+		expect(body).not.toContain('Keine offenen Antworten.');
+	});
+
 	it('makes the skip link "Zu den Buchungen" the first focusable element of the admin shell', () => {
 		state.page.data = { view: { kind: 'admin-day' } };
 		state.page.url = new URL('http://localhost/admin/day/2027-01-12');
@@ -296,7 +388,8 @@ describe('admin day view', () => {
 				bookings: [booking({ start: '2027-01-13T16:15:00Z', current: { heat: 'hot', earliest: null, latest: null } })],
 				stripDates: ['2027-01-13'],
 				flaggedDates: new Set(),
-				context: { ...context, locale: 'en' }
+				context: { ...context, locale: 'en' },
+				replies: buildReplies([], 0, 'en')
 			});
 			const { head, body } = render(DayPage, { props: { data: { view: v } } as never });
 			expect(head).toContain('<title>Wed, 13 January · Bookings · Sauna Luegisee</title>');

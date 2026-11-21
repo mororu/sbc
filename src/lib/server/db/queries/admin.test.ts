@@ -14,7 +14,8 @@ import {
 	getAdminPasswordHash,
 	getAdminStripExtraDates,
 	getCallFeed,
-	getFutureFlagCandidates
+	getFutureFlagCandidates,
+	getReplyReminders
 } from './admin.ts';
 
 /** Tue 12 Jan 2027, 10:00 Zurich. */
@@ -80,6 +81,42 @@ describe('countReplyReminders', () => {
 
 	it('is 0 without reminders', () => {
 		expect(countReplyReminders(db)).toBe(0);
+	});
+});
+
+describe('getReplyReminders (Story 3.4)', () => {
+	const named = (id: number, name: string, locale = 'de') =>
+		sqlite.prepare('update booking set name = ?, locale = ? where id = ?').run(name, locale, id);
+
+	it('lists the open reminders by deletion time, with the same predicate as the count', () => {
+		const anna = insertBooking({ deletedAt: '2027-01-12T08:00:00Z', start: '2027-01-12T15:00:00Z', durationMin: 60 });
+		named(anna, 'Anna Meier');
+		const ben = insertBooking({ deletedAt: '2027-01-12T07:00:00Z', start: '2027-01-13T17:00:00Z' });
+		named(ben, 'Ben Smith', 'en');
+		insertBooking({ deletedAt: '2027-01-12T06:00:00Z', replyDoneAt: '2027-01-12T06:30:00Z' }); // Cleo, done
+		insertBooking({ deletedAt: '2027-01-12T06:00:00Z', email: null }); // Dan, no email
+		insertBooking(); // Eva, live
+		const list = getReplyReminders({}, db);
+		expect(list).toEqual([
+			{ id: ben, name: 'Ben Smith', email: 'lena@example.ch', locale: 'en', start: '2027-01-13T17:00:00Z', durationMin: 90 },
+			{ id: anna, name: 'Anna Meier', email: 'lena@example.ch', locale: 'de', start: '2027-01-12T15:00:00Z', durationMin: 60 }
+		]);
+		expect(list).toHaveLength(countReplyReminders(db));
+	});
+
+	it('breaks a deletion-time tie by id', () => {
+		const a = insertBooking({ deletedAt: '2027-01-12T08:00:00Z' });
+		const b = insertBooking({ deletedAt: '2027-01-12T08:00:00Z' });
+		expect(getReplyReminders({}, db).map((r) => r.id)).toEqual([a, b]);
+	});
+
+	it('limits to bookings starting on the given local day', () => {
+		// 00:30 Zurich on 13 Jan is 23:30Z on 12 Jan: it belongs to the 13th.
+		const late = insertBooking({ deletedAt: '2027-01-12T08:00:00Z', start: '2027-01-12T23:30:00Z' });
+		const day = insertBooking({ deletedAt: '2027-01-12T08:00:00Z', start: '2027-01-12T17:00:00Z' });
+		expect(getReplyReminders({ date: '2027-01-12' }, db).map((r) => r.id)).toEqual([day]);
+		expect(getReplyReminders({ date: '2027-01-13' }, db).map((r) => r.id)).toEqual([late]);
+		expect(getReplyReminders({ date: '2027-01-14' }, db)).toEqual([]);
 	});
 });
 
@@ -245,13 +282,17 @@ describe('adminDayAccepted', () => {
 		expect(adminDayAccepted('2027-03-31', db)).toBe(true);
 	});
 
-	it('accepts a day outside the seasons with a live booking or a block, not one with only a deleted booking', () => {
+	it('accepts a day outside the seasons with a live booking, a block or an open reply reminder, not one with only a deleted booking', () => {
 		insertBlock('2027-04-05T07:00:00Z', '2027-04-05T09:00:00Z');
 		insertBooking({ start: '2027-04-07T16:00:00Z' });
-		insertBooking({ start: '2027-04-06T16:00:00Z', deletedAt: '2027-01-10T08:00:00Z' });
+		insertBooking({ start: '2027-04-06T16:00:00Z', deletedAt: '2027-01-10T08:00:00Z', replyDoneAt: '2027-01-10T09:00:00Z' });
+		insertBooking({ start: '2027-04-08T16:00:00Z', deletedAt: '2027-01-10T08:00:00Z', email: null });
+		insertBooking({ start: '2027-04-09T16:00:00Z', deletedAt: '2027-01-10T08:00:00Z' });
 		expect(adminDayAccepted('2027-04-05', db)).toBe(true);
 		expect(adminDayAccepted('2027-04-07', db)).toBe(true);
 		expect(adminDayAccepted('2027-04-06', db)).toBe(false);
+		expect(adminDayAccepted('2027-04-08', db)).toBe(false);
+		expect(adminDayAccepted('2027-04-09', db)).toBe(true);
 		expect(adminDayAccepted('2027-05-01', db)).toBe(false);
 	});
 });

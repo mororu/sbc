@@ -1,7 +1,8 @@
 // The admin routes on the server (Story 3.1 matrix, "Sign in", "Bad target", "Wrong", "Sign out",
 // and the nav counts; Story 3.2 matrix, "Default", "Accept", "Detail" and "Home"; Story 3.3, the
-// delete action: success, stale, past, gone and a lock timeout): an in-memory database, DEV_NOW at
-// Tue 12 Jan 2027, 10:00 Zurich.
+// delete action: success, stale, past, gone and a lock timeout; Story 3.4, the replyDone action on
+// the home and the day view: done, already done, a lock timeout, and the replies on both pages): an
+// in-memory database, DEV_NOW at Tue 12 Jan 2027, 10:00 Zurich.
 import { isActionFailure, isHttpError, isRedirect } from '@sveltejs/kit';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 // The test migrates and edits its own in-memory database; routes never touch the db layer.
@@ -14,9 +15,9 @@ import { hashPassword } from '#lib/server/password.ts';
 import { actions, load as loadLogin } from './login/+page.server.ts';
 import { POST as logout } from './logout/+server.ts';
 import { load as loadShell } from './(portal)/+layout.server.ts';
-import { load as loadHome } from './(portal)/+page.server.ts';
+import { actions as homeActions, load as loadHome } from './(portal)/+page.server.ts';
 import { load as loadDefaultDay } from './(portal)/day/+page.server.ts';
-import { load as loadDay } from './(portal)/day/[date]/+page.server.ts';
+import { actions as dayActions, load as loadDay } from './(portal)/day/[date]/+page.server.ts';
 import { actions as bookingActions, load as loadBooking } from './(portal)/booking/[id]/+page.server.ts';
 
 const clock = vi.hoisted(() => ({ now: '2027-01-12T09:00:00Z', locale: 'de' as 'de' | 'en', busy: false }));
@@ -36,6 +37,10 @@ vi.mock('#lib/server/commands/index.ts', async (importOriginal) => {
 		deleteBooking: (...args: Parameters<typeof actual.deleteBooking>) => {
 			if (clock.busy) throw busyError();
 			return actual.deleteBooking(...args);
+		},
+		markReplyDone: (...args: Parameters<typeof actual.markReplyDone>) => {
+			if (clock.busy) throw busyError();
+			return actual.markReplyDone(...args);
 		}
 	};
 });
@@ -374,5 +379,59 @@ describe('admin day and booking routes', () => {
 			['outside', '1 Buchung liegt ausserhalb der neuen Zeiten. Sie bleibt gültig.', 1],
 			['refused', '2 Buchungen haben eine abgelehnte Mail.', 2]
 		]);
+	});
+
+	describe('replyDone action (Story 3.4)', () => {
+		const deleted = (start: string, over: { email?: string | null; replyDoneAt?: string } = {}) => {
+			const id = insertBooking(start, { deletedAt: '2027-01-12T08:00:00Z' });
+			sqlite()
+				.prepare('update booking set email = ?, reply_done_at = ? where id = ?')
+				.run(over.email === undefined ? 'tom@example.ch' : over.email, over.replyDoneAt ?? null, id);
+			return id;
+		};
+		const post = (page: 'home' | 'day', bookingId?: string) => {
+			const body = new URLSearchParams(bookingId === undefined ? {} : { bookingId });
+			const path = page === 'home' ? '/admin' : '/admin/day/2027-01-12';
+			const request = new Request(`http://localhost${path}?/replyDone`, { method: 'POST', body });
+			const action = (page === 'home' ? homeActions : dayActions).replyDone as (e: unknown) => unknown;
+			return run(() => action({ params: { date: '2027-01-12' }, request }));
+		};
+		const doneAt = (id: number) =>
+			(sqlite().prepare('select reply_done_at as r from booking where id = ?').get(id) as { r: string | null }).r;
+		const counts = async () =>
+			((await run(() => (loadShell as (e: unknown) => unknown)({ locals: { adminSession: { id: 'x', expiresAt: '2027-02-11T09:00:00Z' } }, url: new URL('http://localhost/admin'), depends: () => {} }))) as { data: { counts: { replies: number } } }).data.counts.replies;
+
+		it.each(['home', 'day'] as const)('marks it done from the %s page: gone from home, day and badge', async (page) => {
+			const anna = deleted('2027-01-12T15:00:00Z');
+			const { data } = await home();
+			expect((data.home as unknown as { replies: { count: number; items: { id: number }[] } }).replies).toMatchObject({ count: 1, items: [{ id: anna }] });
+			expect(await day('2027-01-12')).toMatchObject({ data: { view: { replies: { items: [{ id: anna }] } } } });
+			expect(await counts()).toBe(1);
+			expect(await post(page, String(anna))).toEqual({ data: { done: true } });
+			expect(doneAt(anna)).toBe('2027-01-12T09:00:00Z');
+			expect(((await home()).data.home as unknown as { replies: { count: number; items: unknown[] } }).replies).toMatchObject({ count: 0, items: [] });
+			expect(await day('2027-01-12')).toMatchObject({ data: { view: { replies: { items: [] } } } });
+			expect(await counts()).toBe(0);
+		});
+
+		it('answers 409 already_done for one done by another admin, a purged email, a live or unknown id; 404 for a malformed one', async () => {
+			const done = deleted('2027-01-12T15:00:00Z', { replyDoneAt: '2027-01-12T08:30:00Z' });
+			const purged = deleted('2027-01-12T16:30:00Z', { email: null });
+			const live = insertBooking('2027-01-12T18:00:00Z');
+			for (const id of [done, purged, live, 9999]) {
+				expect(await post('home', String(id))).toEqual({ failure: { status: 409, data: { code: 'already_done', bookingId: id } } });
+			}
+			for (const id of ['abc', '0', '01', undefined]) expect(await post('day', id)).toEqual({ error: 404 });
+			expect(doneAt(done)).toBe('2027-01-12T08:30:00Z');
+			expect(doneAt(purged)).toBeNull();
+			expect(doneAt(live)).toBeNull();
+		});
+
+		it('answers a lock timeout with 503 failed and writes nothing', async () => {
+			const anna = deleted('2027-01-12T15:00:00Z');
+			clock.busy = true;
+			expect(await post('day', String(anna))).toEqual({ failure: { status: 503, data: { code: 'failed', bookingId: anna } } });
+			expect(doneAt(anna)).toBeNull();
+		});
 	});
 });

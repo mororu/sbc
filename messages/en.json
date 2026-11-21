@@ -370,5 +370,18 @@
 	"impact_new_notice_cold": "New notice: come between {earliest} and {latest}.",
 	"impact_new_notice_hot": "New notice: already hot at {time}.",
 	"impact_new_notice_other": "New notice: {notice}",
-	"admin_delete_what_no_name": "{date}, {time}"
+	"admin_delete_what_no_name": "{date}, {time}",
+	"admin_replies_heading": "Replies",
+	"admin_replies_empty": "No replies waiting.",
+	"admin_reply_when": "{date}, {time} · deleted",
+	"admin_reply_copy": "Copy text",
+	"admin_reply_done": "Done",
+	"admin_reply_status_done": "Done. Replies: {count}.",
+	"admin_reply_already_done": "Already done.",
+	"admin_reply_copied": "Copied.",
+	"admin_reply_copy_hint": "Copying didn't work. Select the text and copy it yourself.",
+	"admin_reply_subject": "Your sauna booking is cancelled",
+	"admin_reply_greeting": "Hello {name},",
+	"admin_reply_greeting_no_name": "Hello,",
+	"admin_reply_body": "we have cancelled your booking for {date}, {time}. Thanks for letting us know, see you soon at the sauna!"
 }

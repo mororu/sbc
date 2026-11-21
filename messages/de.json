@@ -370,5 +370,18 @@
 	"impact_new_notice_cold": "Neuer Hinweis: komm zwischen {earliest} und {latest}.",
 	"impact_new_notice_hot": "Neuer Hinweis: schon heiss um {time}.",
 	"impact_new_notice_other": "Neuer Hinweis: {notice}",
-	"admin_delete_what_no_name": "{date}, {time}"
+	"admin_delete_what_no_name": "{date}, {time}",
+	"admin_replies_heading": "Antworten",
+	"admin_replies_empty": "Keine offenen Antworten.",
+	"admin_reply_when": "{date}, {time} · gelöscht",
+	"admin_reply_copy": "Text kopieren",
+	"admin_reply_done": "Erledigt",
+	"admin_reply_status_done": "Erledigt. Antworten: {count}.",
+	"admin_reply_already_done": "Schon erledigt.",
+	"admin_reply_copied": "Kopiert.",
+	"admin_reply_copy_hint": "Kopieren ging nicht. Markier den Text und kopier ihn selbst.",
+	"admin_reply_subject": "Deine Sauna-Buchung ist gelöscht",
+	"admin_reply_greeting": "Hallo {name},",
+	"admin_reply_greeting_no_name": "Hallo,",
+	"admin_reply_body": "wir haben deine Buchung vom {date}, {time} gelöscht. Danke für die Nachricht, bis bald an der Sauna!"
 }

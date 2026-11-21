@@ -57,6 +57,7 @@ import {
 import { now as clockNow } from './clock.ts';
 import type { StripDay } from './day-view.ts';
 import { buildImpactRow, type ImpactRowView } from './impact-view.ts';
+import { loadReplies, type RepliesView } from './reply-view.ts';
 import { badgeText } from './notice-text.ts';
 
 type Db = Parameters<typeof getSettings>[0];
@@ -179,6 +180,8 @@ export type AdminDayView = {
 	/** `h1`: eyebrow "Heute" or "Dienstag", then "12. Januar". */
 	heading: { eyebrow: string; date: string };
 	rows: AdminRow[];
+	/** The open reply reminders of bookings on this day (Story 3.4), above the bookings; the section only when non-empty. */
+	replies: RepliesView;
 	/** The current (else the next) season's days plus every later booking or block day, in date order. */
 	strip: StripDay[];
 	/** The nearest strip day before / after the shown day, or null at the ends. */
@@ -252,6 +255,8 @@ export function buildAdminDayView(input: {
 	/** Dates with a booking that is flagged (`isFlagged`). */
 	flaggedDates: ReadonlySet<LocalDate>;
 	context: AdminRowContext;
+	/** The day's reply reminders (`loadReplies` with the date). */
+	replies: RepliesView;
 }): AdminDayView {
 	const { date, context, stripDates, flaggedDates } = input;
 	const { now, locale } = context;
@@ -281,6 +286,7 @@ export function buildAdminDayView(input: {
 			date: formatDayMonth(date, locale)
 		},
 		rows,
+		replies: input.replies,
 		strip,
 		prev: before ? adminDayHref(before) : null,
 		next: after ? adminDayHref(after) : null,
@@ -340,7 +346,8 @@ export function loadAdminDayView(
 		// The shown day is always a cell (today without a season, a past season day by URL), so one is selected.
 		stripDates: adminStripDates(context.seasons, now, [...getAdminStripExtraDates(now, db), date]),
 		flaggedDates,
-		context
+		context,
+		replies: loadReplies(locale, { date }, db)
 	});
 }
 

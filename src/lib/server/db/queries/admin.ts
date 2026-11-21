@@ -1,7 +1,7 @@
 // Admin read queries (Epic 3). Unlike the guest queries these may read contact data: the bookings
 // by day and the booking detail (Story 3.2) select the name, email, mobile and the keybox code that
 // was sent. Only admin routes call them. The call feed and the reply-reminder count carry none.
-import { and, asc, count, eq, gt, gte, inArray, isNotNull, isNull, lt, lte, or, type SQL } from 'drizzle-orm';
+import { and, asc, count, eq, gt, gte, inArray, isNotNull, isNull, lt, lte, or, sql, type SQL } from 'drizzle-orm';
 import {
 	bookingNotice,
 	parseNotice,
@@ -68,17 +68,51 @@ export function getCallFeed(now: Instant, db: Db = getDb()): Map<number, CallFee
 	return feed;
 }
 
+/** The reply-reminder predicate, shared by the count and the list so they always agree. */
+const openReplyReminder = () =>
+	and(isNotNull(booking.deletedAt), isNull(booking.replyDoneAt), isNotNull(booking.email), sql`trim(${booking.email}) <> ''`);
+
 /**
- * The open reply reminders (FR-31): deleted bookings with an email address whose reply is not
- * marked done. The one query that reads deleted bookings.
+ * The open reply reminders (FR-31): deleted bookings with a (non-blank) email address whose reply
+ * is not marked done. The one query that reads deleted bookings.
  */
 export function countReplyReminders(db: Db = getDb()): number {
-	const row = db
-		.select({ n: count() })
-		.from(booking)
-		.where(and(isNotNull(booking.deletedAt), isNull(booking.replyDoneAt), isNotNull(booking.email)))
-		.get();
+	const row = db.select({ n: count() }).from(booking).where(openReplyReminder()).get();
 	return row?.n ?? 0;
+}
+
+/** One open reply reminder (FR-31, Story 3.4): the deleted booking and how to reach its guest. */
+export type ReplyReminderRow = {
+	id: number;
+	/** Null once erased (the reminder stays while the email is there). */
+	name: string | null;
+	email: string;
+	locale: Locale;
+	start: Instant;
+	durationMin: number;
+};
+
+/**
+ * The open reply reminders (same predicate as `countReplyReminders`), oldest deletion first. With
+ * `date`, only those whose booking starts on that local day (the admin day view).
+ */
+export function getReplyReminders(filter: { date?: LocalDate } = {}, db: Db = getDb()): ReplyReminderRow[] {
+	const range = filter.date ? dayRange(filter.date) : null;
+	const rows = db
+		.select({
+			id: booking.id,
+			name: booking.name,
+			email: booking.email,
+			locale: booking.locale,
+			start: booking.startAt,
+			durationMin: booking.durationMin
+		})
+		.from(booking)
+		.where(and(openReplyReminder(), range ? and(gte(booking.startAt, range.from), lt(booking.startAt, range.to)) : undefined))
+		.orderBy(asc(booking.deletedAt), asc(booking.id))
+		.all();
+	// The predicate excludes a NULL email; the filter only narrows the type.
+	return rows.flatMap((r) => (r.email === null ? [] : [{ ...r, email: r.email }]));
 }
 
 /** A booking's keybox outbox row as the admin pages show it. */
@@ -201,7 +235,8 @@ const dayRange = (date: LocalDate) => ({ from: toInstant(date, 0), to: toInstant
 
 /**
  * True when the admin day view has something to show for `date` (a valid date): it lies in a season
- * row (past ones too), or a live booking starts or a block runs on it. Deleted bookings do not count.
+ * row (past ones too), a live booking starts or a block runs on it, or a deleted booking starting
+ * on it has an open reply reminder. Other deleted bookings do not count.
  */
 export function adminDayAccepted(date: LocalDate, db: Db = getDb()): boolean {
 	const inSeason = db
@@ -217,6 +252,13 @@ export function adminDayAccepted(date: LocalDate, db: Db = getDb()): boolean {
 		.where(and(isNull(booking.deletedAt), gte(booking.startAt, from), lt(booking.startAt, to)))
 		.get();
 	if (live) return true;
+	// A deleted booking whose guest still waits for a reply (Story 3.4): its day shows the reminder.
+	const reminder = db
+		.select({ id: booking.id })
+		.from(booking)
+		.where(and(openReplyReminder(), gte(booking.startAt, from), lt(booking.startAt, to)))
+		.get();
+	if (reminder) return true;
 	const blocked = db
 		.select({ id: block.id })
 		.from(block)

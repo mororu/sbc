@@ -1,6 +1,6 @@
-// Admin view models: the nav badge counts and the admin home's worker warning (Story 3.1), and the
-// home's next bookings and flags (Story 3.2). Text is rendered here on the server (src/lib/time never
-// reaches the client); the counts carry no guest data.
+// Admin view models: the nav badge counts and the admin home's worker warning (Story 3.1), the
+// home's next bookings and flags (Story 3.2) and its reply reminders (Story 3.4). Text is rendered
+// here on the server (src/lib/time never reaches the client); the counts carry no guest data.
 import { deriveCallList, workerHealth, type Heartbeat } from '#lib/domain/index.ts';
 import type { ResolvedPathname } from '$app/types';
 import { adminBookingHref } from '#lib/admin-nav.ts';
@@ -19,6 +19,7 @@ import {
 } from '#lib/time/index.ts';
 import { buildAdminRow, isFlagged, loadAdminRowContext, type AdminRow, type AdminRowContext } from './admin-day-view.ts';
 import { now as clockNow } from './clock.ts';
+import { loadReplies, type RepliesView } from './reply-view.ts';
 import {
 	countReplyReminders,
 	getAdminBookings,
@@ -69,6 +70,8 @@ export type AdminHomeView = {
 	next: { heading: string; groups: NextGroup[] };
 	/** Bookings outside the current times, then bookings with a refused non-urgent email; only those not started. */
 	flags: HomeFlag[];
+	/** "Antworten": every open reply reminder, oldest deletion first (always shown, with its empty line). */
+	replies: RepliesView;
 };
 
 /** Pure: today's and tomorrow's groups. `bookings` are the live bookings of both days, in start order. */
@@ -121,6 +124,7 @@ export function loadAdminHome(
 	return {
 		warning: workerWarning(getHeartbeat(db), now, locale),
 		next: buildNextBookings(bookings, context),
-		flags: buildHomeFlags(getFutureFlagCandidates(now, db), context)
+		flags: buildHomeFlags(getFutureFlagCandidates(now, db), context),
+		replies: loadReplies(locale, {}, db)
 	};
 }
