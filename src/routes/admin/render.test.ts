@@ -3,7 +3,8 @@
 // after too many tries, the ended-session line), the admin shell (nav order, aria-current, badges)
 // and the admin home (h1, worker warning). Story 3.2: the admin day view (skip link target, strip
 // with aria-current, rows and the table, empty line), the booking detail, the home's next bookings
-// and flags, and the admin 404.
+// and flags, and the admin 404. Story 3.3: the delete button and the impact dialog on the detail
+// (title, what line, mini row, buttons, ids), the gone view and the started detail without a button.
 import { createRawSnippet } from 'svelte';
 import { render } from 'svelte/server';
 import { readdirSync, readFileSync, statSync } from 'node:fs';
@@ -15,9 +16,14 @@ import HomePage from './(portal)/+page.svelte';
 import AdminError from './(portal)/+error.svelte';
 import DayPage from './(portal)/day/[date]/+page.svelte';
 import BookingPage from './(portal)/booking/[id]/+page.svelte';
-import { buildAdminBookingView, buildAdminDayView, type AdminRowContext } from '#lib/server/admin-day-view.ts';
+import {
+	buildAdminBookingGoneView,
+	buildAdminBookingView,
+	buildAdminDayView,
+	type AdminRowContext
+} from '#lib/server/admin-day-view.ts';
 import { buildHomeFlags, buildNextBookings } from '#lib/server/admin-view.ts';
-import type { AdminBooking } from '#lib/server/db/queries/index.ts';
+import type { AdminBooking, DeletionImpact } from '#lib/server/db/queries/index.ts';
 
 const state = vi.hoisted(() => ({
 	locale: 'de' as 'de' | 'en',
@@ -26,7 +32,7 @@ const state = vi.hoisted(() => ({
 
 vi.mock('$app/state', () => ({ page: state.page, navigating: { to: null } }));
 
-vi.mock('$app/navigation', () => ({ afterNavigate: () => {} }));
+vi.mock('$app/navigation', () => ({ afterNavigate: () => {}, invalidateAll: async () => {} }));
 
 vi.mock('#lib/paraglide/runtime.js', async (importOriginal) => ({
 	...(await importOriginal<typeof import('#lib/paraglide/runtime.js')>()),
@@ -354,6 +360,87 @@ describe('booking detail', () => {
 		expect(body).toContain('Diese Buchung liegt ausserhalb der neuen Zeiten. Sie bleibt gültig.');
 		expect(body).toMatch(/<h2[^>]*>Abgelehnte Mails<\/h2>/);
 		expect(body).toContain('Bestätigung abgelehnt: smtp 550');
+	});
+});
+
+describe('booking detail: delete (Story 3.3)', () => {
+	const HOT = { heat: 'hot', earliest: null, latest: null } as const;
+	const anna = booking({ id: 1, name: 'Anna Meier', start: '2027-01-12T15:00:00Z' });
+	const deletion = (over: Partial<DeletionImpact['impact']> = {}): DeletionImpact => ({
+		bookingId: 1,
+		start: anna.start,
+		durationMin: 60,
+		date: '2027-01-12',
+		started: false,
+		impact: {
+			affected: { id: 2, start: '2027-01-12T16:15:00Z', durationMin: 60, changeoverMin: 15, createdAt: '2027-01-07T10:00:00Z' },
+			told: HOT,
+			current: COLD,
+			class: 'urgent',
+			consequence: 'call',
+			...over
+		},
+		affectedFirstName: 'Tom'
+	});
+	const page = (d: DeletionImpact, b = anna) =>
+		render(BookingPage, { props: { data: { view: buildAdminBookingView(b, context, d) } } as never }).body;
+
+	it('renders the closed impact dialog (title, what line, mini row, confirm then Abbrechen); the trigger only after hydration', () => {
+		const body = page(deletion());
+		// No JavaScript, no dead control: the trigger is not in the server render.
+		expect(body).not.toMatch(/<button class="destructive/);
+		const dialog = body.match(/<dialog[^>]*>.*<\/dialog>/s)?.[0] ?? '';
+		expect(dialog).toMatch(/aria-labelledby="delete-booking-title"/);
+		expect(dialog).toMatch(/aria-describedby="delete-booking-consequence"/);
+		expect(dialog).not.toMatch(/<dialog[^>]*\sopen/);
+		expect(dialog).toMatch(/<h2 id="delete-booking-title" tabindex="-1"[^>]*>Buchung löschen\?<\/h2>/);
+		expect(dialog).toContain('Anna Meier · Di 12. Januar, 16:00–17:00');
+		expect(dialog).toContain('Tom, 17:15:');
+		expect(dialog).toMatch(/heiss.*<span aria-hidden="true">→<\/span><span class="visually-hidden"> wird zu <\/span>.*Kaltstart/s);
+		expect(dialog).toMatch(/id="delete-booking-consequence"[^>]*>.*weniger als 24 h\..*Anruf nötig/s);
+		expect(dialog).toContain('Neuer Hinweis: komm zwischen 16:35 und 16:45.');
+		expect(dialog).toMatch(/<form method="POST" action="\?\/delete"/);
+		expect(dialog).toMatch(/<input type="hidden" name="impactToken" value="[^"]+"/);
+		const buttons = [...dialog.matchAll(/<button[^>]*>(.*?)<\/button>/g)].map((b) => b[1]);
+		expect(buttons).toEqual(['Buchung löschen', 'Abbrechen']);
+		expect(dialog).toMatch(/<button class="secondary[^"]*" type="button" autofocus/);
+	});
+
+	it('shows "bekommt eine Mail." without a marker, "optional" for good news, and "Kein Effekt …" alone', () => {
+		expect(page(deletion({ consequence: 'mail' }))).toContain('bekommt eine Mail.');
+		expect(page(deletion({ told: COLD, current: HOT, class: 'good_news' }))).toMatch(/class="marker[^"]*">optional</);
+		const none = page(deletion({ affected: null, told: null, current: null, class: 'none', consequence: 'none' }));
+		expect(none).toContain('Kein Effekt auf andere Buchungen.');
+		expect(none).not.toContain('Neuer Hinweis');
+	});
+
+	it('has no button and no dialog on a started booking', () => {
+		const body = page({ ...deletion(), started: true }, booking({ id: 1, start: '2027-01-12T08:00:00Z' }));
+		expect(body).toContain('Hat schon begonnen.');
+		expect(body).not.toContain('<dialog');
+		expect(body).not.toContain('Buchung löschen');
+	});
+
+	it('renders the dialog in English', () => {
+		state.locale = 'en';
+		try {
+			const view = buildAdminBookingView(anna, { ...context, locale: 'en' }, deletion());
+			const { body } = render(BookingPage, { props: { data: { view } } as never });
+			expect(body).toContain('Delete booking?');
+			expect(body).toContain('Anna Meier · Tue 12 January, 16:00–17:00');
+			expect(body).toContain('Call needed');
+			expect(body).toContain('>Cancel</button>');
+		} finally {
+			state.locale = 'de';
+		}
+	});
+
+	it('shows the gone view with the link to the day', () => {
+		const { head, body } = render(BookingPage, { props: { data: { view: buildAdminBookingGoneView('2027-01-12', 'de') } } as never });
+		expect(head).toContain('<title>Gelöschte Buchung · Sauna Luegisee</title>');
+		expect(body).toMatch(/<h1[^>]*tabindex="-1"[^>]*>Diese Buchung gibt es nicht mehr\.<\/h1>/);
+		expect(body).toMatch(/<a class="back[^"]*" href="\/admin\/day\/2027-01-12">.*Di, 12. Januar<\/a>/s);
+		expect(body).not.toContain('<dialog');
 	});
 });
 

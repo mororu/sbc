@@ -5,3 +5,4 @@ export * from './setting.ts';
 export * from './outbox.ts';
 export * from './heartbeat.ts';
 export * from './admin.ts';
+export * from './impact.ts';

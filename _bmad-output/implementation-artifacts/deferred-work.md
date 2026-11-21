@@ -63,3 +63,11 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-3-2-admin-sees-bookings-by-day.md`
   summary: The admin day-switch logic (`isAdminDayPath`, `pendingAdminDay`, the busy/slow/announce effect in `AdminDayView.svelte`) copies the guest `day-nav.ts`/`DayView.svelte` pattern instead of sharing it.
   evidence: Story 3.2 review; a fix in one will drift from the other. A shared helper parameterised by the path pattern would remove the copy; best done with the browser test layer (P3).
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-3-3-admin-deletes-a-booking-with-an-impact-preview.md`
+  summary: After a successful booking delete the admin lands on the day view with focus on the h1 but no status line ("Buchung gelöscht.") is shown or announced; decide with the UX copy review whether admin actions get a success status.
+  evidence: The story AC only asks for focus on the day h1; review found screen-reader users hear only the date heading after the delete.
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-3-3-admin-deletes-a-booking-with-an-impact-preview.md`
+  summary: The impact consequence for a keybox email that was refused or expired still reads "weniger als 24 h. ANRUF NÖTIG", although the real reason to call is the failed keybox email.
+  evidence: `impactOn` returns `call` for every `endsHeatChangeMail` state and the EXPERIENCE copy has only the 24 h line; such bookings are already on the call list (FR-14).

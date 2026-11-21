@@ -379,12 +379,65 @@ describe('loaders', () => {
 		expect(gone?.rows).toEqual([]);
 	});
 
-	it('loads a live booking detail; deleted, unknown and malformed ids are null', () => {
+	it('loads a live booking detail; unknown and malformed ids are null', () => {
 		const live = insertBooking('2027-01-12T16:15:00Z');
-		const gone = insertBooking('2027-01-12T18:00:00Z', '2027-01-10T08:00:00Z');
-		expect(loadAdminBookingView(String(live), 'de', opts())?.heading).toBe('17:15–18:15');
-		for (const id of [String(gone), '9999', 'abc', '0', '01', '1.5', '-1']) {
+		const v = loadAdminBookingView(String(live), 'de', opts());
+		expect(v).toMatchObject({ kind: 'admin-booking', heading: '17:15–18:15' });
+		for (const id of ['9999', 'abc', '0', '01', '1.5', '-1']) {
 			expect(loadAdminBookingView(id, 'de', opts())).toBeNull();
 		}
+	});
+
+	it('Gone: a deleted booking is the gone view with a link to its day, no longer a 404', () => {
+		const gone = insertBooking('2027-01-12T18:00:00Z', '2027-01-10T08:00:00Z');
+		expect(loadAdminBookingView(String(gone), 'de', opts())).toEqual({
+			kind: 'admin-booking-gone',
+			title: 'Gelöschte Buchung',
+			message: 'Diese Buchung gibt es nicht mehr.',
+			back: { href: '/admin/day/2027-01-12', text: 'Di, 12. Januar' }
+		});
+		expect(loadAdminBookingView(String(gone), 'en', opts())).toMatchObject({ message: 'This booking no longer exists.' });
+	});
+
+	it('loads the delete dialog through getDeletionImpact: Anna 16:00–17:00 before Tom 17:15, told hot, keybox sent', () => {
+		const anna = insertBooking('2027-01-12T15:00:00Z');
+		sqlite.prepare("update booking set name = 'Anna Meier' where id = ?").run(anna);
+		const tom = insertBooking('2027-01-12T16:15:00Z');
+		sqlite.prepare("update booking set last_told_notice = '{\"heat\":\"hot\",\"earliest\":null,\"latest\":null}' where id = ?").run(tom);
+		sqlite.prepare("insert into outbox (booking_id, kind, state, due_at) values (?, 'keybox', 'accepted', '2027-01-11T16:15:00Z')").run(tom);
+		const v = loadAdminBookingView(String(anna), 'de', opts());
+		if (v?.kind !== 'admin-booking') throw new Error('expected the detail');
+		expect(v.delete).toMatchObject({
+			button: 'Buchung löschen',
+			title: 'Buchung löschen?',
+			what: 'Anna Meier · Di 12. Januar, 16:00–17:00',
+			cancel: 'Abbrechen',
+			row: {
+				consequence: 'call',
+				who: 'Tom, 17:15:',
+				text: 'weniger als 24 h.',
+				marker: { text: 'Anruf nötig', urgent: true },
+				notice: 'Neuer Hinweis: komm zwischen 16:35 und 16:45.'
+			},
+			messages: {
+				stale: 'Die Auswirkung hat sich geändert. Bitte prüf sie nochmal.',
+				past: 'Hat schon begonnen.',
+				failed: 'Das hat nicht geklappt. Nichts wurde geändert. Versuch es bitte nochmal.'
+			}
+		});
+		expect(v.delete?.token).toContain('"urgent","call"');
+	});
+
+	it('uses the time-only what line when the name is erased', () => {
+		const anon = insertBooking('2027-01-12T15:00:00Z');
+		sqlite.prepare('update booking set name = null where id = ?').run(anon);
+		const v = loadAdminBookingView(String(anon), 'de', opts());
+		expect(v).toMatchObject({ delete: { what: 'Di 12. Januar, 16:00–17:00' } });
+	});
+
+	it('Started: a started booking has "Hat schon begonnen." and no delete dialog', () => {
+		const started = insertBooking('2027-01-12T08:30:00Z');
+		const v = loadAdminBookingView(String(started), 'de', opts());
+		expect(v).toMatchObject({ kind: 'admin-booking', started: 'Hat schon begonnen.', delete: null });
 	});
 });

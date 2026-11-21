@@ -542,7 +542,7 @@ Read-only pages behind the 3.1 guard. They read through `src/lib/server/db/queri
   - The strip: the current season's days (else the next season's), plus every future day a live booking or a block overlaps (a block across midnight adds each day), in date order. Every cell is a link. A day with a booking outside the current times carries a dot and says so in its hidden name. The arrows go to the nearest strip day each side and are disabled at the ends.
   - Below 1024 px the bookings are rows (time range and heat state; "Tom Brunner · 2 Personen" with the tags; chevron). From 1024 px they are a table with `<th scope="col">` columns time · name · party · email · mobile · notice now · last told · code sent; one stretched link on the time makes the whole row clickable.
   - The skip link is "Zu den Buchungen" (`#bookings`). Switching days follows the guest pattern: the list dims with `aria-busy`, "Lädt …" shows after 1 s, and the status announces "Dienstag, 12. Januar: 2 Buchungen" or "Dienstag, 12. Januar: Keine Buchungen.". The shown day is always a strip cell (added when it is not a season or extra day), so one cell is selected.
-- **`/admin/booking/{id}`** shows a live booking (unknown, deleted or malformed ids are an admin 404): the back link to its day, the eyebrow date, the time range as `h1`, Name · E-Mail · Handy · Personen · Dauer · Schlüsselmail (email and mobile as text inside `mailto:`/`tel:` links), "Hinweis jetzt" and "Zuletzt gesagt" side by side (one column on phones), and the refused non-urgent emails.
+- **`/admin/booking/{id}`** shows a live booking (unknown or malformed ids are an admin 404; since Story 3.3 a deleted one shows "Diese Buchung gibt es nicht mehr."): the back link to its day, the eyebrow date, the time range as `h1`, Name · E-Mail · Handy · Personen · Dauer · Schlüsselmail (email and mobile as text inside `mailto:`/`tel:` links), "Hinweis jetzt" and "Zuletzt gesagt" side by side (one column on phones), and the refused non-urgent emails.
 - **Admin home**: "Nächste Buchungen" with one `h3` per day ("Heute · Di 12. Januar", "Morgen · Mi 13. Januar"), each with its rows or the empty line, and the flags above the grid with one link per booking.
 
 Rules:
@@ -586,6 +586,36 @@ From EXPERIENCE.md: "Hinweis geändert" · "Alter Code 4711", the detail terms, 
 | `admin_refused_item` / `admin_refused_item_plain` | {kind} abgelehnt: {reason} / {kind} abgelehnt | {kind} refused: {reason} / {kind} refused |
 | `admin_kind_confirmation` / `admin_kind_heat_change` | Bestätigung / Hinweismail | Confirmation / Notice email |
 | `admin_not_found_link` (admin 404) | Zu den Buchungen | To the bookings |
+
+## Admin deletes a booking (Story 3.3)
+
+"Buchung löschen" on `/admin/booking/{id}` (only before the start) opens the impact dialog; confirming deletes the booking (FR-18). Without JavaScript the button does nothing (the dialog needs it; accepted for the admin tool).
+
+- **Impact core**: `impactOn` in `src/lib/domain/impact.ts` takes the affected booking (or null), the live bookings and blocks *after* the change, the pre-heat window, the told notice and the affected booking's keybox state. It returns `{ affected, told, current, class, consequence }`: `none` (no affected booking, no told notice, or `classifyHeatChange` says `none`), `mail` (no keybox row, or one that does not end heat-change mail per `endsHeatChangeMail`) or `call`. `impactToken(impact)` is a deterministic string over the affected booking's id and start, the told and current notices, the class and the consequence; the guest's name and the `now`-dependent wording are deliberately left out. Blocks (3.5) and the pre-heat window (3.7) reuse both.
+- **Told notice**: `toldNotice(bookingId)` (`db/queries/booking.ts`) is the snapshot of an in-flight heat-change email, else `last_told_notice`. The heat-change helper and the preview both use it.
+- **One query for preview and command**: `getDeletionImpact(bookingId, now)` (`db/queries/impact.ts`) reads the deleted booking's day data, finds `affectedBooking({ end, bookingId })`, reads its told notice, keybox state and the guest's first name, and runs `impactOn` over the bookings without the deleted one.
+- **Command**: `deleteBooking({ bookingId, impactToken }, { now })` (`commands/delete-booking.ts`), one `BEGIN IMMEDIATE`. Refusals in this order, writing nothing: `not_found` (unknown or deleted), `past` (start ≤ now), `stale` (the posted token differs from the recomputed one: a new booking, a block or a pre-heat change since the dialog opened). Then it sets `deleted_at = now`, cancels the booking's own `pending`/`transient_failure` outbox rows of every kind (`outcome_at = now`; finished and in-flight rows stay, the worker handles an in-flight one) and calls `enqueueHeatChanges([affected.id])`. The deleted guest is never emailed.
+- **Route**: the `delete` action posts the token; success is a 303 to `/admin/day/{date}` with focus on its `h1`; `stale`/`past` are `fail(409, { code })`, `not_found` `fail(410)`, a lock timeout `fail(503, { code: 'failed' })`. On `stale` the page data reloads and the dialog shows the new impact with "Die Auswirkung hat sich geändert. Bitte prüf sie nochmal.", focus on the dialog title. On `past` the dialog says "Hat schon begonnen." without a confirm. On `not_found` the detail turns into "Diese Buchung gibt es nicht mehr." with the link to the day. A failure shows the inline "Das hat nicht geklappt …", focused.
+- **Detail of a deleted booking**: no longer a 404. It shows "Diese Buchung gibt es nicht mehr." and the link to its day (`deletedBookingDate`). An unknown id is still a 404.
+- **Dialog** (`src/lib/components/ImpactDialog.svelte`, `HeatChangeLine.svelte`; text model `src/lib/server/impact-view.ts`): native `<dialog>` with `showModal()`, focus on "Abbrechen", Esc or a scrim tap cancels, focus back to the trigger; `aria-labelledby` the title, `aria-describedby` the consequence line. Bottom-anchored with stacked buttons on phones; from 1024 px centred, at most 480 px, buttons side by side and right-aligned. The panel scrolls within 90 dvh; the scrim is `--scrim` (the dark scrim in dark mode). Targets are at least 44 px. Dialog focus, Esc/scrim, the inert background, the layouts and the dark scrim are checked by hand (no browser test layer yet, P3).
+- **A8 decision**: a guest resubmit of a booking an admin deleted keeps returning `conflict` with the generic message. The resubmit window is seconds, the form re-renders with a new token and the time is offered again. No code change; AD-3's "never conflict" wording is amended with the S1 spine reconciliation.
+
+### Drafted copy for operator review (Story 3.3)
+
+From EXPERIENCE.md (DE and EN): "Buchung löschen?" (DE), the what line "Anna Meier · Di 12. Januar, 16:00–17:00", "bekommt eine Mail." · "weniger als 24 h." · "Kein Effekt auf andere Buchungen.", the markers "Anruf nötig" · "optional", "Neuer Hinweis: komm zwischen … und ….", the hidden "wird zu", "Die Auswirkung hat sich geändert. Bitte prüf sie nochmal.", "Hat schon begonnen.", "Diese Buchung gibt es nicht mehr.", "Das hat nicht geklappt. Nichts wurde geändert. Versuch es bitte nochmal.", and the DE "Buchung löschen" · "Abbrechen". Everything else is a draft:
+
+| Key | DE | EN |
+| --- | --- | --- |
+| `admin_delete_button` (only the EN text is drafted) | Buchung löschen | Delete booking |
+| `admin_delete_title` (only the EN text is drafted) | Buchung löschen? | Delete booking? |
+| `admin_cancel` (only the EN text is drafted) | Abbrechen | Cancel |
+| `admin_delete_what_no_name` (what line when the name is erased or blank) | {date}, {time} | {date}, {time} |
+| `admin_booking_gone_title` (`<title>` of a deleted booking's detail) | Gelöschte Buchung | Deleted booking |
+| `impact_who` / `impact_who_no_name` (mini row label; the short weekday is added on another date) | {name}, {time}: / {time}: | {name}, {time}: / {time}: |
+| `impact_heat_hot` / `impact_heat_cold` (heat-change line; from EXPERIENCE "heiss wird zu Kaltstart") | heiss / Kaltstart | hot / cold start |
+| `impact_heat_new_arrival` (cold → cold: "Kaltstart → neue Ankunftszeit") | neue Ankunftszeit | new arrival time |
+| `impact_new_notice_hot` | Neuer Hinweis: schon heiss um {time}. | New notice: already hot at {time}. |
+| `impact_new_notice_other` (collapsed window, arrival already past: the cold notice text) | Neuer Hinweis: {notice} | New notice: {notice} |
 
 ## Scaffold decisions
 

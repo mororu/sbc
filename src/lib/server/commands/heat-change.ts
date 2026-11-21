@@ -3,17 +3,17 @@
 // the Epic 3 commands (deletion, blocks, the pre-heat window) later. It never opens a transaction.
 // Not re-exported from `commands/index.ts`, so only commands call it.
 // For each booking it recomputes the current notice and compares it with what the guest has been, or
-// is about to be, told: the snapshot of an in-flight heat-change row, else the last-told notice.
+// is about to be, told (`toldNotice`): the snapshot of an in-flight heat-change row, else the last-told notice.
 // A change worth an email upserts the booking's one open heat-change row, due after the settle
 // delay, with its urgency; a repeat change resets the due time and the urgency. Once the keybox row
 // is in flight, retrying or finished, no heat-change mail goes out: open heat-change rows are
 // cancelled instead. A change that only widens the arrival range writes nothing; an open row is
 // left for the claim to recheck.
-import { and, desc, eq, inArray } from 'drizzle-orm';
+import { and, eq, inArray } from 'drizzle-orm';
 import { classifyHeatChange, endsHeatChangeMail, parseNotice, SETTLE_DELAY_MIN, type Notice } from '#lib/domain/index.ts';
 import { addMinutes, compareInstants, type Instant } from '#lib/time/index.ts';
 import type { Db } from '../db/index.ts';
-import { currentNotice } from '../db/queries/index.ts';
+import { currentNotice, keyboxStateOf, toldNotice } from '../db/queries/index.ts';
 import { booking, outbox } from '../db/schema.ts';
 
 /**
@@ -49,31 +49,19 @@ export function cancelOpenHeatChanges(bookingId: number, now: Instant, db: Db): 
 
 function enqueueOne(bookingId: number, now: Instant, db: Db): HeatChangeAction {
 	const row = db
-		.select({ start: booking.startAt, deletedAt: booking.deletedAt, lastTold: booking.lastToldNotice })
+		.select({ start: booking.startAt, deletedAt: booking.deletedAt })
 		.from(booking)
 		.where(eq(booking.id, bookingId))
 		.get();
 	if (!row || row.deletedAt !== null || compareInstants(row.start, now) <= 0) return 'skipped';
 
-	const keybox = db
-		.select({ state: outbox.state })
-		.from(outbox)
-		.where(and(eq(outbox.bookingId, bookingId), eq(outbox.kind, 'keybox')))
-		.get();
-	if (keybox && endsHeatChangeMail(keybox.state)) {
+	const keybox = keyboxStateOf(bookingId, db);
+	if (keybox !== null && endsHeatChangeMail(keybox)) {
 		cancelOpenHeatChanges(bookingId, now, db);
 		return 'cancelled';
 	}
 
-	// An in-flight heat-change email is what the guest is about to be told: compare against it, so a
-	// change back to the last-told notice during the send still gets its own email.
-	const inFlight = db
-		.select({ notice: outbox.snapshotNotice })
-		.from(outbox)
-		.where(and(eq(outbox.bookingId, bookingId), eq(outbox.kind, 'heat_change'), eq(outbox.state, 'in_flight')))
-		.orderBy(desc(outbox.id))
-		.get();
-	const told = storedNotice(inFlight ? inFlight.notice : row.lastTold);
+	const told = toldNotice(bookingId, db);
 	const current = storedNotice(currentNotice(bookingId, db));
 	if (!told || !current) return 'none';
 	const classification = classifyHeatChange(told, current);

@@ -1,6 +1,7 @@
 // The admin routes on the server (Story 3.1 matrix, "Sign in", "Bad target", "Wrong", "Sign out",
-// and the nav counts; Story 3.2 matrix, "Default", "Accept", "Detail" and "Home"): an in-memory
-// database, DEV_NOW at Tue 12 Jan 2027, 10:00 Zurich.
+// and the nav counts; Story 3.2 matrix, "Default", "Accept", "Detail" and "Home"; Story 3.3, the
+// delete action: success, stale, past, gone and a lock timeout): an in-memory database, DEV_NOW at
+// Tue 12 Jan 2027, 10:00 Zurich.
 import { isActionFailure, isHttpError, isRedirect } from '@sveltejs/kit';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 // The test migrates and edits its own in-memory database; routes never touch the db layer.
@@ -16,7 +17,7 @@ import { load as loadShell } from './(portal)/+layout.server.ts';
 import { load as loadHome } from './(portal)/+page.server.ts';
 import { load as loadDefaultDay } from './(portal)/day/+page.server.ts';
 import { load as loadDay } from './(portal)/day/[date]/+page.server.ts';
-import { load as loadBooking } from './(portal)/booking/[id]/+page.server.ts';
+import { actions as bookingActions, load as loadBooking } from './(portal)/booking/[id]/+page.server.ts';
 
 const clock = vi.hoisted(() => ({ now: '2027-01-12T09:00:00Z', locale: 'de' as 'de' | 'en', busy: false }));
 
@@ -31,6 +32,10 @@ vi.mock('#lib/server/commands/index.ts', async (importOriginal) => {
 		signOut: (...args: Parameters<typeof actual.signOut>) => {
 			if (clock.busy) throw busyError();
 			return actual.signOut(...args);
+		},
+		deleteBooking: (...args: Parameters<typeof actual.deleteBooking>) => {
+			if (clock.busy) throw busyError();
+			return actual.deleteBooking(...args);
 		}
 	};
 });
@@ -276,11 +281,77 @@ describe('admin day and booking routes', () => {
 		expect(await day('2027-01-13')).toMatchObject({ data: { view: { rows: [], empty: 'Keine Buchungen an diesem Tag.' } } });
 	});
 
-	it('shows a live booking detail; deleted, unknown and malformed ids are an admin 404', async () => {
+	it('shows a live booking detail, the gone view of a deleted one; unknown and malformed ids are an admin 404', async () => {
 		const live = insertBooking('2027-01-12T16:15:00Z');
 		const gone = insertBooking('2027-01-12T18:00:00Z', { deletedAt: '2027-01-10T08:00:00Z' });
 		expect(await detail(String(live))).toMatchObject({ data: { view: { kind: 'admin-booking', heading: '17:15–18:15' } } });
-		for (const id of [String(gone), '9999', 'abc']) expect(await detail(id)).toEqual({ error: 404 });
+		expect(await detail(String(gone))).toMatchObject({
+			data: { view: { kind: 'admin-booking-gone', message: 'Diese Buchung gibt es nicht mehr.', back: { href: '/admin/day/2027-01-12' } } }
+		});
+		for (const id of ['9999', 'abc']) expect(await detail(id)).toEqual({ error: 404 });
+	});
+
+	describe('delete action', () => {
+		const post = (id: string, impactToken?: string) => {
+			const body = new URLSearchParams(impactToken === undefined ? {} : { impactToken });
+			const request = new Request(`http://localhost/admin/booking/${id}?/delete`, { method: 'POST', body });
+			return run(() => (bookingActions.delete as (e: unknown) => unknown)({ params: { id }, request }));
+		};
+		const tokenOf = async (id: number) => {
+			const outcome = (await detail(String(id))) as { data: { view: { delete: { token: string } | null } } };
+			const token = outcome.data.view.delete?.token;
+			if (!token) throw new Error('no delete dialog');
+			return token;
+		};
+		const deletedAt = (id: number) =>
+			(sqlite().prepare('select deleted_at from booking where id = ?').get(id) as { deleted_at: string | null }).deleted_at;
+
+		it('deletes with the token the dialog showed and goes to the day', async () => {
+			const anna = insertBooking('2027-01-12T15:00:00Z');
+			expect(await post(String(anna), await tokenOf(anna))).toEqual({ redirect: { status: 303, location: '/admin/day/2027-01-12' } });
+			expect(deletedAt(anna)).toBe('2027-01-12T09:00:00Z');
+		});
+
+		it('refuses a stale token with 409 and deletes nothing', async () => {
+			const anna = insertBooking('2027-01-12T15:00:00Z');
+			const token = await tokenOf(anna);
+			// Meanwhile Tom books 17:15, told hot: deleting Anna now changes his notice.
+			insertBooking('2027-01-12T16:15:00Z');
+			sqlite().exec("update booking set last_told_notice = '{\"heat\":\"hot\",\"earliest\":null,\"latest\":null}'");
+			expect(await post(String(anna), token)).toEqual({ failure: { status: 409, data: { code: 'stale' } } });
+			expect(await post(String(anna))).toEqual({ failure: { status: 409, data: { code: 'stale' } } });
+			expect(deletedAt(anna)).toBeNull();
+		});
+
+		it('refuses a booking that has started with 409 past', async () => {
+			const anna = insertBooking('2027-01-12T15:00:00Z');
+			const token = await tokenOf(anna);
+			clock.now = '2027-01-12T15:00:00Z';
+			expect(await post(String(anna), token)).toEqual({ failure: { status: 409, data: { code: 'past' } } });
+			expect(deletedAt(anna)).toBeNull();
+		});
+
+		it('answers 410 not_found for a booking another admin deleted, and 404 for a malformed id', async () => {
+			const anna = insertBooking('2027-01-12T15:00:00Z');
+			const token = await tokenOf(anna);
+			await post(String(anna), token);
+			expect(await post(String(anna), token)).toEqual({ failure: { status: 410, data: { code: 'not_found' } } });
+			expect(await post('9999', token)).toEqual({ failure: { status: 410, data: { code: 'not_found' } } });
+			expect(await post('abc', token)).toEqual({ error: 404 });
+		});
+
+		it('answers a lock timeout with 503 failed and changes nothing', async () => {
+			const anna = insertBooking('2027-01-12T15:00:00Z');
+			const token = await tokenOf(anna);
+			clock.busy = true;
+			expect(await post(String(anna), token)).toEqual({ failure: { status: 503, data: { code: 'failed' } } });
+			expect(deletedAt(anna)).toBeNull();
+		});
+
+		it('has no delete dialog on a started booking', async () => {
+			const started = insertBooking('2027-01-12T08:30:00Z');
+			expect(await detail(String(started))).toMatchObject({ data: { view: { started: 'Hat schon begonnen.', delete: null } } });
+		});
 	});
 
 	it('fills the home: a row under Heute, the empty line under Morgen, one flag, two refused-email links', async () => {

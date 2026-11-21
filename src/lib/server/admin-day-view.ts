@@ -1,8 +1,11 @@
 // The admin day view (UX-DR46; FR-16, Story 3.2) and the booking detail: their view models, builders
 // and loaders. Bookings come from `getAdminBookings`/`getAdminBooking` (admin queries: contact data
-// is fine here, admin routes only). Every string is formatted here on the server, so client code
-// never needs src/lib/time. Read-only: nothing here writes.
+// is fine here, admin routes only). The detail carries the delete dialog's model (Story 3.3): the
+// impact from `getDeletionImpact` (the query the delete command rechecks), its mini row and token.
+// Every string is formatted here on the server, so client code never needs src/lib/time.
+// Read-only: nothing here writes.
 import {
+	impactToken,
 	noticeEquals,
 	outsideCurrentTimes,
 	type HeatState,
@@ -16,16 +19,19 @@ import { mailtoHref } from '#lib/mailto.ts';
 import { m } from '#lib/paraglide/messages.js';
 import {
 	adminDayAccepted,
+	deletedBookingDate,
 	getAdminBooking,
 	getAdminBookings,
 	getAdminStripExtraDates,
+	getDeletionImpact,
 	getFutureFlagCandidates,
 	getKeyboxSettings,
 	getSeasons,
 	getSettings,
 	type AdminBooking,
 	type AdminKeyboxRow,
-	type AdminRefusal
+	type AdminRefusal,
+	type DeletionImpact
 } from '#lib/server/db/queries/index.ts';
 import {
 	addDays,
@@ -50,6 +56,7 @@ import {
 } from '#lib/time/index.ts';
 import { now as clockNow } from './clock.ts';
 import type { StripDay } from './day-view.ts';
+import { buildImpactRow, type ImpactRowView } from './impact-view.ts';
 import { badgeText } from './notice-text.ts';
 
 type Db = Parameters<typeof getSettings>[0];
@@ -373,6 +380,42 @@ export type AdminBookingView = {
 	flag: string | null;
 	/** The refused non-urgent emails (FR-14), or null when there are none. */
 	refusals: { heading: string; items: string[] } | null;
+	/** "Buchung löschen" and its impact dialog; null once the booking has started (or without an impact). */
+	delete: AdminDeleteView | null;
+};
+
+/** The delete-booking impact dialog (EXPERIENCE "Impact dialog"; Story 3.3). */
+export type AdminDeleteView = {
+	/** "Buchung löschen": the destructive button on the detail and the dialog's confirm. */
+	button: string;
+	/** "Buchung löschen?" */
+	title: string;
+	/** "Anna Meier · Di 12. Januar, 16:00–17:00" */
+	what: string;
+	row: ImpactRowView;
+	/** The impact token the form posts (`impactToken`). */
+	token: string;
+	/** "Abbrechen" */
+	cancel: string;
+	messages: {
+		/** "Die Auswirkung hat sich geändert. Bitte prüf sie nochmal." */
+		stale: string;
+		/** "Hat schon begonnen." */
+		past: string;
+		/** "Das hat nicht geklappt. Nichts wurde geändert. Versuch es bitte nochmal." */
+		failed: string;
+	};
+};
+
+/** The detail of a booking another admin deleted (Story 3.3): the line and the way back to its day. */
+export type AdminBookingGoneView = {
+	kind: 'admin-booking-gone';
+	/** `<title>` without the suffix: "Gelöschte Buchung". */
+	title: string;
+	/** "Diese Buchung gibt es nicht mehr." */
+	message: string;
+	/** "‹ Di, 12. Januar" back to the deleted booking's day. */
+	back: { href: ResolvedPathname; text: string };
 };
 
 /**
@@ -426,12 +469,49 @@ function refusalText(refusal: AdminRefusal, locale: Locale): string {
 		: m.admin_refused_item_plain({ kind }, { locale });
 }
 
-/** Pure: the booking detail. */
-export function buildAdminBookingView(booking: AdminBooking, context: AdminRowContext): AdminBookingView {
+/** True once a booking's start has come (at or before `now`): it shows "Hat schon begonnen." and can no longer be deleted. */
+export const hasStarted = (start: Instant, now: Instant): boolean => compareInstants(start, now) <= 0;
+
+/** Pure: the delete dialog of a booking that has not started, from its deletion impact. */
+export function buildAdminDeleteView(
+	deletion: DeletionImpact,
+	what: { name: string | null; time: string },
+	context: Pick<AdminRowContext, 'now' | 'locale'>
+): AdminDeleteView {
+	const { now, locale } = context;
+	const date = formatDateShort(deletion.date, locale);
+	const name = what.name?.trim();
+	return {
+		button: m.admin_delete_button({}, { locale }),
+		title: m.admin_delete_title({}, { locale }),
+		what: name
+			? m.admin_delete_what({ name, date, time: what.time }, { locale })
+			: m.admin_delete_what_no_name({ date, time: what.time }, { locale }),
+		row: buildImpactRow(deletion.impact, { now, locale, firstName: deletion.affectedFirstName, date: deletion.date }),
+		token: impactToken(deletion.impact),
+		cancel: m.admin_cancel({}, { locale }),
+		messages: {
+			stale: m.admin_impact_stale({}, { locale }),
+			past: m.admin_started({}, { locale }),
+			failed: m.admin_action_failed({}, { locale })
+		}
+	};
+}
+
+/**
+ * Pure: the booking detail. `deletion` is the booking's deletion impact (`getDeletionImpact`); the
+ * delete button and dialog appear only with it and only before the start.
+ */
+export function buildAdminBookingView(
+	booking: AdminBooking,
+	context: AdminRowContext,
+	deletion: DeletionImpact | null = null
+): AdminBookingView {
 	const { now, locale } = context;
 	const row = buildAdminRow(booking, context);
 	const date = localDate(booking.start);
 	const dash = '–';
+	const started = deletion?.started ?? hasStarted(booking.start, now);
 	return {
 		kind: 'admin-booking',
 		title: m.admin_booking_title({ date: formatDateTitle(date, locale), time: row.time }, { locale }),
@@ -439,7 +519,7 @@ export function buildAdminBookingView(booking: AdminBooking, context: AdminRowCo
 		eyebrow: formatDateLong(date, locale),
 		heading: row.time,
 		datetime: booking.start,
-		started: compareInstants(now, booking.start) >= 0 ? m.admin_started({}, { locale }) : null,
+		started: started ? m.admin_started({}, { locale }) : null,
 		details: [
 			{ term: m.admin_term_name({}, { locale }), value: row.name, href: null },
 			{
@@ -467,18 +547,46 @@ export function buildAdminBookingView(booking: AdminBooking, context: AdminRowCo
 		refusals:
 			booking.refusals.length > 0
 				? { heading: m.admin_refused_heading({}, { locale }), items: booking.refusals.map((r) => refusalText(r, locale)) }
-				: null
+				: null,
+		delete: !started && deletion ? buildAdminDeleteView(deletion, { name: booking.name, time: row.time }, context) : null
 	};
 }
 
-/** The detail of a live booking, or null (an admin 404) for an unknown, deleted or malformed id. */
+/** Pure: the detail of a deleted booking. */
+export function buildAdminBookingGoneView(date: LocalDate, locale: Locale): AdminBookingGoneView {
+	return {
+		kind: 'admin-booking-gone',
+		title: m.admin_booking_gone_title({}, { locale }),
+		message: m.admin_booking_gone({}, { locale }),
+		back: { href: adminDayHref(date), text: formatDateTitle(date, locale) }
+	};
+}
+
+/** True for a booking id as the admin routes accept it: a positive integer without leading zeros. */
+export const isAdminBookingId = (id: string): boolean => /^[1-9][0-9]{0,14}$/.test(id);
+
+/**
+ * The detail of a live booking with its delete dialog, the gone view of a deleted one (Story 3.3),
+ * or null (an admin 404) for an unknown or malformed id.
+ */
 export function loadAdminBookingView(
 	id: string,
 	locale: Locale,
 	options: { now?: Instant; db?: Db } = {}
-): AdminBookingView | null {
-	if (!/^[1-9][0-9]{0,14}$/.test(id)) return null;
-	const booking = getAdminBooking(Number(id), options.db);
-	if (!booking) return null;
-	return buildAdminBookingView(booking, loadAdminRowContext(locale, options.now ?? clockNow(), options.db));
+): AdminBookingView | AdminBookingGoneView | null {
+	if (!isAdminBookingId(id)) return null;
+	const { db } = options;
+	const now = options.now ?? clockNow();
+	const booking = getAdminBooking(Number(id), db);
+	if (!booking) {
+		const date = deletedBookingDate(Number(id), db);
+		return date ? buildAdminBookingGoneView(date, locale) : null;
+	}
+	const context = loadAdminRowContext(locale, now, db);
+	// A started booking has no delete dialog: its impact is not read.
+	if (hasStarted(booking.start, now)) return buildAdminBookingView(booking, context);
+	const deletion = getDeletionImpact(booking.id, now, db);
+	// Deleted by another admin between the two reads: the gone view.
+	if (!deletion) return buildAdminBookingGoneView(localDate(booking.start), locale);
+	return buildAdminBookingView(booking, context, deletion);
 }
