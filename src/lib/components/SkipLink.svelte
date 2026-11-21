@@ -1,14 +1,18 @@
 <!-- Skip link (UX-DR11): first focusable element; off-screen until focused. On a day view it skips
-     past the date strip to the start-time list (#times, "Zu den Zeiten"); elsewhere it goes to
-     #main ("Zum Inhalt"). -->
+     past the date strip to the start-time list (#times, "Zu den Zeiten"); on the admin day view to
+     the bookings (#bookings, "Zu den Buchungen"); elsewhere it goes to #main ("Zum Inhalt"). -->
 <script lang="ts">
 	import { m } from '#lib/paraglide/messages.js';
 
-	let { target = 'main' }: { target?: 'main' | 'times' } = $props();
+	let { target = 'main' }: { target?: 'main' | 'times' | 'bookings' } = $props();
+
+	const text = $derived(
+		target === 'times' ? m.skip_to_times() : target === 'bookings' ? m.skip_to_bookings() : m.skip_to_content()
+	);
 </script>
 
-<a class="skip-link" href={target === 'times' ? '#times' : '#main'}>
-	{target === 'times' ? m.skip_to_times() : m.skip_to_content()}
+<a class="skip-link" href={`#${target}`}>
+	{text}
 </a>
 
 <style>

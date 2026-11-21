@@ -24,7 +24,11 @@ import {
 } from '#lib/time/index.ts';
 import { now as clockNow } from './clock.ts';
 import { isRandomId } from './ids.ts';
-import { coldNoticeText } from './notice-text.ts';
+import { badgeText } from './notice-text.ts';
+
+// The badge text moved to notice-text.ts (shared with the mail and the admin pages); re-exported so
+// callers keep working.
+export { badgeText };
 
 export type BookedBadge = {
 	heat: HeatState;
@@ -62,27 +66,6 @@ export type BookedView = {
 	/** "So funktioniert's" → the info page. */
 	info: { href: ResolvedPathname; text: string };
 };
-
-/**
- * The badge text for the notice at booking. Too little time and an arrival already past use the
- * row texts behind "Kaltstart: ". "Past" is judged at `createdAt`: the badge shows the state at booking.
- */
-export function badgeText(notice: Notice, start: Instant, createdAt: Instant, locale: Locale): string {
-	if (notice.heat === 'hot') return m.booked_badge_hot({ time: formatTime(start) }, { locale });
-	const earliest = notice.earliest;
-	if (earliest === null) throw new Error('A cold notice without an earliest arrival');
-	const past = compareInstants(createdAt, notice.latest ?? earliest) > 0;
-	if (notice.latest !== null && !past) {
-		return m.booked_badge_cold(
-			{ earliest: formatTime(earliest), latest: formatTime(notice.latest) },
-			{ locale }
-		);
-	}
-	// The row text continues the sentence after "Kaltstart: ", so it starts lower-case.
-	const row = coldNoticeText(notice, start, createdAt, locale);
-	const rest = row.charAt(0).toLocaleLowerCase(locale) + row.slice(1);
-	return m.booked_badge_cold_other({ notice: rest }, { locale });
-}
 
 /**
  * The keybox sentence. The email goes out at start − 24 h (AD-9). Booked at or after that time, or

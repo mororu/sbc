@@ -494,7 +494,7 @@ npm run set-admin-password -- --reset      # replace it: also deletes every admi
 
 ### Admin shell and home
 
-- `src/routes/admin/(portal)/+layout.svelte` holds the app header, the nav (Übersicht · Buchungen · Blocks · Einstellungen · Auswertung · Abmelden) and `main`, capped at `--admin-max`. Nav hrefs live in `src/lib/admin-nav.ts`. The targets behind Buchungen, Blocks, Einstellungen and Auswertung come with later stories and are 404s until then.
+- `src/routes/admin/(portal)/+layout.svelte` holds the app header, the nav (Übersicht · Buchungen · Blocks · Einstellungen · Auswertung · Abmelden) and `main`, capped at `--admin-max`. Nav hrefs live in `src/lib/admin-nav.ts`. Buchungen opens the admin day view (Story 3.2); the targets behind Blocks, Einstellungen and Auswertung come with later stories and are 404s until then.
 - The Übersicht tab carries two badges: a phone icon with the call-list count and a mail icon with the reply-reminder count. Each shows "0" when empty and has a hidden singular/plural text. The counts come from `loadNavCounts` (`src/lib/server/admin-view.ts`):
   - calls: `deriveCallList(getCallFeed(now), now).length`;
   - replies: `countReplyReminders()` (`deleted_at IS NOT NULL AND reply_done_at IS NULL AND email IS NOT NULL`).
@@ -532,6 +532,60 @@ The nav labels, the plural badge texts, "Das Passwort stimmt nicht.", "Zu viele 
 | `admin_worker_failing` (sends failing for 15 min) | Seit {time} geht keine Mail raus. Der Versand versucht es weiter. | No email has gone out since {time}. Sending keeps trying. |
 | `admin_password_too_short` (for Story 3.7) | Das Passwort braucht mindestens 12 Zeichen. | The password needs at least 12 characters. |
 | `admin_password_too_long` (for Story 3.7) | Das Passwort ist zu lang. | That password is too long. |
+
+## Admin bookings by day (Story 3.2)
+
+Read-only pages behind the 3.1 guard. They read through `src/lib/server/db/queries/admin.ts` only (`getAdminBookings`, `getAdminBooking`, `adminDayAccepted`, `getAdminStripExtraDates`, `getFutureFlagCandidates`); the view models live in `src/lib/server/admin-day-view.ts` (day, rows, detail) and `src/lib/server/admin-view.ts` (home). Deleted bookings appear nowhere.
+
+- **`/admin/day`** redirects (303) to today when it lies in a season, else to the first day of the next season, else to today.
+- **`/admin/day/{yyyy-mm-dd}`** shows a day that lies in any season row (past ones too, by URL), has a live booking or a block, or is today. Anything else, and a malformed date, is an admin 404 (`(portal)/+error.svelte`, inside the shell, with a link to Buchungen).
+  - The strip: the current season's days (else the next season's), plus every future day a live booking or a block overlaps (a block across midnight adds each day), in date order. Every cell is a link. A day with a booking outside the current times carries a dot and says so in its hidden name. The arrows go to the nearest strip day each side and are disabled at the ends.
+  - Below 1024 px the bookings are rows (time range and heat state; "Tom Brunner · 2 Personen" with the tags; chevron). From 1024 px they are a table with `<th scope="col">` columns time · name · party · email · mobile · notice now · last told · code sent; one stretched link on the time makes the whole row clickable.
+  - The skip link is "Zu den Buchungen" (`#bookings`). Switching days follows the guest pattern: the list dims with `aria-busy`, "Lädt …" shows after 1 s, and the status announces "Dienstag, 12. Januar: 2 Buchungen" or "Dienstag, 12. Januar: Keine Buchungen.". The shown day is always a strip cell (added when it is not a season or extra day), so one cell is selected.
+- **`/admin/booking/{id}`** shows a live booking (unknown, deleted or malformed ids are an admin 404): the back link to its day, the eyebrow date, the time range as `h1`, Name · E-Mail · Handy · Personen · Dauer · Schlüsselmail (email and mobile as text inside `mailto:`/`tel:` links), "Hinweis jetzt" and "Zuletzt gesagt" side by side (one column on phones), and the refused non-urgent emails.
+- **Admin home**: "Nächste Buchungen" with one `h3` per day ("Heute · Di 12. Januar", "Morgen · Mi 13. Januar"), each with its rows or the empty line, and the flags above the grid with one link per booking.
+
+Rules:
+
+- "Hinweis geändert" comes only from `!noticeEquals(current, lastTold)`; there is no tag when no last-told notice is stored. Notice texts use `badgeText` (moved to `src/lib/server/notice-text.ts`, re-exported from `booked-view.ts`) with `now` as the "at" instant.
+- The code shown is the keybox row's `snapshot_keybox_code` once accepted (a blank one counts as none): muted "Code 4711", or the tag "Alter Code 1234" when it differs from the current keybox code setting. With the setting unset there is no old-code tag. Keybox times read "Mo 16:00" within 6 days of today, else "Mo 1. März, 16:00".
+- The out-of-times flag is `outsideCurrentTimes({ start, durationMin }, seasons, settings)` in `src/lib/domain/flags.ts`: the local date is in no season row, or the booking starts before opening or ends after closing. It is derived on every request, never stored, and only for bookings that have not started.
+- Refused emails listed on the detail and flagged on the home are unresolved refused confirmations and non-urgent heat-change emails. A refused keybox or urgent heat-change email belongs to the call list (Story 3.6).
+
+### Drafted copy for operator review (Story 3.2)
+
+From EXPERIENCE.md: "Hinweis geändert" · "Alter Code 4711", the detail terms, the keybox status patterns "verschickt … · Code …" / "geplant …" / "abgelehnt: …", the plural flag line "{n} Buchungen liegen ausserhalb der neuen Zeiten. Sie bleiben gültig.", "Keine Buchungen an diesem Tag.", "Zu den Buchungen", "Nächste Buchungen", "Heute · …" / "Morgen · …" and "Hat schon begonnen.", DE and EN. Everything else is a draft:
+
+| Key | DE | EN |
+| --- | --- | --- |
+| `skip_to_bookings` (only the EN text is drafted; the DE text is from EXPERIENCE.md) | Zu den Buchungen | Skip to bookings |
+| `admin_day_title` (`<title>`) | {date} · Buchungen | {date} · Bookings |
+| `admin_day_status` (after a day switch, singular / plural) | {date}: 1 Buchung / {date}: {count} Buchungen | {date}: 1 booking / {date}: {count} bookings |
+| `admin_day_status_empty` (after a switch to a day without bookings; the visible line stays "Keine Buchungen an diesem Tag.") | {date}: Keine Buchungen. | {date}: No bookings. |
+| `admin_table_caption` (hidden) | Buchungen am {date} | Bookings on {date} |
+| `admin_col_time` / `admin_col_keybox_code` (table headers) | Zeit / Code verschickt | Time / Code sent |
+| `admin_code` (muted, row) | Code {code} | Code {code} |
+| `admin_keybox_sent_no_code` | verschickt {when} | sent {when} |
+| `admin_keybox_refused_plain` (no reason stored) | abgelehnt | refused |
+| `admin_keybox_in_flight` | wird gerade verschickt | sending now |
+| `admin_keybox_retrying` (transient failure) | nicht zugestellt, neuer Versuch {when} | not delivered, trying again {when} |
+| `admin_keybox_expired` | nicht verschickt: zu spät | not sent: too late |
+| `admin_keybox_cancelled` | nicht verschickt: abgebrochen | not sent: cancelled |
+| `admin_keybox_none` (no keybox row) | keine geplant | none planned |
+| `admin_duration` | {minutes} Minuten | {minutes} minutes |
+| `admin_no_name` (contact data erased) | (ohne Name) | (no name) |
+| `admin_notice_none` (no notice stored) | nicht gespeichert | not stored |
+| `admin_booking_title` (`<title>`) | Buchung {date}, {time} | Booking {date}, {time} |
+| `admin_flag_tag` (row tag) | Ausserhalb der Zeiten | Outside the times |
+| `admin_flag_detail` | Diese Buchung liegt ausserhalb der neuen Zeiten. Sie bleibt gültig. | This booking falls outside the new times. It stays valid. |
+| `admin_strip_flagged` (hidden name of a flagged strip day) | {date}, ausserhalb der Zeiten | {date}, outside the times |
+| `admin_flag_outside` (singular) | 1 Buchung liegt ausserhalb der neuen Zeiten. Sie bleibt gültig. | 1 booking falls outside the new times. It stays valid. |
+| `admin_flag_refused` (singular / plural) | 1 Buchung hat eine abgelehnte Mail. / {count} Buchungen haben eine abgelehnte Mail. | 1 booking has a refused email. / {count} bookings have a refused email. |
+| `admin_flag_link` | {date}, {time} · {name} | {date}, {time} · {name} |
+| `admin_refused_heading` (detail) | Abgelehnte Mails | Refused emails |
+| `admin_refused_item` / `admin_refused_item_plain` | {kind} abgelehnt: {reason} / {kind} abgelehnt | {kind} refused: {reason} / {kind} refused |
+| `admin_kind_confirmation` / `admin_kind_heat_change` | Bestätigung / Hinweismail | Confirmation / Notice email |
+| `admin_not_found_link` (admin 404) | Zu den Buchungen | To the bookings |
 
 ## Scaffold decisions
 

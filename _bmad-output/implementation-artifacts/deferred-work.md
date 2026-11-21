@@ -55,3 +55,11 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-3-1-admin-signs-in.md`
   summary: The nav badge counts run `getCallFeed` on every admin navigation, and it computes the current notice for every future booking day.
   evidence: The `(portal)` layout load reruns on each navigation. That is fine at the current booking volume; limit the work to keybox-phase bookings if admin pages get slow.
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-3-2-admin-sees-bookings-by-day.md`
+  summary: The admin home's out-of-times and refused-email flags list one link per booking with no cap, so a big hours or season change can put dozens of links above the grid.
+  evidence: `buildHomeFlags` in `src/lib/server/admin-view.ts` (Story 3.2 review). Fine at current volume; a cap with "and N more" linking to the day view would need a UX decision.
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-3-2-admin-sees-bookings-by-day.md`
+  summary: The admin day-switch logic (`isAdminDayPath`, `pendingAdminDay`, the busy/slow/announce effect in `AdminDayView.svelte`) copies the guest `day-nav.ts`/`DayView.svelte` pattern instead of sharing it.
+  evidence: Story 3.2 review; a fix in one will drift from the other. A shared helper parameterised by the path pattern would remove the copy; best done with the browser test layer (P3).

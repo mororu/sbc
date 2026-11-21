@@ -1,4 +1,4 @@
-// Pure core: start times, heat state, notice, heat change, conflicts, keybox phase, call list, worker health, sign-in limit (AD-1).
+// Pure core: start times, heat state, notice, heat change, conflicts, keybox phase, call list, worker health, sign-in limit, flags (AD-1).
 // May import only #lib/time. No DB, mail, clock, env or I/O; `now` is always a parameter.
 export * from './start-times.ts';
 export * from './calendar.ts';
@@ -9,3 +9,4 @@ export * from './outbox.ts';
 export * from './call-list.ts';
 export * from './worker-health.ts';
 export * from './sign-in-limit.ts';
+export * from './flags.ts';

@@ -10,7 +10,7 @@
 	import AppHeader from '#lib/components/AppHeader.svelte';
 	import Icon from '#lib/components/Icon.svelte';
 	import SkipLink from '#lib/components/SkipLink.svelte';
-	import { ADMIN_TABS, ADMIN_TAB_HREF, activeAdminTab, type AdminTab } from '#lib/admin-nav.ts';
+	import { ADMIN_TABS, ADMIN_TAB_HREF, activeAdminTab, adminSkipTarget, type AdminTab } from '#lib/admin-nav.ts';
 	import { m } from '#lib/paraglide/messages.js';
 	import type { LayoutProps } from './$types';
 
@@ -25,16 +25,18 @@
 	};
 
 	const active = $derived(activeAdminTab(page.url.pathname));
+	// The admin day view puts the bookings (#bookings) after the date strip; skip straight to them.
+	const skip = $derived(adminSkipTarget(page.data));
 </script>
 
-<SkipLink />
+<SkipLink target={skip} />
 <div class="shell">
 	<AppHeader />
 	<nav class="admin-nav" aria-label={m.admin_nav_name()}>
 		<ul>
 			{#each ADMIN_TABS as tab (tab)}
 				<li>
-					<!-- eslint-disable svelte/no-navigation-without-resolve -- root-relative admin hrefs (admin-nav.ts); later stories add the routes -->
+					<!-- eslint-disable svelte/no-navigation-without-resolve -- root-relative admin hrefs (admin-nav.ts); later stories add the remaining routes -->
 					<a class="tab" href={ADMIN_TAB_HREF[tab]} aria-current={active === tab ? 'page' : undefined}>
 						{labels[tab]()}
 						{#if tab === 'home'}

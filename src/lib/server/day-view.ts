@@ -89,6 +89,8 @@ export type StripDay = {
 	day: string;
 	/** The accessible name: "Mittwoch, 13. Januar", or "Mittwoch, 13. Januar, nicht buchbar". */
 	name: string;
+	/** Admin strip only: the day has a booking outside the current times (a visible marker; the name says it). */
+	flagged?: boolean;
 };
 
 export type DayView = {

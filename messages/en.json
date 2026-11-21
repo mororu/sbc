@@ -256,5 +256,97 @@
 	"admin_home_title": "Overview",
 	"admin_worker_not_running": "Sending isn't running.",
 	"admin_worker_stale": "Sending hasn't run since {time}.",
-	"admin_worker_failing": "No email has gone out since {time}. Sending keeps trying."
+	"admin_worker_failing": "No email has gone out since {time}. Sending keeps trying.",
+	"skip_to_bookings": "Skip to bookings",
+	"admin_day_title": "{date} · Bookings",
+	"admin_day_empty": "No bookings this day.",
+	"admin_day_status": [
+		{
+			"declarations": [
+				"input date",
+				"input count",
+				"local countPlural = count: plural"
+			],
+			"selectors": [
+				"countPlural"
+			],
+			"match": {
+				"countPlural=one": "{date}: {count} booking",
+				"countPlural=*": "{date}: {count} bookings"
+			}
+		}
+	],
+	"admin_table_caption": "Bookings on {date}",
+	"admin_col_time": "Time",
+	"admin_col_keybox_code": "Code sent",
+	"admin_term_name": "Name",
+	"admin_term_email": "Email",
+	"admin_term_mobile": "Mobile",
+	"admin_term_people": "People",
+	"admin_term_duration": "Duration",
+	"admin_term_keybox": "Keybox email",
+	"admin_term_notice_now": "Notice now",
+	"admin_term_last_told": "Last told",
+	"admin_tag_changed": "Notice changed",
+	"admin_tag_old_code": "Old code {code}",
+	"admin_code": "Code {code}",
+	"admin_keybox_sent": "sent {when} · code {code}",
+	"admin_keybox_sent_no_code": "sent {when}",
+	"admin_keybox_planned": "planned {when}",
+	"admin_keybox_refused": "refused: {reason}",
+	"admin_keybox_refused_plain": "refused",
+	"admin_keybox_in_flight": "sending now",
+	"admin_keybox_retrying": "not delivered, trying again {when}",
+	"admin_keybox_expired": "not sent: too late",
+	"admin_keybox_cancelled": "not sent: cancelled",
+	"admin_keybox_none": "none planned",
+	"admin_duration": "{minutes} minutes",
+	"admin_no_name": "(no name)",
+	"admin_notice_none": "not stored",
+	"admin_booking_title": "Booking {date}, {time}",
+	"admin_started": "Already started.",
+	"admin_flag_tag": "Outside the times",
+	"admin_flag_detail": "This booking falls outside the new times. It stays valid.",
+	"admin_strip_flagged": "{date}, outside the times",
+	"admin_flag_outside": [
+		{
+			"declarations": [
+				"input count",
+				"local countPlural = count: plural"
+			],
+			"selectors": [
+				"countPlural"
+			],
+			"match": {
+				"countPlural=one": "{count} booking falls outside the new times. It stays valid.",
+				"countPlural=*": "{count} bookings fall outside the new times. They stay valid."
+			}
+		}
+	],
+	"admin_flag_refused": [
+		{
+			"declarations": [
+				"input count",
+				"local countPlural = count: plural"
+			],
+			"selectors": [
+				"countPlural"
+			],
+			"match": {
+				"countPlural=one": "{count} booking has a refused email.",
+				"countPlural=*": "{count} bookings have a refused email."
+			}
+		}
+	],
+	"admin_flag_link": "{date}, {time} · {name}",
+	"admin_refused_heading": "Refused emails",
+	"admin_refused_item": "{kind} refused: {reason}",
+	"admin_refused_item_plain": "{kind} refused",
+	"admin_kind_confirmation": "Confirmation",
+	"admin_kind_heat_change": "Notice email",
+	"admin_next_heading": "Next bookings",
+	"admin_group_today": "Today · {date}",
+	"admin_group_tomorrow": "Tomorrow · {date}",
+	"admin_not_found_link": "To the bookings",
+	"admin_day_status_empty": "{date}: No bookings."
 }

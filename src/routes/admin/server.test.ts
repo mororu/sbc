@@ -1,6 +1,7 @@
 // The admin routes on the server (Story 3.1 matrix, "Sign in", "Bad target", "Wrong", "Sign out",
-// and the nav counts): an in-memory database, DEV_NOW at Tue 12 Jan 2027, 10:00 Zurich.
-import { isActionFailure, isRedirect } from '@sveltejs/kit';
+// and the nav counts; Story 3.2 matrix, "Default", "Accept", "Detail" and "Home"): an in-memory
+// database, DEV_NOW at Tue 12 Jan 2027, 10:00 Zurich.
+import { isActionFailure, isHttpError, isRedirect } from '@sveltejs/kit';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 // The test migrates and edits its own in-memory database; routes never touch the db layer.
 // eslint-disable-next-line no-restricted-imports
@@ -13,6 +14,9 @@ import { actions, load as loadLogin } from './login/+page.server.ts';
 import { POST as logout } from './logout/+server.ts';
 import { load as loadShell } from './(portal)/+layout.server.ts';
 import { load as loadHome } from './(portal)/+page.server.ts';
+import { load as loadDefaultDay } from './(portal)/day/+page.server.ts';
+import { load as loadDay } from './(portal)/day/[date]/+page.server.ts';
+import { load as loadBooking } from './(portal)/booking/[id]/+page.server.ts';
 
 const clock = vi.hoisted(() => ({ now: '2027-01-12T09:00:00Z', locale: 'de' as 'de' | 'en', busy: false }));
 
@@ -65,6 +69,7 @@ beforeEach(() => {
 type Outcome =
 	| { redirect: { status: number; location: string } }
 	| { failure: { status: number; data: unknown } }
+	| { error: number }
 	| { data: unknown };
 
 async function run(fn: () => unknown): Promise<Outcome> {
@@ -74,6 +79,7 @@ async function run(fn: () => unknown): Promise<Outcome> {
 		return { data: result };
 	} catch (e) {
 		if (isRedirect(e)) return { redirect: { status: e.status, location: e.location } };
+		if (isHttpError(e)) return { error: e.status };
 		throw e;
 	}
 }
@@ -214,11 +220,88 @@ describe('admin shell and home', () => {
 	});
 
 	it('warns on the home page that the worker is not running before its first tick', async () => {
-		expect(await run(() => (loadHome as (e: unknown) => unknown)({}))).toEqual({ data: { home: { warning: 'Der Versand läuft nicht.' } } });
+		expect(await run(() => (loadHome as (e: unknown) => unknown)({}))).toMatchObject({ data: { home: { warning: 'Der Versand läuft nicht.' } } });
 	});
 
 	it('warns in English when the admin uses English', async () => {
 		clock.locale = 'en';
-		expect(await run(() => (loadHome as (e: unknown) => unknown)({}))).toEqual({ data: { home: { warning: "Sending isn't running." } } });
+		expect(await run(() => (loadHome as (e: unknown) => unknown)({}))).toMatchObject({ data: { home: { warning: "Sending isn't running." } } });
+	});
+});
+
+describe('admin day and booking routes', () => {
+	const sqlite = () => getDb().$client;
+	let n = 0;
+	const insertBooking = (start: string, over: { deletedAt?: string; durationMin?: number } = {}) => {
+		const id = `RT${String(++n).padStart(20, '0')}`;
+		return Number(
+			sqlite()
+				.prepare(
+					"insert into booking (start_at, duration_min, changeover_min, created_at, season_id, party_size, locale, public_id, submit_token, name, email, deleted_at) values (?, ?, 15, '2027-01-07T10:00:00Z', 1, 2, 'de', ?, ?, 'Tom Brunner', 'tom@example.ch', ?)"
+				)
+				.run(start, over.durationMin ?? 60, id, id, over.deletedAt ?? null).lastInsertRowid
+		);
+	};
+	const day = (date: string) => run(() => (loadDay as (e: unknown) => unknown)({ params: { date } }));
+	const detail = (id: string) => run(() => (loadBooking as (e: unknown) => unknown)({ params: { id } }));
+	const home = () => run(() => (loadHome as (e: unknown) => unknown)({})) as Promise<{ data: { home: Record<string, never> } }>;
+
+	beforeEach(() => {
+		sqlite().exec(
+			"delete from outbox; delete from booking; delete from block; delete from season where id <> 1; update season set start_date = '2027-01-09', end_date = '2027-03-31'; update setting set open_minute = 960, close_minute = 1320, keybox_code = '4711'"
+		);
+	});
+
+	it.each([
+		['today in season', null, '/admin/day/2027-01-12'],
+		['today before the season', "update season set start_date = '2027-02-01'", '/admin/day/2027-02-01'],
+		['no current or next season', "update season set start_date = '2026-11-01', end_date = '2026-12-31'", '/admin/day/2027-01-12']
+	])('/admin/day redirects (%s)', async (_, sql, location) => {
+		if (sql) sqlite().exec(sql);
+		expect(await run(() => (loadDefaultDay as (e: unknown) => unknown)({}))).toEqual({ redirect: { status: 303, location } });
+	});
+
+	it('accepts a past season day and a block-only day; anything else is an admin 404', async () => {
+		sqlite().exec("insert into season (id, start_date, end_date) values (2, '2026-11-20', '2026-12-20')");
+		sqlite().exec("insert into block (start_at, end_at, reason) values ('2027-04-05T07:00:00Z', '2027-04-05T09:00:00Z', 'cleaning')");
+		expect(await day('2026-12-01')).toMatchObject({ data: { view: { kind: 'admin-day', date: '2026-12-01' } } });
+		expect(await day('2027-04-05')).toMatchObject({ data: { view: { kind: 'admin-day', date: '2027-04-05' } } });
+		for (const date of ['2027-05-01', '2027-13-01', 'x']) expect(await day(date)).toEqual({ error: 404 });
+	});
+
+	it('shows the day with its live bookings and the empty line without', async () => {
+		const live = insertBooking('2027-01-12T16:15:00Z');
+		insertBooking('2027-01-13T16:15:00Z', { deletedAt: '2027-01-10T08:00:00Z' });
+		expect(await day('2027-01-12')).toMatchObject({ data: { view: { rows: [{ id: live, name: 'Tom Brunner', email: 'tom@example.ch' }] } } });
+		expect(await day('2027-01-13')).toMatchObject({ data: { view: { rows: [], empty: 'Keine Buchungen an diesem Tag.' } } });
+	});
+
+	it('shows a live booking detail; deleted, unknown and malformed ids are an admin 404', async () => {
+		const live = insertBooking('2027-01-12T16:15:00Z');
+		const gone = insertBooking('2027-01-12T18:00:00Z', { deletedAt: '2027-01-10T08:00:00Z' });
+		expect(await detail(String(live))).toMatchObject({ data: { view: { kind: 'admin-booking', heading: '17:15–18:15' } } });
+		for (const id of [String(gone), '9999', 'abc']) expect(await detail(id)).toEqual({ error: 404 });
+	});
+
+	it('fills the home: a row under Heute, the empty line under Morgen, one flag, two refused-email links', async () => {
+		insertBooking('2027-01-12T16:15:00Z');
+		insertBooking('2027-01-14T20:30:00Z', { durationMin: 90 });
+		for (const start of ['2027-01-15T16:00:00Z', '2027-01-16T16:00:00Z']) {
+			const id = insertBooking(start);
+			sqlite().prepare("insert into outbox (booking_id, kind, state, due_at, reason) values (?, 'confirmation', 'refused', '2027-01-07T10:00:00Z', 'smtp 550')").run(id);
+		}
+		const { data } = await home();
+		const view = data.home as unknown as {
+			next: { groups: { label: string; rows: unknown[]; empty: string | null }[] };
+			flags: { kind: string; text: string; links: unknown[] }[];
+		};
+		expect(view.next.groups.map((g) => [g.label, g.rows.length, g.empty])).toEqual([
+			['Heute · Di 12. Januar', 1, null],
+			['Morgen · Mi 13. Januar', 0, 'Keine Buchungen an diesem Tag.']
+		]);
+		expect(view.flags.map((f) => [f.kind, f.text, f.links.length])).toEqual([
+			['outside', '1 Buchung liegt ausserhalb der neuen Zeiten. Sie bleibt gültig.', 1],
+			['refused', '2 Buchungen haben eine abgelehnte Mail.', 2]
+		]);
 	});
 });

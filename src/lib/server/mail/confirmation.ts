@@ -6,7 +6,7 @@
 import { isPastKeyboxCutoff, keyboxCutoff, parseNotice } from '#lib/domain/index.ts';
 import { m } from '#lib/paraglide/messages.js';
 import { addMinutes, formatDateShort, formatTime, localDate, type Instant, type Locale } from '#lib/time/index.ts';
-import { badgeText } from '../booked-view.ts';
+import { badgeText } from '../notice-text.ts';
 import { cancelBlock, whenItems } from './blocks.ts';
 import { renderEmail, type Block, type RenderedEmail } from './layout.ts';
 

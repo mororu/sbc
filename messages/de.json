@@ -256,5 +256,97 @@
 	"admin_home_title": "Übersicht",
 	"admin_worker_not_running": "Der Versand läuft nicht.",
 	"admin_worker_stale": "Der Versand läuft seit {time} nicht.",
-	"admin_worker_failing": "Seit {time} geht keine Mail raus. Der Versand versucht es weiter."
+	"admin_worker_failing": "Seit {time} geht keine Mail raus. Der Versand versucht es weiter.",
+	"skip_to_bookings": "Zu den Buchungen",
+	"admin_day_title": "{date} · Buchungen",
+	"admin_day_empty": "Keine Buchungen an diesem Tag.",
+	"admin_day_status": [
+		{
+			"declarations": [
+				"input date",
+				"input count",
+				"local countPlural = count: plural"
+			],
+			"selectors": [
+				"countPlural"
+			],
+			"match": {
+				"countPlural=one": "{date}: {count} Buchung",
+				"countPlural=*": "{date}: {count} Buchungen"
+			}
+		}
+	],
+	"admin_table_caption": "Buchungen am {date}",
+	"admin_col_time": "Zeit",
+	"admin_col_keybox_code": "Code verschickt",
+	"admin_term_name": "Name",
+	"admin_term_email": "E-Mail",
+	"admin_term_mobile": "Handy",
+	"admin_term_people": "Personen",
+	"admin_term_duration": "Dauer",
+	"admin_term_keybox": "Schlüsselmail",
+	"admin_term_notice_now": "Hinweis jetzt",
+	"admin_term_last_told": "Zuletzt gesagt",
+	"admin_tag_changed": "Hinweis geändert",
+	"admin_tag_old_code": "Alter Code {code}",
+	"admin_code": "Code {code}",
+	"admin_keybox_sent": "verschickt {when} · Code {code}",
+	"admin_keybox_sent_no_code": "verschickt {when}",
+	"admin_keybox_planned": "geplant {when}",
+	"admin_keybox_refused": "abgelehnt: {reason}",
+	"admin_keybox_refused_plain": "abgelehnt",
+	"admin_keybox_in_flight": "wird gerade verschickt",
+	"admin_keybox_retrying": "nicht zugestellt, neuer Versuch {when}",
+	"admin_keybox_expired": "nicht verschickt: zu spät",
+	"admin_keybox_cancelled": "nicht verschickt: abgebrochen",
+	"admin_keybox_none": "keine geplant",
+	"admin_duration": "{minutes} Minuten",
+	"admin_no_name": "(ohne Name)",
+	"admin_notice_none": "nicht gespeichert",
+	"admin_booking_title": "Buchung {date}, {time}",
+	"admin_started": "Hat schon begonnen.",
+	"admin_flag_tag": "Ausserhalb der Zeiten",
+	"admin_flag_detail": "Diese Buchung liegt ausserhalb der neuen Zeiten. Sie bleibt gültig.",
+	"admin_strip_flagged": "{date}, ausserhalb der Zeiten",
+	"admin_flag_outside": [
+		{
+			"declarations": [
+				"input count",
+				"local countPlural = count: plural"
+			],
+			"selectors": [
+				"countPlural"
+			],
+			"match": {
+				"countPlural=one": "{count} Buchung liegt ausserhalb der neuen Zeiten. Sie bleibt gültig.",
+				"countPlural=*": "{count} Buchungen liegen ausserhalb der neuen Zeiten. Sie bleiben gültig."
+			}
+		}
+	],
+	"admin_flag_refused": [
+		{
+			"declarations": [
+				"input count",
+				"local countPlural = count: plural"
+			],
+			"selectors": [
+				"countPlural"
+			],
+			"match": {
+				"countPlural=one": "{count} Buchung hat eine abgelehnte Mail.",
+				"countPlural=*": "{count} Buchungen haben eine abgelehnte Mail."
+			}
+		}
+	],
+	"admin_flag_link": "{date}, {time} · {name}",
+	"admin_refused_heading": "Abgelehnte Mails",
+	"admin_refused_item": "{kind} abgelehnt: {reason}",
+	"admin_refused_item_plain": "{kind} abgelehnt",
+	"admin_kind_confirmation": "Bestätigung",
+	"admin_kind_heat_change": "Hinweismail",
+	"admin_next_heading": "Nächste Buchungen",
+	"admin_group_today": "Heute · {date}",
+	"admin_group_tomorrow": "Morgen · {date}",
+	"admin_not_found_link": "Zu den Buchungen",
+	"admin_day_status_empty": "{date}: Keine Buchungen."
 }

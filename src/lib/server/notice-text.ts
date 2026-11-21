@@ -1,7 +1,8 @@
 // Notice copy: the heat notice sentences of a free start time (`offerNoticeText`, used by the day
-// rows and the booking form; `coldNoticeText`, also used by the confirmation badge for its cold
-// fallbacks), plus `durationLimit` and `sentence`, which the day rows use for their duration limit
-// and screen-reader text. Formatted on the server, so client code never needs src/lib/time.
+// rows and the booking form; `coldNoticeText`, also used by `badgeText` for its cold fallbacks), the
+// badge text of a stored notice (`badgeText`: the confirmation, the mail and the admin pages), plus
+// `durationLimit` and `sentence`, which the day rows use for their duration limit and screen-reader
+// text. Formatted on the server, so client code never needs src/lib/time.
 import { DURATIONS, type Duration, type HeatState, type Notice } from '#lib/domain/index.ts';
 import { m } from '#lib/paraglide/messages.js';
 import { compareInstants, formatTime, minutesBetween, type Instant, type Locale } from '#lib/time/index.ts';
@@ -47,4 +48,26 @@ export function offerNoticeText(
 	return offer.heat === 'hot'
 		? m.hot_notice({ time: formatTime(offer.start) }, { locale })
 		: coldNoticeText(offer.notice, offer.start, now, locale);
+}
+
+/**
+ * The badge text of a notice: "Schon heiss um 18:15." / "Kaltstart: komm zwischen …". Too little
+ * time and an arrival already past use the row texts behind "Kaltstart: ". "Past" is judged at
+ * `at`: the confirmation passes the booking time (the state at booking), the admin pages `now`.
+ */
+export function badgeText(notice: Notice, start: Instant, at: Instant, locale: Locale): string {
+	if (notice.heat === 'hot') return m.booked_badge_hot({ time: formatTime(start) }, { locale });
+	const earliest = notice.earliest;
+	if (earliest === null) throw new Error('A cold notice without an earliest arrival');
+	const past = compareInstants(at, notice.latest ?? earliest) > 0;
+	if (notice.latest !== null && !past) {
+		return m.booked_badge_cold(
+			{ earliest: formatTime(earliest), latest: formatTime(notice.latest) },
+			{ locale }
+		);
+	}
+	// The row text continues the sentence after "Kaltstart: ", so it starts lower-case.
+	const row = coldNoticeText(notice, start, at, locale);
+	const rest = row.charAt(0).toLocaleLowerCase(locale) + row.slice(1);
+	return m.booked_badge_cold_other({ notice: rest }, { locale });
 }
