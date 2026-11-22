@@ -23,6 +23,7 @@ import {
 	keyboxStatus,
 	loadAdminBookingView,
 	loadAdminDayView,
+	type AdminDayView,
 	type AdminRowContext
 } from './admin-day-view.ts';
 
@@ -181,15 +182,18 @@ describe('adminStripDates and adminHomeDay', () => {
 	});
 });
 
+/** The booking ids of a day view's entries, in order. */
+const bookingIds = (v: AdminDayView | null | undefined) => v?.entries.flatMap((e) => (e.kind === 'booking' ? [e.row.id] : []));
+
 describe('buildAdminDayView', () => {
 	const view = (date: string, stripDates: string[], bookings: AdminBooking[] = [], flagged: string[] = []) =>
-		buildAdminDayView({ date, bookings, stripDates, flaggedDates: new Set(flagged), context: context(), replies: buildReplies([], 0, 'de') });
+		buildAdminDayView({ date, bookings, stripDates, flaggedDates: new Set(flagged), context: context(), replies: buildReplies([], 0, 'de'), blocks: [] });
 
 	it('has the heading, title, rows and status', () => {
 		const v = view('2027-01-12', ['2027-01-12'], [booking(), booking({ id: 8, start: '2027-01-12T18:00:00Z' })]);
 		expect(v.title).toBe('Di, 12. Januar · Buchungen');
 		expect(v.heading).toEqual({ eyebrow: 'Heute', date: '12. Januar' });
-		expect(v.rows.map((r) => r.id)).toEqual([7, 8]);
+		expect(bookingIds(v)).toEqual([7, 8]);
 		expect(v.empty).toBeNull();
 		expect(v.status).toBe('Dienstag, 12. Januar: 2 Buchungen');
 		expect(view('2027-01-12', [], [booking()]).status).toBe('Dienstag, 12. Januar: 1 Buchung');
@@ -377,9 +381,9 @@ describe('loaders', () => {
 	it('shows the live bookings of the day and not a deleted one', () => {
 		const live = insertBooking('2027-01-12T16:15:00Z');
 		insertBooking('2027-01-12T18:00:00Z', '2027-01-10T08:00:00Z');
-		expect(loadAdminDayView('2027-01-12', 'de', opts())?.rows.map((r) => r.id)).toEqual([live]);
+		expect(bookingIds(loadAdminDayView('2027-01-12', 'de', opts()))).toEqual([live]);
 		const gone = loadAdminDayView('2027-01-13', 'de', opts());
-		expect(gone?.rows).toEqual([]);
+		expect(bookingIds(gone)).toEqual([]);
 	});
 
 	it('After delete: the day view lists the open reply reminder of the deleted guest (Story 3.4)', () => {
@@ -396,7 +400,7 @@ describe('loaders', () => {
 			[anna, 'Anna Meier', 'Di 12. Januar, 16:00–17:00 · gelöscht', 'anna@example.ch']
 		]);
 		expect(v?.replies.count).toBe(2);
-		expect(v?.rows).toEqual([]);
+		expect(bookingIds(v)).toEqual([]);
 		expect(loadAdminDayView('2027-01-13', 'de', opts())?.replies.items.map((r) => r.id)).toEqual([other]);
 	});
 

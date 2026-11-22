@@ -5,14 +5,18 @@
 	links to the booking detail through one stretched link on it (`::after`, inset 0), so no
 	interactive content is nested. The notice columns show the heat state and the notice text; a
 	missing notice is a dash with hidden "nicht gespeichert". Email and mobile are text here; the
-	detail has the links.
+	detail has the links. A block (Story 3.5) is a row of its own in start order: its time range as the
+	row header and "Block · Reinigung" across the other columns, not a link.
 -->
 <script lang="ts">
 	import ChangeTag from './ChangeTag.svelte';
 	import Icon from './Icon.svelte';
 	import type { AdminDayView, AdminNotice } from '#lib/server/admin-day-view.ts';
 
-	let { rows, labels }: { rows: AdminDayView['rows']; labels: AdminDayView['labels'] } = $props();
+	let { entries, labels }: { entries: AdminDayView['entries']; labels: AdminDayView['labels'] } = $props();
+
+	/** A block's text spans every column after the time. */
+	const blockSpan = $derived(Object.keys(labels.columns).length - 1);
 </script>
 
 {#snippet state(notice: AdminNotice | null)}
@@ -42,7 +46,14 @@
 		</tr>
 	</thead>
 	<tbody>
-		{#each rows as row (row.id)}
+		{#each entries as entry (entry.kind === 'block' ? `block-${entry.block.id}` : `booking-${entry.row.id}`)}
+			{#if entry.kind === 'block'}
+				<tr class="block">
+					<th class="time" scope="row"><time datetime={entry.block.datetime}>{entry.block.time}</time></th>
+					<td colspan={blockSpan}>{entry.block.text}</td>
+				</tr>
+			{:else}
+			{@const row = entry.row}
 			<tr>
 				<th class="time" scope="row"><a class="stretch" href={row.href}><time datetime={row.datetime}>{row.time}</time></a></th>
 				<td>{row.name}</td>
@@ -61,6 +72,7 @@
 					{#if row.oldCode}<ChangeTag text={row.oldCode} />{:else}{row.sentCode ?? '–'}{/if}
 				</td>
 			</tr>
+			{/if}
 		{/each}
 	</tbody>
 </table>
@@ -87,8 +99,11 @@
 	tr {
 		position: relative;
 	}
-	tbody tr:hover {
+	tbody tr:not(.block):hover {
 		background: var(--line-subtle);
+	}
+	.block td {
+		color: var(--muted);
 	}
 	td,
 	tbody th {

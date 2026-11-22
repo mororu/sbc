@@ -1,8 +1,9 @@
 // The admin routes on the server (Story 3.1 matrix, "Sign in", "Bad target", "Wrong", "Sign out",
 // and the nav counts; Story 3.2 matrix, "Default", "Accept", "Detail" and "Home"; Story 3.3, the
 // delete action: success, stale, past, gone and a lock timeout; Story 3.4, the replyDone action on
-// the home and the day view: done, already done, a lock timeout, and the replies on both pages): an
-// in-memory database, DEV_NOW at Tue 12 Jan 2027, 10:00 Zurich.
+// the home and the day view: done, already done, a lock timeout, and the replies on both pages;
+// Story 3.5, the Blocks list and form: check, save and delete outcomes, the empty list and the day
+// view's block rows): an in-memory database, DEV_NOW at Tue 12 Jan 2027, 10:00 Zurich.
 import { isActionFailure, isHttpError, isRedirect } from '@sveltejs/kit';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 // The test migrates and edits its own in-memory database; routes never touch the db layer.
@@ -19,8 +20,10 @@ import { actions as homeActions, load as loadHome } from './(portal)/+page.serve
 import { load as loadDefaultDay } from './(portal)/day/+page.server.ts';
 import { actions as dayActions, load as loadDay } from './(portal)/day/[date]/+page.server.ts';
 import { actions as bookingActions, load as loadBooking } from './(portal)/booking/[id]/+page.server.ts';
+import { actions as blocksActions, load as loadBlocks } from './(portal)/blocks/+page.server.ts';
+import { actions as newBlockActions, load as loadNewBlock } from './(portal)/blocks/new/+page.server.ts';
 
-const clock = vi.hoisted(() => ({ now: '2027-01-12T09:00:00Z', locale: 'de' as 'de' | 'en', busy: false }));
+const clock = vi.hoisted(() => ({ now: '2027-01-12T09:00:00Z', locale: 'de' as 'de' | 'en', busy: false, createInvalid: false }));
 
 const busyError = () => Object.assign(new Error('database is locked'), { code: 'SQLITE_BUSY' });
 
@@ -37,6 +40,16 @@ vi.mock('#lib/server/commands/index.ts', async (importOriginal) => {
 		deleteBooking: (...args: Parameters<typeof actual.deleteBooking>) => {
 			if (clock.busy) throw busyError();
 			return actual.deleteBooking(...args);
+		},
+		createBlock: (...args: Parameters<typeof actual.createBlock>) => {
+			if (clock.busy) throw busyError();
+			// The command's own range check refusing a form that passed the schema.
+			if (clock.createInvalid) return { ok: false as const, code: 'invalid' as const };
+			return actual.createBlock(...args);
+		},
+		deleteBlock: (...args: Parameters<typeof actual.deleteBlock>) => {
+			if (clock.busy) throw busyError();
+			return actual.deleteBlock(...args);
 		},
 		markReplyDone: (...args: Parameters<typeof actual.markReplyDone>) => {
 			if (clock.busy) throw busyError();
@@ -72,6 +85,7 @@ beforeEach(() => {
 	clock.now = '2027-01-12T09:00:00Z';
 	clock.locale = 'de';
 	clock.busy = false;
+	clock.createInvalid = false;
 	resetSignInAttempts();
 	getDb().$client.exec('delete from admin_session');
 });
@@ -282,8 +296,10 @@ describe('admin day and booking routes', () => {
 	it('shows the day with its live bookings and the empty line without', async () => {
 		const live = insertBooking('2027-01-12T16:15:00Z');
 		insertBooking('2027-01-13T16:15:00Z', { deletedAt: '2027-01-10T08:00:00Z' });
-		expect(await day('2027-01-12')).toMatchObject({ data: { view: { rows: [{ id: live, name: 'Tom Brunner', email: 'tom@example.ch' }] } } });
-		expect(await day('2027-01-13')).toMatchObject({ data: { view: { rows: [], empty: 'Keine Buchungen an diesem Tag.' } } });
+		expect(await day('2027-01-12')).toMatchObject({
+			data: { view: { entries: [{ kind: 'booking', row: { id: live, name: 'Tom Brunner', email: 'tom@example.ch' } }] } }
+		});
+		expect(await day('2027-01-13')).toMatchObject({ data: { view: { entries: [], empty: 'Keine Buchungen an diesem Tag.' } } });
 	});
 
 	it('shows a live booking detail, the gone view of a deleted one; unknown and malformed ids are an admin 404', async () => {
@@ -432,6 +448,142 @@ describe('admin day and booking routes', () => {
 			clock.busy = true;
 			expect(await post('day', String(anna))).toEqual({ failure: { status: 503, data: { code: 'failed', bookingId: anna } } });
 			expect(doneAt(anna)).toBeNull();
+		});
+	});
+	describe('Blocks (Story 3.5)', () => {
+		const blocksPage = (query = '') =>
+			run(() => (loadBlocks as (e: unknown) => unknown)({ url: new URL(`http://localhost/admin/blocks${query}`) })) as Promise<{
+				data: { view: { rows: { id: number; text: string; delete: { token: string } | null }[]; empty: string | null; status: string | null } };
+			}>;
+		const insertBlock = (start: string, end: string) =>
+			Number(sqlite().prepare("insert into block (start_at, end_at, reason) values (?, ?, 'cleaning')").run(start, end).lastInsertRowid);
+		const blockCount = () => (sqlite().prepare('select count(*) as c from block').get() as { c: number }).c;
+		const form = (fields: Record<string, string>) => new URLSearchParams(fields);
+		const postNew = (action: 'check' | 'save', fields: Record<string, string>) => {
+			const request = new Request(`http://localhost/admin/blocks/new?/${action}`, { method: 'POST', body: form(fields) });
+			return run(() => (newBlockActions[action] as (e: unknown) => unknown)({ request }));
+		};
+		const postDelete = (fields: Record<string, string>) => {
+			const request = new Request('http://localhost/admin/blocks?/delete', { method: 'POST', body: form(fields) });
+			return run(() => (blocksActions.delete as (e: unknown) => unknown)({ request }));
+		};
+		const cleaning = { date: '2027-01-13', start: '09:00', end: '11:00', reason: 'cleaning' };
+		const tokenOf = async (fields: Record<string, string>) => {
+			const outcome = (await postNew('check', fields)) as { data: { dialog: { token: string } } };
+			return outcome.data.dialog.token;
+		};
+
+		it('shows "Keine Blocks geplant." without upcoming blocks, and the statuses from the flags', async () => {
+			insertBlock('2027-01-11T08:00:00Z', '2027-01-11T10:00:00Z');
+			expect(await blocksPage()).toMatchObject({ data: { view: { rows: [], empty: 'Keine Blocks geplant.', status: null } } });
+			expect((await blocksPage('?saved')).data.view.status).toBe('Gespeichert.');
+			expect((await blocksPage('?deleted')).data.view.status).toBe('Block gelöscht.');
+		});
+
+		it('loads the form with today and Reinigung', async () => {
+			expect(await run(() => (loadNewBlock as (e: unknown) => unknown)({}))).toMatchObject({
+				data: { view: { defaults: { date: '2027-01-12', reason: 'cleaning' } } }
+			});
+		});
+
+		it('check: 400 with errors and the values kept; 409 past at the start; 409 with the overlap refusal', async () => {
+			expect(await postNew('check', { ...cleaning, start: '09:03', end: '' })).toEqual({
+				failure: { status: 400, data: { values: { ...cleaning, start: '09:03', end: '' }, errors: { start: 'block_time_step', end: 'field_required' } } }
+			});
+			expect(await postNew('check', { ...cleaning, date: '2027-01-12', start: '09:00', end: '11:00' })).toEqual({
+				failure: { status: 409, data: { values: { ...cleaning, date: '2027-01-12' }, errors: { start: 'block_past' } } }
+			});
+			insertBooking('2027-01-13T09:00:00Z');
+			expect(await postNew('check', cleaning)).toEqual({
+				failure: {
+					status: 409,
+					data: { values: cleaning, refusal: 'Dieser Block überschneidet 1 Buchung: Mi 10:00 (Tom). Blocks löschen keine Buchungen.' }
+				}
+			});
+			// 02:30 on the spring switch (28 Mar 2027) does not exist.
+			const skipped = { ...cleaning, date: '2027-03-28', start: '02:30', end: '03:00' };
+			expect(await postNew('check', skipped)).toEqual({
+				failure: { status: 400, data: { values: skipped, errors: { start: 'block_time_missing' } } }
+			});
+			expect(blockCount()).toBe(0);
+		});
+
+		it('check then save: the dialog with its token, then 303 to the list with "Gespeichert." and the block on the day view', async () => {
+			const checked = (await postNew('check', cleaning)) as { data: { dialog: { title: string; what: string; token: string } } };
+			expect(checked.data.dialog).toMatchObject({ title: 'Block speichern?', what: 'Reinigung · Mi 13. Januar, 09:00–11:00' });
+			expect(await postNew('save', { ...cleaning, impactToken: checked.data.dialog.token })).toEqual({
+				redirect: { status: 303, location: '/admin/blocks?saved' }
+			});
+			const { data } = await blocksPage('?saved');
+			expect(data.view.rows.map((r) => r.text)).toEqual(['Mi 13. Januar · 09:00–11:00 · Reinigung']);
+			expect(await day('2027-01-13')).toMatchObject({
+				data: { view: { entries: [{ kind: 'block', block: { time: '09:00–11:00', text: 'Block · Reinigung' } }] } }
+			});
+		});
+
+		it('save: 409 stale with the new dialog, 409 conflict with the refusal, 503 on a lock timeout; nothing saved', async () => {
+			const token = await tokenOf({ ...cleaning, start: '08:00', end: '10:15' });
+			// Meanwhile Tom books 11:00 told hot: the block now makes him a cold start.
+			insertBooking('2027-01-13T10:00:00Z');
+			sqlite().exec("update booking set last_told_notice = '{\"heat\":\"hot\",\"earliest\":null,\"latest\":null}'");
+			const stale = (await postNew('save', { ...cleaning, start: '08:00', end: '10:15', impactToken: token })) as {
+				failure: { status: number; data: { code: string; dialog: { token: string } } };
+			};
+			expect(stale.failure).toMatchObject({ status: 409, data: { code: 'stale' } });
+			expect(stale.failure.data.dialog.token).not.toBe(token);
+			insertBooking('2027-01-13T08:30:00Z');
+			expect(await postNew('save', { ...cleaning, impactToken: token })).toMatchObject({
+				failure: { status: 409, data: { refusal: 'Dieser Block überschneidet 1 Buchung: Mi 09:30 (Tom). Blocks löschen keine Buchungen.' } }
+			});
+			clock.busy = true;
+			expect(await postNew('save', { ...cleaning, date: '2027-01-14', impactToken: 'x' })).toEqual({
+				failure: { status: 503, data: { values: { ...cleaning, date: '2027-01-14' }, code: 'failed' } }
+			});
+			expect(blockCount()).toBe(0);
+		});
+
+		it('save: refused with past after "Prüfen" (inline at the start), nothing saved', async () => {
+			const token = await tokenOf(cleaning);
+			clock.now = '2027-01-13T08:00:00Z';
+			expect(await postNew('save', { ...cleaning, impactToken: token })).toEqual({
+				failure: { status: 409, data: { values: cleaning, errors: { start: 'block_past' } } }
+			});
+			expect(blockCount()).toBe(0);
+		});
+
+		it('check and save: the gap refusal for a block inside a back-to-back changeover', async () => {
+			// Two bookings 10:00–11:00 and 11:15–12:15, back to back with the recorded 15 minutes.
+			insertBooking('2027-01-13T09:00:00Z');
+			insertBooking('2027-01-13T10:15:00Z');
+			const gap = { ...cleaning, start: '11:00', end: '11:15' };
+			const refusal = 'Zwischen diesen zwei Buchungen ist kein Platz für einen Block.';
+			expect(await postNew('check', gap)).toEqual({ failure: { status: 409, data: { values: gap, refusal } } });
+			// The command refuses a conflict before it looks at the token.
+			expect(await postNew('save', { ...gap, impactToken: 'x' })).toEqual({ failure: { status: 409, data: { values: gap, refusal } } });
+			expect(blockCount()).toBe(0);
+		});
+
+		it('save: a command `invalid` is a 400 at the end', async () => {
+			clock.createInvalid = true;
+			expect(await postNew('save', { ...cleaning, impactToken: 'x' })).toEqual({
+				failure: { status: 400, data: { values: cleaning, errors: { end: 'block_end_not_after_start' } } }
+			});
+		});
+
+		it('delete: 303 to the list with "Block gelöscht."; 410 when gone; 409 stale and past; 503; 404 for a malformed id', async () => {
+			const id = insertBlock('2027-01-13T08:00:00Z', '2027-01-13T10:00:00Z');
+			const token = (await blocksPage()).data.view.rows[0].delete?.token ?? '';
+			clock.busy = true;
+			expect(await postDelete({ blockId: String(id), impactToken: token })).toEqual({ failure: { status: 503, data: { code: 'failed', blockId: id } } });
+			clock.busy = false;
+			expect(await postDelete({ blockId: String(id), impactToken: 'x' })).toEqual({ failure: { status: 409, data: { code: 'stale', blockId: id } } });
+			expect(await postDelete({ blockId: String(id), impactToken: token })).toEqual({ redirect: { status: 303, location: '/admin/blocks?deleted' } });
+			expect(await postDelete({ blockId: String(id), impactToken: token })).toEqual({ failure: { status: 410, data: { code: 'not_found', blockId: id } } });
+			const running = insertBlock('2027-01-12T08:30:00Z', '2027-01-12T10:00:00Z');
+			expect(await postDelete({ blockId: String(running), impactToken: token })).toEqual({ failure: { status: 409, data: { code: 'past', blockId: running } } });
+			expect((await blocksPage()).data.view.rows).toMatchObject([{ id: running, delete: null }]);
+			for (const blockId of ['abc', '0']) expect(await postDelete({ blockId, impactToken: token })).toEqual({ error: 404 });
+			expect(await postDelete({ impactToken: token })).toEqual({ error: 404 });
 		});
 	});
 });

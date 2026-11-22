@@ -71,3 +71,11 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-3-3-admin-deletes-a-booking-with-an-impact-preview.md`
   summary: The impact consequence for a keybox email that was refused or expired still reads "weniger als 24 h. ANRUF NÖTIG", although the real reason to call is the failed keybox email.
   evidence: `impactOn` returns `call` for every `endsHeatChangeMail` state and the EXPERIENCE copy has only the 24 h line; such bookings are already on the call list (FR-14).
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-3-5-admin-creates-and-deletes-blocks.md`
+  summary: createBlock has no duplicate guard, so a retry after a lost 303 or a second tab can insert an identical second block (overlapping blocks are allowed).
+  evidence: Blind review of Story 3.5; harmless for heat and offers but clutters the Blocks list; a refusal needs copy (product decision).
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-3-5-admin-creates-and-deletes-blocks.md`
+  summary: The Blocks list computes one full deletion impact (getBlock, getDayData, told notice, keybox state, names) per upcoming block with no limit, an N+1 that grows with planned blocks.
+  evidence: Blind review of Story 3.5; fine for a handful of blocks, worth batching per date if the list grows.

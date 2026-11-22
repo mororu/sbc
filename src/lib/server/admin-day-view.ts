@@ -20,6 +20,7 @@ import { m } from '#lib/paraglide/messages.js';
 import {
 	adminDayAccepted,
 	deletedBookingDate,
+	getAdminDayBlocks,
 	getAdminBooking,
 	getAdminBookings,
 	getAdminStripExtraDates,
@@ -28,6 +29,7 @@ import {
 	getKeyboxSettings,
 	getSeasons,
 	getSettings,
+	type AdminBlock,
 	type AdminBooking,
 	type AdminKeyboxRow,
 	type AdminRefusal,
@@ -56,6 +58,7 @@ import {
 } from '#lib/time/index.ts';
 import { now as clockNow } from './clock.ts';
 import type { StripDay } from './day-view.ts';
+import { reasonText, timeRange } from './block-view.ts';
 import { buildImpactRow, type ImpactRowView } from './impact-view.ts';
 import { loadReplies, type RepliesView } from './reply-view.ts';
 import { badgeText } from './notice-text.ts';
@@ -172,6 +175,19 @@ export function buildAdminRow(booking: AdminBooking, context: AdminRowContext): 
 	};
 }
 
+/** One block on the admin day view (Story 3.5): its time range and reason. Not a link. */
+export type AdminDayBlockRow = {
+	id: number;
+	/** "09:00–11:00" */
+	time: string;
+	datetime: Instant;
+	/** "Block · Reinigung" */
+	text: string;
+};
+
+/** The day's bookings and blocks in start order (a block first on a tie), as the rows and the table show them. */
+export type AdminDayEntry = { kind: 'booking'; row: AdminRow } | { kind: 'block'; block: AdminDayBlockRow };
+
 export type AdminDayView = {
 	kind: 'admin-day';
 	date: LocalDate;
@@ -179,7 +195,8 @@ export type AdminDayView = {
 	title: string;
 	/** `h1`: eyebrow "Heute" or "Dienstag", then "12. Januar". */
 	heading: { eyebrow: string; date: string };
-	rows: AdminRow[];
+	/** The day's live bookings and its blocks (Story 3.5) merged in start order, a block first on a tie. */
+	entries: AdminDayEntry[];
 	/** The open reply reminders of bookings on this day (Story 3.4), above the bookings; the section only when non-empty. */
 	replies: RepliesView;
 	/** The current (else the next) season's days plus every later booking or block day, in date order. */
@@ -246,6 +263,15 @@ export function defaultAdminDay(options: { now?: Instant; db?: Db } = {}): Local
 	return adminHomeDay(getSeasons(options.db), options.now ?? clockNow());
 }
 
+const entryStart = (entry: AdminDayEntry): Instant => (entry.kind === 'block' ? entry.block.datetime : entry.row.datetime);
+
+/** Start order; on the same start a block comes before a booking (it is the thing the booking follows). */
+export function compareEntries(a: AdminDayEntry, b: AdminDayEntry): number {
+	const order = compareInstants(entryStart(a), entryStart(b));
+	if (order !== 0 || a.kind === b.kind) return order;
+	return a.kind === 'block' ? -1 : 1;
+}
+
 /** Pure: builds the admin day view. `bookings` are the day's live bookings in start order. */
 export function buildAdminDayView(input: {
 	date: LocalDate;
@@ -257,10 +283,24 @@ export function buildAdminDayView(input: {
 	context: AdminRowContext;
 	/** The day's reply reminders (`loadReplies` with the date). */
 	replies: RepliesView;
+	/** The blocks overlapping the day, in start order (`getAdminDayBlocks`). */
+	blocks: AdminBlock[];
 }): AdminDayView {
 	const { date, context, stripDates, flaggedDates } = input;
 	const { now, locale } = context;
 	const rows = input.bookings.map((b) => buildAdminRow(b, context));
+	const blocks = input.blocks.map(
+		(b): AdminDayBlockRow => ({
+			id: b.id,
+			time: timeRange(b.start, b.end),
+			datetime: b.start,
+			text: m.admin_day_block({ reason: reasonText(b.reason, locale) }, { locale })
+		})
+	);
+	const entries: AdminDayEntry[] = [
+		...blocks.map((block) => ({ kind: 'block' as const, block })),
+		...rows.map((row) => ({ kind: 'booking' as const, row }))
+	].sort(compareEntries);
 	const strip: StripDay[] = stripDates.map((day) => {
 		const long = formatDateLong(day, locale);
 		const flagged = flaggedDates.has(day);
@@ -285,7 +325,7 @@ export function buildAdminDayView(input: {
 			eyebrow: date === today(now) ? m.day_today({}, { locale }) : formatWeekday(date, locale),
 			date: formatDayMonth(date, locale)
 		},
-		rows,
+		entries,
 		replies: input.replies,
 		strip,
 		prev: before ? adminDayHref(before) : null,
@@ -334,7 +374,9 @@ export function loadAdminDayView(
 	if (!isValidDate(date)) return null;
 	if (date !== today(now) && !adminDayAccepted(date, db)) return null;
 	const context = loadAdminRowContext(locale, now, db);
-	const bookings = getAdminBookings(toInstant(date, 0), toInstant(addDays(date, 1), 0), db);
+	const from = toInstant(date, 0);
+	const to = toInstant(addDays(date, 1), 0);
+	const bookings = getAdminBookings(from, to, db);
 	const flaggedDates = new Set(
 		getFutureFlagCandidates(now, db)
 			.filter((b) => isFlagged(b, context))
@@ -347,7 +389,8 @@ export function loadAdminDayView(
 		stripDates: adminStripDates(context.seasons, now, [...getAdminStripExtraDates(now, db), date]),
 		flaggedDates,
 		context,
-		replies: loadReplies(locale, { date }, db)
+		replies: loadReplies(locale, { date }, db),
+		blocks: getAdminDayBlocks(from, to, db)
 	});
 }
 

@@ -383,5 +383,49 @@
 	"admin_reply_subject": "Deine Sauna-Buchung ist gelöscht",
 	"admin_reply_greeting": "Hallo {name},",
 	"admin_reply_greeting_no_name": "Hallo,",
-	"admin_reply_body": "wir haben deine Buchung vom {date}, {time} gelöscht. Danke für die Nachricht, bis bald an der Sauna!"
+	"admin_reply_body": "wir haben deine Buchung vom {date}, {time} gelöscht. Danke für die Nachricht, bis bald an der Sauna!",
+	"admin_blocks_title": "Blocks",
+	"admin_blocks_new": "Neuer Block",
+	"admin_blocks_empty": "Keine Blocks geplant.",
+	"admin_block_row": "{date} · {time} · {reason}",
+	"admin_block_reason_cleaning": "Reinigung",
+	"admin_block_reason_maintenance": "Wartung",
+	"admin_block_reason_private_use": "Privat",
+	"admin_block_delete_button": "Block löschen",
+	"admin_block_delete_title": "Block löschen?",
+	"admin_block_save_button": "Block speichern",
+	"admin_block_save_title": "Block speichern?",
+	"admin_block_what": "{reason} · {date}, {time}",
+	"admin_block_saved": "Gespeichert.",
+	"admin_block_deleted": "Block gelöscht.",
+	"admin_block_gone": "Schon erledigt.",
+	"admin_block_field_date": "Datum",
+	"admin_block_field_start": "Von",
+	"admin_block_field_end": "Bis",
+	"admin_block_field_reason": "Grund",
+	"admin_block_check": "Prüfen",
+	"admin_block_overlap": [
+		{
+			"declarations": [
+				"input count",
+				"input list",
+				"local countPlural = count: plural"
+			],
+			"selectors": [
+				"countPlural"
+			],
+			"match": {
+				"countPlural=one": "Dieser Block überschneidet {count} Buchung: {list}. Blocks löschen keine Buchungen.",
+				"countPlural=*": "Dieser Block überschneidet {count} Buchungen: {list}. Blocks löschen keine Buchungen."
+			}
+		}
+	],
+	"admin_block_overlap_item": "{time} ({name})",
+	"admin_block_gap": "Zwischen diesen zwei Buchungen ist kein Platz für einen Block.",
+	"admin_day_block": "Block · {reason}",
+	"block_date_invalid": "Bitte gib ein gültiges Datum an.",
+	"block_time_step": "Bitte wähl eine Zeit in 5-Minuten-Schritten, z. B. 09:05.",
+	"block_end_not_after_start": "Das Ende muss nach dem Beginn liegen.",
+	"block_past": "Dieser Beginn ist schon vorbei. Wähl bitte eine spätere Zeit.",
+	"block_time_missing": "Diese Uhrzeit gibt es an diesem Tag nicht (Zeitumstellung)."
 }

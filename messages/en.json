@@ -383,5 +383,49 @@
 	"admin_reply_subject": "Your sauna booking is cancelled",
 	"admin_reply_greeting": "Hello {name},",
 	"admin_reply_greeting_no_name": "Hello,",
-	"admin_reply_body": "we have cancelled your booking for {date}, {time}. Thanks for letting us know, see you soon at the sauna!"
+	"admin_reply_body": "we have cancelled your booking for {date}, {time}. Thanks for letting us know, see you soon at the sauna!",
+	"admin_blocks_title": "Blocks",
+	"admin_blocks_new": "New block",
+	"admin_blocks_empty": "No blocks planned.",
+	"admin_block_row": "{date} · {time} · {reason}",
+	"admin_block_reason_cleaning": "Cleaning",
+	"admin_block_reason_maintenance": "Maintenance",
+	"admin_block_reason_private_use": "Private use",
+	"admin_block_delete_button": "Delete block",
+	"admin_block_delete_title": "Delete block?",
+	"admin_block_save_button": "Save block",
+	"admin_block_save_title": "Save block?",
+	"admin_block_what": "{reason} · {date}, {time}",
+	"admin_block_saved": "Saved.",
+	"admin_block_deleted": "Block deleted.",
+	"admin_block_gone": "Already done.",
+	"admin_block_field_date": "Date",
+	"admin_block_field_start": "From",
+	"admin_block_field_end": "To",
+	"admin_block_field_reason": "Reason",
+	"admin_block_check": "Check",
+	"admin_block_overlap": [
+		{
+			"declarations": [
+				"input count",
+				"input list",
+				"local countPlural = count: plural"
+			],
+			"selectors": [
+				"countPlural"
+			],
+			"match": {
+				"countPlural=one": "This block overlaps {count} booking: {list}. Blocks never remove bookings.",
+				"countPlural=*": "This block overlaps {count} bookings: {list}. Blocks never remove bookings."
+			}
+		}
+	],
+	"admin_block_overlap_item": "{time} ({name})",
+	"admin_block_gap": "There's no room for a block between these two bookings.",
+	"admin_day_block": "Block · {reason}",
+	"block_date_invalid": "Please enter a valid date.",
+	"block_time_step": "Please pick a time in 5-minute steps, e.g. 09:05.",
+	"block_end_not_after_start": "The end must be after the start.",
+	"block_past": "This start has already passed. Please pick a later time.",
+	"block_time_missing": "This time doesn't exist on this day (clock change)."
 }

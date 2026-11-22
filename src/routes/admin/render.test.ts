@@ -6,7 +6,9 @@
 // and flags, and the admin 404. Story 3.3: the delete button and the impact dialog on the detail
 // (title, what line, mini row, buttons, ids), the gone view and the started detail without a button.
 // Story 3.4: the home's "Antworten" (list, count badge, empty line) and the day view's reminders at
-// the top (mailto href, ids, headings, buttons).
+// the top (mailto href, ids, headings, buttons). Story 3.5: the Blocks list (empty line and
+// "Neuer Block", rows with the delete dialog, a running block), the block form (labels, 5-minute
+// steps, the reason fieldset, inline errors with autofocus, the refusal) and the day view's block rows.
 import { createRawSnippet } from 'svelte';
 import { render } from 'svelte/server';
 import { readdirSync, readFileSync, statSync } from 'node:fs';
@@ -18,6 +20,9 @@ import HomePage from './(portal)/+page.svelte';
 import AdminError from './(portal)/+error.svelte';
 import DayPage from './(portal)/day/[date]/+page.svelte';
 import BookingPage from './(portal)/booking/[id]/+page.svelte';
+import BlocksPage from './(portal)/blocks/+page.svelte';
+import NewBlockPage from './(portal)/blocks/new/+page.svelte';
+import { buildBlockFormView, buildBlocksView } from '#lib/server/block-view.ts';
 import {
 	buildAdminBookingGoneView,
 	buildAdminBookingView,
@@ -35,7 +40,7 @@ const state = vi.hoisted(() => ({
 
 vi.mock('$app/state', () => ({ page: state.page, navigating: { to: null } }));
 
-vi.mock('$app/navigation', () => ({ afterNavigate: () => {}, invalidateAll: async () => {} }));
+vi.mock('$app/navigation', () => ({ afterNavigate: () => {}, invalidateAll: async () => {}, replaceState: () => {} }));
 
 vi.mock('#lib/paraglide/runtime.js', async (importOriginal) => ({
 	...(await importOriginal<typeof import('#lib/paraglide/runtime.js')>()),
@@ -301,7 +306,8 @@ describe('admin day view', () => {
 			stripDates: ['2027-01-11', '2027-01-12', '2027-04-05'],
 			flaggedDates: new Set(['2027-04-05']),
 			context,
-			replies: buildReplies([], 0, 'de')
+			replies: buildReplies([], 0, 'de'),
+			blocks: []
 		});
 	const page = (bookings: AdminBooking[] = [booking()]) => render(DayPage, { props: { data: { view: view(bookings) } } as never });
 
@@ -389,7 +395,8 @@ describe('admin day view', () => {
 				stripDates: ['2027-01-13'],
 				flaggedDates: new Set(),
 				context: { ...context, locale: 'en' },
-				replies: buildReplies([], 0, 'en')
+				replies: buildReplies([], 0, 'en'),
+				blocks: []
 			});
 			const { head, body } = render(DayPage, { props: { data: { view: v } } as never });
 			expect(head).toContain('<title>Wed, 13 January · Bookings · Sauna Luegisee</title>');
@@ -534,6 +541,118 @@ describe('booking detail: delete (Story 3.3)', () => {
 		expect(body).toMatch(/<h1[^>]*tabindex="-1"[^>]*>Diese Buchung gibt es nicht mehr\.<\/h1>/);
 		expect(body).toMatch(/<a class="back[^"]*" href="\/admin\/day\/2027-01-12">.*Di, 12. Januar<\/a>/s);
 		expect(body).not.toContain('<dialog');
+	});
+});
+
+describe('Blocks (Story 3.5)', () => {
+	const MON = '2027-01-11T07:00:00Z';
+	const none = { affected: null, told: null, current: null, class: 'none', consequence: 'none' } as const;
+	const cleaning = { id: 4, start: '2027-01-11T08:00:00Z', end: '2027-01-11T10:00:00Z', reason: 'cleaning' } as const;
+	const list = (items: Parameters<typeof buildBlocksView>[0]['items'], status: 'saved' | null = null) =>
+		render(BlocksPage, { props: { data: { view: buildBlocksView({ items, now: MON, locale: 'de', status }) } } as never });
+
+	it('shows "Keine Blocks geplant." with the "Neuer Block" link, and the status', () => {
+		const { head, body } = list([], 'saved');
+		expect(head).toContain('<title>Blocks · Sauna Luegisee</title>');
+		expect(body).toMatch(/<h1[^>]*tabindex="-1"[^>]*>Blocks<\/h1>/);
+		expect(body).toContain('Keine Blocks geplant.');
+		expect(body).toMatch(/<a class="create[^"]*" href="\/admin\/blocks\/new">Neuer Block<\/a>/);
+		expect(body).toMatch(/role="status" aria-live="polite"[^>]*>Gespeichert\.</);
+	});
+
+	it('lists a block with its closed delete dialog; the trigger only after hydration', () => {
+		const { body } = list([{ block: cleaning, deletion: { block: cleaning, date: '2027-01-11', started: false, impact: none, affectedFirstName: null } }]);
+		expect(body).toContain('Mo 11. Januar · 09:00–11:00 · Reinigung');
+		expect(body).not.toMatch(/<button class="destructive/);
+		const dialog = body.match(/<dialog[^>]*>.*<\/dialog>/s)?.[0] ?? '';
+		expect(dialog).toMatch(/<h2 id="delete-block-4-title"[^>]*>Block löschen\?<\/h2>/);
+		expect(dialog).toContain('Reinigung · Mo 11. Januar, 09:00–11:00');
+		expect(dialog).toContain('Kein Effekt auf andere Buchungen.');
+		expect(dialog).toMatch(/<form method="POST" action="\?\/delete"/);
+		expect(dialog).toMatch(/<input type="hidden" name="blockId" value="4"/);
+		expect(dialog).toMatch(/<input type="hidden" name="impactToken" value="[^"]+"/);
+		expect([...dialog.matchAll(/<button[^>]*>(.*?)<\/button>/g)].map((b) => b[1])).toEqual(['Block löschen', 'Abbrechen']);
+		expect(dialog).toMatch(/class="confirm[^"]*destructive/);
+	});
+
+	it('shows a running block without a dialog', () => {
+		const { body } = list([{ block: { ...cleaning, start: '2027-01-11T06:30:00Z' }, deletion: null }]);
+		expect(body).toContain('Hat schon begonnen.');
+		expect(body).not.toContain('<dialog');
+	});
+
+	const formPage = (form: unknown = null) =>
+		render(NewBlockPage, { props: { data: { view: buildBlockFormView({ now: MON, locale: 'de' }) }, form } as never });
+
+	it('renders the form: labelled date and time fields in 5-minute steps, the reason fieldset, "Prüfen"', () => {
+		const { head, body } = formPage();
+		expect(head).toContain('<title>Neuer Block · Sauna Luegisee</title>');
+		expect(body).toMatch(/<form method="POST" action="\?\/check"/);
+		expect(body).toMatch(/<label for="block-date"[^>]*>Datum<\/label>/);
+		expect(body).toMatch(/<input id="block-date" value="2027-01-11" name="date" type="date"/);
+		for (const [id, label] of [['block-start', 'Von'], ['block-end', 'Bis']]) {
+			expect(body).toMatch(new RegExp(`<label for="${id}"[^>]*>${label}</label>`));
+			expect(body).toMatch(new RegExp(`<input id="${id}"[^>]*type="time"[^>]*step="300"`));
+		}
+		const fieldset = body.match(/<fieldset[^>]*>.*<\/fieldset>/s)?.[0] ?? '';
+		expect(fieldset).toMatch(/<legend[^>]*>Grund<\/legend>/);
+		expect([...fieldset.matchAll(/<input[^>]*type="radio"[^>]*value="([^"]+)"/g)].map((r) => r[1])).toEqual(['cleaning', 'maintenance', 'private_use']);
+		expect(fieldset).toMatch(/value="cleaning"[^>]*checked/);
+		expect(textOf(fieldset)).toContain('Reinigung Wartung Privat');
+		expect(body).toMatch(/<button class="primary[^"]*" type="submit"[^>]*>Prüfen<\/button>/);
+		expect(body).not.toContain('<dialog');
+	});
+
+	it('without JavaScript shows the errors inline with the values kept and autofocus on the first, or the refusal', () => {
+		const values = { date: '2027-01-11', start: '09:00', end: '08:00', reason: 'maintenance' };
+		const { body } = formPage({ values, errors: { end: 'block_end_not_after_start' } });
+		expect(body).toMatch(/<input id="block-end"[^>]*aria-invalid="true"[^>]*autofocus/);
+		expect(body).toContain('Das Ende muss nach dem Beginn liegen.');
+		expect(body).toMatch(/<input id="block-start"[^>]*value="09:00"/);
+		expect(body).toMatch(/value="maintenance"[^>]*checked/);
+		const refused = formPage({ values, refusal: 'Zwischen diesen zwei Buchungen ist kein Platz für einen Block.' }).body;
+		expect(refused).toMatch(/role="alert"[^>]*>.*Zwischen diesen zwei Buchungen ist kein Platz für einen Block\./s);
+	});
+
+	it('shows the day’s blocks among the bookings on the admin day view, rows and table', () => {
+		const view = buildAdminDayView({
+			date: '2027-01-12',
+			bookings: [booking()],
+			stripDates: ['2027-01-12'],
+			flaggedDates: new Set(),
+			context,
+			replies: buildReplies([], 0, 'de'),
+			blocks: [{ id: 9, start: '2027-01-12T08:00:00Z', end: '2027-01-12T10:00:00Z', reason: 'cleaning' }]
+		});
+		const { body } = render(DayPage, { props: { data: { view } } as never });
+		const rows = body.match(/<ul class="rows[^"]*">.*?<\/ul>/s)?.[0] ?? '';
+		expect(textOf(rows)).toMatch(/^09:00–11:00 Block · Reinigung 17:15–18:15/);
+		expect(rows).not.toMatch(/<a[^>]*>[^<]*09:00/);
+		const table = body.match(/<tbody[^>]*>.*<\/tbody>/s)?.[0] ?? '';
+		const blockRow = table.match(/<tr class="block[^"]*">.*?<\/tr>/s)?.[0] ?? '';
+		expect(blockRow).toMatch(/<th class="time[^"]*" scope="row"><time datetime="2027-01-12T08:00:00Z">09:00–11:00<\/time><\/th>/);
+		expect(blockRow).toMatch(/<td colspan="7"[^>]*>Block · Reinigung<\/td>/);
+		expect(table.indexOf('Block · Reinigung')).toBeLessThan(table.indexOf('17:15–18:15'));
+	});
+});
+
+describe('admin day view: a day with only a block (Story 3.5)', () => {
+	it('shows the block row in the list and the table, and the empty line', () => {
+		const view = buildAdminDayView({
+			date: '2027-01-12',
+			bookings: [],
+			stripDates: ['2027-01-12'],
+			flaggedDates: new Set(),
+			context,
+			replies: buildReplies([], 0, 'de'),
+			blocks: [{ id: 9, start: '2027-01-12T08:00:00Z', end: '2027-01-12T10:00:00Z', reason: 'maintenance' }]
+		});
+		const { body } = render(DayPage, { props: { data: { view } } as never });
+		const rows = body.match(/<ul class="rows[^"]*">.*?<\/ul>/s)?.[0] ?? '';
+		expect(textOf(rows)).toBe('09:00–11:00 Block · Wartung');
+		const table = body.match(/<tbody[^>]*>.*<\/tbody>/s)?.[0] ?? '';
+		expect(table).toMatch(/<td colspan="7"[^>]*>Block · Wartung<\/td>/);
+		expect(body).toMatch(/<p class="empty[^"]*">Keine Buchungen an diesem Tag\.<\/p>/);
 	});
 });
 

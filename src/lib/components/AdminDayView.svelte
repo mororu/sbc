@@ -4,7 +4,9 @@
 	status region, the open reply reminders of the day's deleted bookings (Story 3.4; only when there
 	are any, so right after a deletion the deleted guest's reminder is at the top) and the bookings
 	(#bookings, the skip link's target): rows below 1024 px, the admin day table from 1024 px, or the
-	empty line. Only the reminders write ("Erledigt").
+	empty line. The day's blocks (Story 3.5) sit among the bookings in start order, with their reason,
+	as plain rows (not links); on a day with blocks but no bookings the empty line follows them.
+	Only the reminders write ("Erledigt").
 	Day switching mirrors the guest day view: while another admin day loads, the strip selects it at
 	once, the list is dimmed and busy, "Lädt …" appears after 1 s, and on arrival the status announces
 	"Dienstag, 12. Januar: 2 Buchungen" (or the empty line). If focus fell to body, the heading takes it.
@@ -13,6 +15,7 @@
 	import { tick } from 'svelte';
 	import { afterNavigate } from '$app/navigation';
 	import { navigating, page } from '$app/state';
+	import AdminBlockRow from './AdminBlockRow.svelte';
 	import AdminBookingRow from './AdminBookingRow.svelte';
 	import AdminDayTable from './AdminDayTable.svelte';
 	import DateStrip from './DateStrip.svelte';
@@ -106,17 +109,20 @@
 </div>
 
 <div id="bookings" class="bookings" class:busy tabindex="-1" aria-busy={busy}>
-	{#if view.empty}
-		<p class="empty">{view.empty}</p>
-	{:else}
+	{#if view.entries.length > 0}
 		<ul class="rows">
-			{#each view.rows as row (row.id)}
-				<li><AdminBookingRow {row} /></li>
+			{#each view.entries as entry (entry.kind === 'block' ? `block-${entry.block.id}` : `booking-${entry.row.id}`)}
+				<li>
+					{#if entry.kind === 'block'}<AdminBlockRow block={entry.block} />{:else}<AdminBookingRow row={entry.row} />{/if}
+				</li>
 			{/each}
 		</ul>
 		<div class="table">
-			<AdminDayTable rows={view.rows} labels={view.labels} />
+			<AdminDayTable entries={view.entries} labels={view.labels} />
 		</div>
+	{/if}
+	{#if view.empty}
+		<p class="empty">{view.empty}</p>
 	{/if}
 </div>
 
