@@ -79,3 +79,10 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-3-5-admin-creates-and-deletes-blocks.md`
   summary: The Blocks list computes one full deletion impact (getBlock, getDayData, told notice, keybox state, names) per upcoming block with no limit, an N+1 that grows with planned blocks.
   evidence: Blind review of Story 3.5; fine for a handful of blocks, worth batching per date if the list grows.
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-3-6-admin-works-the-call-list.md`
+  summary: Mark called stale-checks only the notice, so a refusal recorded between display and tap (e.g. a keybox refusal the admin never saw, with its code line) is resolved too; the token could also cover the shown reasons/row ids.
+  evidence: `markCalled` resolves every unresolved refused/expired and call-required row at commit time; only `noticeEquals` guards the token.
+- source_spec: `_bmad-output/implementation-artifacts/spec-3-6-admin-works-the-call-list.md`
+  summary: A call entry for an overdue keybox email held back by an empty keybox code or instructions does not tell the admin the setting is missing (the code line is hidden when no code is set).
+  evidence: `admin_call_reason_keybox_overdue` covers both retrying and held rows; no hint or settings link for the empty setting (fits Story 3.7/3.8 or the 5.5 readiness check).

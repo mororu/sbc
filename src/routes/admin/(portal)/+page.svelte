@@ -2,20 +2,27 @@
 	Admin home (UX-DR46; Stories 3.1, 3.2): the h1 "Übersicht" (visually hidden, as in the
 	key-admin-home mockup: the active tab already says it), the worker warning at the top, the flags
 	(bookings outside the current times, refused emails; each with links to the bookings), and the
-	grid: one column on phones, two equal columns from 1024 px (left: the call list, Story 3.6, and
-	"Antworten", the reply reminders with their count badge, always shown, Story 3.4; right: "Nächste
-	Buchungen" with an h3 per day, rows or the empty line).
+	grid: one column on phones, two equal columns from 1024 px (left: "Anrufliste", the call list with
+	its count badge, always shown, Story 3.6, above "Antworten", the reply reminders with their count
+	badge, always shown, Story 3.4; right: "Nächste Buchungen" with an h3 per day, rows or the empty
+	line). The page's `form` is shared by the `called` and `replyDone` actions: each list gets only its
+	own results (`isCallForm`: the call action's carry `action: 'called'`).
 -->
 <script lang="ts">
 	import AdminBookingRow from '#lib/components/AdminBookingRow.svelte';
+	import CallList from '#lib/components/CallList.svelte';
 	import InlineMessage from '#lib/components/InlineMessage.svelte';
 	import PageTitle from '#lib/components/PageTitle.svelte';
 	import ReplyReminders from '#lib/components/ReplyReminders.svelte';
+	import { isCallForm, type CallFormResult } from '#lib/call-outcome.ts';
 	import { m } from '#lib/paraglide/messages.js';
+	import type { ReplyFormResult } from '#lib/reply-outcome.ts';
 	import type { PageProps } from './$types';
 
 	let { data, form }: PageProps = $props();
 	const home = $derived(data.home);
+	const callForm = $derived<CallFormResult>(isCallForm(form) ? form : null);
+	const replyForm = $derived(isCallForm(form) ? null : (form as ReplyFormResult));
 </script>
 
 <PageTitle title={m.admin_home_title()} />
@@ -42,7 +49,8 @@
 {/if}
 <div class="home-grid">
 	<div class="column">
-		<ReplyReminders replies={home.replies} variant="home" {form} />
+		<CallList calls={home.calls} form={callForm} />
+		<ReplyReminders replies={home.replies} variant="home" form={replyForm} />
 	</div>
 	<div class="column">
 		<section aria-labelledby="next-heading">

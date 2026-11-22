@@ -3,7 +3,8 @@
 // delete action: success, stale, past, gone and a lock timeout; Story 3.4, the replyDone action on
 // the home and the day view: done, already done, a lock timeout, and the replies on both pages;
 // Story 3.5, the Blocks list and form: check, save and delete outcomes, the empty list and the day
-// view's block rows): an in-memory database, DEV_NOW at Tue 12 Jan 2027, 10:00 Zurich.
+// view's block rows; Story 3.6, the called action: called, already done, stale, failure, bad id,
+// and the home list agreeing with the nav badge): an in-memory database, DEV_NOW at Tue 12 Jan 2027, 10:00 Zurich.
 import { isActionFailure, isHttpError, isRedirect } from '@sveltejs/kit';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 // The test migrates and edits its own in-memory database; routes never touch the db layer.
@@ -54,6 +55,10 @@ vi.mock('#lib/server/commands/index.ts', async (importOriginal) => {
 		markReplyDone: (...args: Parameters<typeof actual.markReplyDone>) => {
 			if (clock.busy) throw busyError();
 			return actual.markReplyDone(...args);
+		},
+		markCalled: (...args: Parameters<typeof actual.markCalled>) => {
+			if (clock.busy) throw busyError();
+			return actual.markCalled(...args);
 		}
 	};
 });
@@ -450,6 +455,76 @@ describe('admin day and booking routes', () => {
 			expect(doneAt(anna)).toBeNull();
 		});
 	});
+	describe('called action (Story 3.6)', () => {
+		const HOT = '{"heat":"hot","earliest":null,"latest":null}';
+		/** 17:15 Zurich with nobody before: cold 16:35–16:45. */
+		const COLD = '{"heat":"cold","earliest":"2027-01-12T15:35:00Z","latest":"2027-01-12T15:45:00Z"}';
+		/** Tom: keybox email sent, told hot, now cold: *Anruf nötig*. */
+		const tom = () => {
+			const id = insertBooking('2027-01-12T16:15:00Z');
+			sqlite().prepare("update booking set last_told_notice = ?, mobile = '+41794123581' where id = ?").run(HOT, id);
+			sqlite().prepare("insert into outbox (booking_id, kind, state, due_at) values (?, 'keybox', 'accepted', '2027-01-11T16:15:00Z')").run(id);
+			return id;
+		};
+		const post = (fields: Record<string, string>) => {
+			const request = new Request('http://localhost/admin?/called', { method: 'POST', body: new URLSearchParams(fields) });
+			return run(() => (homeActions.called as (e: unknown) => unknown)({ request }));
+		};
+		const told = (id: number) =>
+			(sqlite().prepare('select last_told_notice as n from booking where id = ?').get(id) as { n: string | null }).n;
+		const counts = async () =>
+			((await run(() => (loadShell as (e: unknown) => unknown)({ locals: { adminSession: { id: 'x', expiresAt: '2027-02-11T09:00:00Z' } }, url: new URL('http://localhost/admin'), depends: () => {} }))) as { data: { counts: { calls: number } } }).data.counts.calls;
+		const calls = async () => ((await home()).data.home as unknown as { calls: { count: number; items: { bookingId: number; token: string; tel: unknown }[] } }).calls;
+
+		it('lists Tom on the home with the nav badge agreeing, then marks him called: gone from both (Called)', async () => {
+			const id = tom();
+			const before = await calls();
+			expect(before).toMatchObject({ count: 1, items: [{ bookingId: id, token: COLD, tel: { href: 'tel:+41794123581', text: '+41794123581' } }] });
+			expect(await counts()).toBe(1);
+			expect(await post({ bookingId: String(id), notice: before.items[0].token })).toEqual({
+				data: { action: 'called', called: true, bookingId: id, firstName: 'Tom' }
+			});
+			expect(told(id)).toBe(COLD);
+			expect(await calls()).toMatchObject({ count: 0, items: [] });
+			expect(await counts()).toBe(0);
+		});
+
+		it('answers 409 already_done when called by another admin, deleted or started, and writes nothing (Gone)', async () => {
+			const id = tom();
+			expect(await post({ bookingId: String(id), notice: COLD })).toMatchObject({ data: { called: true } });
+			expect(await post({ bookingId: String(id), notice: COLD })).toEqual({ failure: { status: 409, data: { action: 'called', code: 'already_done' } } });
+			const deleted = tom();
+			sqlite().prepare("update booking set deleted_at = '2027-01-12T08:00:00Z' where id = ?").run(deleted);
+			expect(await post({ bookingId: String(deleted), notice: COLD })).toEqual({ failure: { status: 409, data: { action: 'called', code: 'already_done' } } });
+			expect(told(deleted)).toBe(HOT);
+			const started = tom();
+			clock.now = '2027-01-12T16:20:00Z';
+			expect(await post({ bookingId: String(started), notice: COLD })).toEqual({ failure: { status: 409, data: { action: 'called', code: 'already_done' } } });
+			expect(told(started)).toBe(HOT);
+			expect(await post({ bookingId: '9999', notice: COLD })).toEqual({ failure: { status: 409, data: { action: 'called', code: 'already_done' } } });
+		});
+
+		it('answers 409 stale with the booking id for a changed notice, a missing or garbage token, and writes nothing (Stale)', async () => {
+			const id = tom();
+			const displayed = '{"heat":"cold","earliest":"2027-01-12T15:45:00Z","latest":"2027-01-12T15:50:00Z"}';
+			for (const fields of [{ notice: displayed }, { notice: 'x' }, {}] as Record<string, string>[]) {
+				expect(await post({ bookingId: String(id), ...fields })).toEqual({ failure: { status: 409, data: { action: 'called', code: 'stale', bookingId: id } } });
+			}
+			expect(told(id)).toBe(HOT);
+			expect((await calls()).count).toBe(1);
+		});
+
+		it('answers a lock timeout with 503 failed and writes nothing (Failure); a malformed id is an admin 404', async () => {
+			const id = tom();
+			clock.busy = true;
+			expect(await post({ bookingId: String(id), notice: COLD })).toEqual({ failure: { status: 503, data: { action: 'called', code: 'failed', bookingId: id } } });
+			expect(told(id)).toBe(HOT);
+			clock.busy = false;
+			for (const bookingId of ['abc', '0', '01']) expect(await post({ bookingId, notice: COLD })).toEqual({ error: 404 });
+			expect(await post({ notice: COLD })).toEqual({ error: 404 });
+		});
+	});
+
 	describe('Blocks (Story 3.5)', () => {
 		const blocksPage = (query = '') =>
 			run(() => (loadBlocks as (e: unknown) => unknown)({ url: new URL(`http://localhost/admin/blocks${query}`) })) as Promise<{

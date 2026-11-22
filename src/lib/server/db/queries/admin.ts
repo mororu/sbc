@@ -1,6 +1,7 @@
 // Admin read queries (Epic 3). Unlike the guest queries these may read contact data: the bookings
 // by day and the booking detail (Story 3.2) select the name, email, mobile and the keybox code that
-// was sent. Only admin routes call them. The call feed and the reply-reminder count carry none.
+// was sent. Only admin routes call them. The call feed and the reply-reminder count carry none; the
+// call list's contacts (Story 3.6) come from `getCallContacts`, read beside the feed.
 import { and, asc, count, eq, gt, gte, inArray, isNotNull, isNull, lt, lte, or, sql, type SQL } from 'drizzle-orm';
 import {
 	bookingNotice,
@@ -35,13 +36,25 @@ const noticeOrNull = (json: string | null): Notice | null => {
  * The call-list feed at `now` (AD-21), by booking id, for `deriveCallList`: every live booking that
  * has not started, with its outbox rows (`getSendProblemRows`), its last-told notice and the notice
  * it has now (`bookingNotice` over its day, read once per day). No contact data, no keybox code.
+ * With `bookingId`, only that booking (the mark-called command's fresh read); the entry is the same
+ * as in the full feed.
  */
-export function getCallFeed(now: Instant, db: Db = getDb()): Map<number, CallFeedEntry> {
-	const problems = getSendProblemRows(now, db);
+export function getCallFeed(
+	now: Instant,
+	db: Db = getDb(),
+	filter: { bookingId?: number } = {}
+): Map<number, CallFeedEntry> {
+	const problems = getSendProblemRows(now, db, filter);
 	const live = db
 		.select({ id: booking.id, start: booking.startAt, createdAt: booking.createdAt, lastTold: booking.lastToldNotice })
 		.from(booking)
-		.where(and(isNull(booking.deletedAt), gt(booking.startAt, now)))
+		.where(
+			and(
+				isNull(booking.deletedAt),
+				gt(booking.startAt, now),
+				filter.bookingId === undefined ? undefined : eq(booking.id, filter.bookingId)
+			)
+		)
 		.orderBy(booking.startAt, booking.id)
 		.all();
 	const days = new Map<string, ReturnType<typeof getDayData>>();
@@ -66,6 +79,26 @@ export function getCallFeed(now: Instant, db: Db = getDb()): Map<number, CallFee
 		});
 	}
 	return feed;
+}
+
+/** A call-list guest's contact (Story 3.6): admin-only, never part of the feed or the nav count. */
+export type CallContact = {
+	id: number;
+	/** Null once erased. */
+	name: string | null;
+	/** E.164 as stored; null once erased. */
+	mobile: string | null;
+};
+
+/** The contacts of bookings `ids` (any order; unknown ids are left out), by booking id. */
+export function getCallContacts(ids: readonly number[], db: Db = getDb()): Map<number, CallContact> {
+	if (ids.length === 0) return new Map();
+	const rows = db
+		.select({ id: booking.id, name: booking.name, mobile: booking.mobile })
+		.from(booking)
+		.where(inArray(booking.id, [...ids]))
+		.all();
+	return new Map(rows.map((r) => [r.id, r]));
 }
 
 /** The reply-reminder predicate, shared by the count and the list so they always agree. */

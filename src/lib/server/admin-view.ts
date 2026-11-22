@@ -1,5 +1,6 @@
 // Admin view models: the nav badge counts and the admin home's worker warning (Story 3.1), the
-// home's next bookings and flags (Story 3.2) and its reply reminders (Story 3.4). Text is rendered
+// home's next bookings and flags (Story 3.2), its reply reminders (Story 3.4) and its call list
+// (Story 3.6; the same derivation as the nav badge, so both agree). Text is rendered
 // here on the server (src/lib/time never reaches the client); the counts carry no guest data.
 import { deriveCallList, workerHealth, type Heartbeat } from '#lib/domain/index.ts';
 import type { ResolvedPathname } from '$app/types';
@@ -18,6 +19,7 @@ import {
 	type Locale
 } from '#lib/time/index.ts';
 import { buildAdminRow, isFlagged, loadAdminRowContext, type AdminRow, type AdminRowContext } from './admin-day-view.ts';
+import { loadCalls, type CallsView } from './call-view.ts';
 import { now as clockNow } from './clock.ts';
 import { loadReplies, type RepliesView } from './reply-view.ts';
 import {
@@ -70,6 +72,8 @@ export type AdminHomeView = {
 	next: { heading: string; groups: NextGroup[] };
 	/** Bookings outside the current times, then bookings with a refused non-urgent email; only those not started. */
 	flags: HomeFlag[];
+	/** "Anrufliste": every call-list entry, *Anruf nötig* first (always shown, with its empty line). */
+	calls: CallsView;
 	/** "Antworten": every open reply reminder, oldest deletion first (always shown, with its empty line). */
 	replies: RepliesView;
 };
@@ -125,6 +129,7 @@ export function loadAdminHome(
 		warning: workerWarning(getHeartbeat(db), now, locale),
 		next: buildNextBookings(bookings, context),
 		flags: buildHomeFlags(getFutureFlagCandidates(now, db), context),
+		calls: loadCalls(locale, now, db),
 		replies: loadReplies(locale, {}, db)
 	};
 }

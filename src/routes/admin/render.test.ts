@@ -9,6 +9,8 @@
 // the top (mailto href, ids, headings, buttons). Story 3.5: the Blocks list (empty line and
 // "Neuer Block", rows with the delete dialog, a running block), the block form (labels, 5-minute
 // steps, the reason fieldset, inline errors with autofocus, the refusal) and the day view's block rows.
+// Story 3.6: the home's "Anrufliste" above "Antworten" (entry markup, markers, tel link, the form,
+// the empty line, the native-POST status, stale and failure lines).
 import { createRawSnippet } from 'svelte';
 import { render } from 'svelte/server';
 import { readdirSync, readFileSync, statSync } from 'node:fs';
@@ -32,6 +34,7 @@ import {
 import { buildHomeFlags, buildNextBookings } from '#lib/server/admin-view.ts';
 import type { AdminBooking, DeletionImpact, ReplyReminderRow } from '#lib/server/db/queries/index.ts';
 import { buildReplies } from '#lib/server/reply-view.ts';
+import { buildCallItem, buildCalls, type CallItemInput } from '#lib/server/call-view.ts';
 
 const state = vi.hoisted(() => ({
 	locale: 'de' as 'de' | 'en',
@@ -193,7 +196,13 @@ const booking = (over: Partial<AdminBooking> = {}): AdminBooking => ({
 	refusals: [],
 	...over
 });
-const emptyHome = { warning: null, next: buildNextBookings([], context), flags: [], replies: buildReplies([], 0, 'de') };
+const emptyHome = {
+	warning: null,
+	next: buildNextBookings([], context),
+	flags: [],
+	calls: buildCalls([], 'de'),
+	replies: buildReplies([], 0, 'de')
+};
 const reminder = (over: Partial<ReplyReminderRow> = {}): ReplyReminderRow => ({
 	id: 21,
 	name: 'Anna Meier',
@@ -295,6 +304,128 @@ describe('admin home: Antworten (Story 3.4)', () => {
 		expect(textOf(body.match(/<h2 id="replies-heading"[^>]*>(.*?)<\/h2>/s)?.[1] ?? '')).toBe('Antworten 0');
 		expect(body).toContain('Keine offenen Antworten.');
 		expect(body).not.toContain('<h3 id="reply-');
+	});
+});
+
+describe('admin home: Anrufliste (Story 3.6)', () => {
+	const CALL_NOW = '2027-01-12T10:06:00Z';
+	const HOT = { heat: 'hot', earliest: null, latest: null } as const;
+	const callInput = (over: { bookingId?: number; marker?: 'call_required' | 'optional'; name?: string | null; mobile?: string | null } = {}): CallItemInput => ({
+		entry: {
+			bookingId: over.bookingId ?? 7,
+			start: '2027-01-12T16:15:00Z',
+			marker: over.marker ?? 'call_required',
+			reasons: [],
+			heatChange: over.marker === 'optional' ? 'good_news' : 'urgent'
+		},
+		feed: {
+			start: '2027-01-12T16:15:00Z',
+			createdAt: '2027-01-07T10:00:00Z',
+			preheatMaxMin: 40,
+			rows: [],
+			lastTold: over.marker === 'optional' ? COLD : HOT,
+			current: over.marker === 'optional' ? HOT : COLD
+		},
+		contact: { id: over.bookingId ?? 7, name: over.name === undefined ? 'Tom Brunner' : over.name, mobile: over.mobile === undefined ? '+41794123581' : over.mobile },
+		keyboxCode: '4711'
+	});
+	const calls = (inputs: CallItemInput[]) => buildCalls(inputs.map((i) => buildCallItem(i, CALL_NOW, 'de')), 'de');
+	const home = (view = calls([callInput()]), form: unknown = null) =>
+		render(HomePage, { props: { data: { home: { ...emptyHome, calls: view, replies: buildReplies([reminder()], 1, 'de') } }, form } as never }).body;
+
+	it('puts the call list in the left column above "Antworten", with the h2 and its count badge', () => {
+		const body = home();
+		const left = body.slice(body.indexOf('class="column'), body.indexOf('next-heading'));
+		expect(left.indexOf('calls-heading')).toBeGreaterThan(-1);
+		expect(left.indexOf('calls-heading')).toBeLessThan(left.indexOf('replies-heading'));
+		expect(left).toMatch(/<section class="calls[^"]*" aria-labelledby="calls-heading">/);
+		const h2 = left.match(/<h2 id="calls-heading"[^>]*>(.*?)<\/h2>/s);
+		expect(h2?.[0]).toContain('tabindex="-1"');
+		expect(textOf(h2?.[1] ?? '')).toBe('Anrufliste 1');
+		expect(h2?.[1]).toMatch(/<span class="count[^"]*">1<\/span>/);
+	});
+
+	it("renders Tom's entry: marker, h3, date, heat-change line, new notice, last told, tel link and Angerufen (Tom)", () => {
+		const body = home();
+		const entry = body.slice(body.indexOf('<article class="entry'), body.indexOf('</article>'));
+		expect(entry).toMatch(/<p class="marker[^"]*\burgent\b[^"]*">Anruf nötig<\/p>/);
+		expect(entry).toMatch(/<h3 id="call-7" class="name[^"]*" tabindex="-1">17:15 · Tom Brunner<\/h3>/);
+		expect(textOf(entry)).toContain(
+			'Anruf nötig 17:15 · Tom Brunner Heute, Di 12. Januar heiss → wird zu Kaltstart Neuer Hinweis Kaltstart: komm zwischen 16:35 und 16:45 und heiz ein. zuletzt gesagt: Schon heiss um 17:15.'
+		);
+		const tel = entry.match(/<a class="tel[^"]*" href="([^"]*)"[^>]*>(.*?)<\/a>/s);
+		expect(tel?.[1]).toBe('tel:+41794123581');
+		expect(tel?.[2]).toContain('aria-hidden="true"');
+		expect(textOf(tel?.[2] ?? '')).toBe('+41794123581');
+		expect(entry).toMatch(
+			/<form method="POST" action="\?\/called"[^>]*>.*<input type="hidden" name="bookingId" value="7"[^>]*>.*<input type="hidden" name="notice" value="\{&quot;heat&quot;:&quot;cold&quot;,&quot;earliest&quot;:&quot;2027-01-12T15:35:00Z&quot;,&quot;latest&quot;:&quot;2027-01-12T15:45:00Z&quot;\}"[^>]*>.*<button class="secondary[^"]*" type="submit"[^>]*>Angerufen<\/button>/s
+		);
+		expect(entry).not.toContain('aria-disabled="true"');
+		expect(entry).not.toContain('role="alert"');
+	});
+
+	it('marks good news optional without the urgent style, and leaves out the tel link without a mobile (Optional)', () => {
+		const body = home(calls([callInput(), callInput({ bookingId: 8, marker: 'optional', name: null, mobile: null })]));
+		expect([...body.matchAll(/<h3 id="(call-\d+)"[^>]*>(.*?)<\/h3>/g)].map((h) => [h[1], h[2]])).toEqual([
+			['call-7', '17:15 · Tom Brunner'],
+			['call-8', '17:15 · (ohne Name)']
+		]);
+		const second = body.slice(body.indexOf('id="call-8"') - 200);
+		expect(second).toMatch(/<p class="marker[^"]*">optional<\/p>/);
+		expect(second.match(/<p class="marker[^"]*"/)?.[0]).not.toMatch(/\burgent\b/);
+		expect(second.slice(0, second.indexOf('</article>'))).not.toContain('href="tel:');
+	});
+
+	it('shows the reasons and the code line of a refused keybox email (Refused)', () => {
+		const input = callInput();
+		const refused: CallItemInput = {
+			...input,
+			entry: { ...input.entry, reasons: ['keybox_refused'], heatChange: 'none' },
+			feed: { ...input.feed, lastTold: COLD }
+		};
+		const entry = home(calls([refused]));
+		expect(entry).toMatch(/<p class="reason[^"]*">Schlüsselmail abgelehnt<\/p>/);
+		expect(entry).toMatch(/<p class="code[^"]*">Code durchgeben: 4711<\/p>/);
+		expect(entry).not.toContain('wird zu');
+	});
+
+	it('keeps the section with "0" and the empty line when nobody needs a call (Empty)', () => {
+		const body = home(calls([]));
+		expect(textOf(body.match(/<h2 id="calls-heading"[^>]*>(.*?)<\/h2>/s)?.[1] ?? '')).toBe('Anrufliste 0');
+		expect(body).toContain('Niemand muss angerufen werden.');
+		expect(body).not.toContain('<h3 id="call-');
+	});
+
+	it('without JavaScript: the called status, "Schon erledigt.", the stale line and the failure at the entry', () => {
+		const status = (body: string) => [...body.matchAll(/role="status" aria-live="polite"[^>]*>(.*?)<\/p>/g)].map((s) => s[1]);
+		// Calls status first, then the replies status: each list gets only its own results.
+		expect(status(home(calls([]), { action: 'called', called: true, bookingId: 7, firstName: 'Tom' }))).toEqual(['Tom angerufen. Anrufliste: 0.', '']);
+		expect(status(home(calls([]), { action: 'called', called: true, bookingId: 7, firstName: null }))).toEqual(['Angerufen. Anrufliste: 0.', '']);
+		expect(status(home(calls([]), { action: 'called', code: 'already_done' }))).toEqual(['Schon erledigt.', '']);
+		expect(status(home(calls([]), { code: 'already_done', bookingId: 21 }))).toEqual(['', 'Schon erledigt.']);
+		// A stale refusal whose entry has left meanwhile: nothing left to call.
+		expect(status(home(calls([]), { action: 'called', code: 'stale', bookingId: 7 }))).toEqual(['Schon erledigt.', '']);
+		const stale = home(calls([callInput()]), { action: 'called', code: 'stale', bookingId: 7 });
+		expect(status(stale)[0]).toBe('');
+		expect(stale.slice(stale.indexOf('id="call-7"'))).toMatch(
+			/role="status"[^>]*autofocus[^>]*>.*Der Hinweis hat sich inzwischen geändert\. Gib bitte diesen neuen Hinweis durch\./s
+		);
+		const failed = home(calls([callInput()]), { action: 'called', code: 'failed', bookingId: 7 });
+		expect([...failed.matchAll(/role="alert"/g)]).toHaveLength(1);
+		const entry = failed.slice(failed.indexOf('id="call-7"'), failed.indexOf('</article>'));
+		expect(entry).toMatch(/role="alert"[^>]*autofocus[^>]*>.*Das hat nicht geklappt/s);
+		expect(entry).not.toContain('Der Hinweis hat sich inzwischen geändert');
+	});
+
+	it("hands a reply failure only to the replies, and a call failure only to the call list", () => {
+		// A call entry and a reminder with the same id (cannot happen, but the discriminator decides).
+		const body = (form: unknown) => home(calls([callInput({ bookingId: 21 })]), form);
+		const reply = body({ code: 'failed', bookingId: 21 });
+		expect(reply.slice(reply.indexOf('id="reply-21"'))).toMatch(/role="alert"/);
+		expect(reply.slice(reply.indexOf('id="call-21"'), reply.indexOf('</article>'))).not.toContain('role="alert"');
+		const call = body({ action: 'called', code: 'failed', bookingId: 21 });
+		expect(call.slice(call.indexOf('id="call-21"'), call.indexOf('</article>'))).toMatch(/role="alert"/);
+		expect(call.slice(call.indexOf('id="reply-21"'))).not.toContain('role="alert"');
 	});
 });
 

@@ -1,8 +1,8 @@
 <!--
 	Heat-change line (EXPERIENCE "Heat-change line"; Story 3.3): from-state → to-state, measured
 	against the last-told notice ("heiss → Kaltstart"). Each side has its state icon and label; the
-	arrow is aria-hidden with the hidden word "wird zu" / "becomes". Used by the impact mini row and,
-	later, the call-list entry (3.6).
+	arrow is aria-hidden with the hidden word "wird zu" / "becomes". Used by the impact mini row and
+	the call-list entry (Story 3.6).
 -->
 <script lang="ts">
 	import Icon from './Icon.svelte';

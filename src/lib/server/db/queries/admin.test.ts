@@ -1,6 +1,7 @@
 // Admin queries (Story 3.1): the call feed for `deriveCallList`, the reply-reminder count ("Replies"
 // row of the matrix) and the password hash read; (Story 3.2) the bookings by day and the detail, the
-// accepted admin days, the strip's extra dates and the flag candidates. Raw inserts on an in-memory database.
+// accepted admin days, the strip's extra dates and the flag candidates; (Story 3.6) the feed's booking
+// filter and the call contacts. Raw inserts on an in-memory database.
 import type Database from 'better-sqlite3';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { deriveCallList } from '#lib/domain/index.ts';
@@ -13,10 +14,12 @@ import {
 	getAdminBookings,
 	getAdminPasswordHash,
 	getAdminStripExtraDates,
+	getCallContacts,
 	getCallFeed,
 	getFutureFlagCandidates,
 	getReplyReminders
 } from './admin.ts';
+import { getSendProblemRows } from './outbox.ts';
 
 /** Tue 12 Jan 2027, 10:00 Zurich. */
 const NOW = '2027-01-12T09:00:00Z';
@@ -165,6 +168,53 @@ describe('getCallFeed', () => {
 		expect(feed.get(none)).toMatchObject({ lastTold: null, rows: [] });
 		expect(feed.get(bad)).toMatchObject({ lastTold: null });
 		expect(deriveCallList(feed, NOW)).toEqual([]);
+	});
+});
+
+describe('getCallFeed with a booking filter (Story 3.6)', () => {
+	it('returns only that booking, with the same entry as the full feed', () => {
+		const a = insertBooking({ lastTold: HOT });
+		insertRow(a, 'keybox', 'accepted');
+		const b = insertBooking({ start: '2027-01-13T17:00:00Z', lastTold: HOT });
+		const full = getCallFeed(NOW, db);
+		const one = getCallFeed(NOW, db, { bookingId: a });
+		expect([...one.keys()]).toEqual([a]);
+		expect(one.get(a)).toEqual(full.get(a));
+		expect([...getCallFeed(NOW, db, { bookingId: b }).keys()]).toEqual([b]);
+	});
+
+	it('is empty for a deleted, started or unknown booking', () => {
+		const deleted = insertBooking({ deletedAt: '2027-01-10T08:00:00Z' });
+		const started = insertBooking({ start: '2027-01-12T08:00:00Z' });
+		for (const bookingId of [deleted, started, 999]) expect(getCallFeed(NOW, db, { bookingId }).size).toBe(0);
+	});
+});
+
+describe('getSendProblemRows with a booking filter (Story 3.6)', () => {
+	it("reads only that booking's rows, equal to the full read's entry", () => {
+		const a = insertBooking();
+		insertRow(a, 'keybox', 'accepted');
+		const b = insertBooking({ start: '2027-01-13T17:00:00Z' });
+		insertRow(b, 'keybox', 'refused');
+		const full = getSendProblemRows(NOW, db);
+		expect([...full.keys()]).toEqual([a, b]);
+		const one = getSendProblemRows(NOW, db, { bookingId: b });
+		expect([...one.keys()]).toEqual([b]);
+		expect(one.get(b)).toEqual(full.get(b));
+		expect(getSendProblemRows(NOW, db, { bookingId: 999 }).size).toBe(0);
+	});
+});
+
+describe('getCallContacts (Story 3.6)', () => {
+	it('reads name and mobile by booking id, null once erased; unknown ids are left out', () => {
+		const tom = insertBooking();
+		sqlite.prepare("update booking set name = 'Tom Brunner', mobile = '+41794123581' where id = ?").run(tom);
+		const erased = insertBooking();
+		const contacts = getCallContacts([erased, tom, 999], db);
+		expect([...contacts.keys()].sort()).toEqual([tom, erased].sort());
+		expect(contacts.get(tom)).toEqual({ id: tom, name: 'Tom Brunner', mobile: '+41794123581' });
+		expect(contacts.get(erased)).toEqual({ id: erased, name: null, mobile: null });
+		expect(getCallContacts([], db).size).toBe(0);
 	});
 });
 
