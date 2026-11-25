@@ -16,6 +16,7 @@ import { getDb, type Db } from '../index.ts';
 import { block, booking, outbox, season, setting } from '../schema.ts';
 import { getDayData, type DayData } from './calendar.ts';
 import { getSendProblemRows } from './outbox.ts';
+import { getKeyboxSettings } from './setting.ts';
 
 /** The stored admin password hash, or null when none is set. For the sign-in command only. */
 export function getAdminPasswordHash(db: Db = getDb()): string | null {
@@ -371,4 +372,44 @@ export function getFutureFlagCandidates(now: Instant, db: Db = getDb()): FlagCan
 			.map((r) => r.bookingId)
 	);
 	return rows.map((r) => ({ ...r, refused: refused.has(r.id) }));
+}
+
+/** An upcoming booking whose keybox email went out with an old code (Story 3.8). */
+export type OldCodeBooking = {
+	id: number;
+	start: Instant;
+	/** Null once erased. */
+	name: string | null;
+	/** The trimmed code its keybox email contained (the send snapshot). */
+	code: string;
+};
+
+/**
+ * The live bookings starting after `now` whose accepted keybox row holds a trimmed, non-empty
+ * `snapshot_keybox_code` other than the trimmed current code, in start order (FR-20). Nothing while
+ * the current code is unset. Codes come only from the snapshots; admin pages only.
+ */
+export function getOldCodeBookings(now: Instant, db: Db = getDb()): OldCodeBooking[] {
+	const current = getKeyboxSettings(db).code;
+	if (current === null) return [];
+	const rows = db
+		.select({ id: booking.id, start: booking.startAt, name: booking.name, code: outbox.snapshotKeyboxCode })
+		.from(booking)
+		.innerJoin(outbox, eq(outbox.bookingId, booking.id))
+		.where(
+			and(
+				isNull(booking.deletedAt),
+				gt(booking.startAt, now),
+				eq(outbox.kind, 'keybox'),
+				eq(outbox.state, 'accepted'),
+				isNotNull(outbox.snapshotKeyboxCode)
+			)
+		)
+		.orderBy(asc(booking.startAt), asc(booking.id))
+		.all();
+	// One row per booking: the `outbox_one_keybox` unique index allows one keybox row each.
+	return rows.flatMap((r) => {
+		const code = r.code?.trim() ?? '';
+		return code === '' || code === current ? [] : [{ id: r.id, start: r.start, name: r.name, code }];
+	});
 }

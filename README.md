@@ -382,7 +382,7 @@ The headings and the footer label are drafted copy. The bodies are placeholders:
 
 ### Setting the keybox code and instructions in development
 
-The access and return instructions (DE and EN) are set on `/admin/settings` since Story 3.7; the keybox code card comes in Story 3.8. Until then, set the code (and, if you like, the instructions) in the dev database by hand, for example with the `sqlite3` CLI:
+The access and return instructions (DE and EN) are set on `/admin/settings` since Story 3.7, the keybox code since Story 3.8 (the Schlüsselbox-Code card). For a quick dev setup you can still set them in the dev database by hand, for example with the `sqlite3` CLI:
 
 ```sh
 sqlite3 data/dev.sqlite "UPDATE setting SET
@@ -549,7 +549,7 @@ Rules:
 
 - "Hinweis geändert" comes only from `!noticeEquals(current, lastTold)`; there is no tag when no last-told notice is stored. Notice texts use `badgeText` (moved to `src/lib/server/notice-text.ts`, re-exported from `booked-view.ts`) with `now` as the "at" instant.
 - The code shown is the keybox row's `snapshot_keybox_code` once accepted (a blank one counts as none): muted "Code 4711", or the tag "Alter Code 1234" when it differs from the current keybox code setting. With the setting unset there is no old-code tag. Keybox times read "Mo 16:00" within 6 days of today, else "Mo 1. März, 16:00".
-- The out-of-times flag is `outsideCurrentTimes({ start, durationMin }, seasons, settings)` in `src/lib/domain/flags.ts`: the local date is in no season row, or the booking starts before opening or ends after closing. It is derived on every request, never stored, and only for bookings that have not started.
+- The out-of-times flag is `outsideCurrentTimes({ start, durationMin }, seasons, settings)` in `src/lib/domain/flags.ts`: the local date is in no season row, or the booking starts before opening or ends after closing. It is derived on every request, never stored, and only for bookings that have not started. Since Story 3.8 it sits on `outsideReason(…)` (`'season' | 'hours' | null`, season checked first), so the settings page can split it by cause; the home and the row tags stay combined.
 - Refused emails listed on the detail and flagged on the home are unresolved refused confirmations and non-urgent heat-change emails. A refused keybox or urgent heat-change email belongs to the call list (Story 3.6).
 
 ### Drafted copy for operator review (Story 3.2)
@@ -752,6 +752,36 @@ From EXPERIENCE.md (DE and EN unless marked): the card headings, field labels an
 | `block_time_step` (reused for an hours time off the 5-minute step or malformed) | Bitte wähl eine Zeit in 5-Minuten-Schritten, z. B. 09:05. | Please pick a time in 5-minute steps, e.g. 09:05. |
 
 The page title and hidden `h1` reuse the nav word `admin_nav_settings` (Einstellungen / Settings); the password errors reuse `admin_password_too_short` / `_too_long` from Story 3.1.
+
+## Admin manages seasons and rotates the keybox code (Story 3.8)
+
+Einstellungen gains two cards, Saison (first) and Schlüsselbox-Code (after Vorheizzeit), so the card order is Saison, Betriebszeiten, Wechselzeit, Buchungshorizont, Vorheizzeit, Schlüsselbox-Code, Anleitung DE / EN, Kontaktadresse, Passwort (FR-1, FR-11, FR-20). No migration. Both write through `changeSettings`; neither writes an outbox row or changes a booking (`season_id` included), and nothing is resent.
+
+- **Schemas** (`src/lib/schemas/settings.ts`): `season` posts `start`, `end` (real `yyyy-mm-dd` dates; the block form's `isCalendarDate`, since schemas may not import `#lib/time`; a malformed date is `block_date_invalid`), end after start (`settings_season_order` on `end`), and an optional hidden `id` (a positive integer of at most 9 digits; empty creates). `keybox` posts `code`, trimmed, required, at most 32 characters and without line breaks (`settings_keybox_invalid`; the input has `maxlength` 32). `settings_season_overlap` is an error key the route sets, never the schema.
+- **Command**: `changeSettings({ card: 'season', id, startDate, endDate })` reruns the schema (`invalid`), then inside the transaction reads `getSeasonRows`: an id with no row is `not_found`, a row that ended before today (Zurich) is `past` (ended rows are frozen: analytics and purge timing read them), an end before today is `past` with `field: 'end'`, a changed start on a row that started before today is `past` (the view renders that Beginn `readonly`), and dates overlapping any other row, inclusive, are `conflict` (a command check, no db constraint; a season may start the day after another ends). Then it updates the row in place or inserts the next one. `{ card: 'keybox', code }` writes the trimmed `keybox_code`; only later keybox claims snapshot it.
+- **Queries**: `getSeasonRows` (`queries/calendar.ts`, the rows with ids, earliest first). `getOldCodeBookings(now)` (`queries/admin.ts`): live bookings starting after `now` whose accepted keybox row has a trimmed, non-empty `snapshot_keybox_code` other than the trimmed current code, in start order; nothing while the code is unset. Codes come only from the snapshots.
+- **View model** (`settings-view.ts`): `seasonTarget(rows, today)` picks what the Saison card edits: the row containing today, else the earliest row starting after today (Beginn · Ende prefilled, hidden `id`, "Speichern"); else the latest ended row read-only ("Letzte Saison (vorbei)", dates with the year via `formatDateWithYear`) with empty fields and "Nächste Saison anlegen" (no `id`); with no row at all, the same without the read-only line. `buildSettingsFlags` splits the flag by `outsideReason`: the Saison card lists the bookings in no season, the Betriebszeiten card those outside the hours (both reuse `admin_flag_outside` and the home's link format via `flagLink`). `oldCodeGroups` groups the old-code bookings by code, ordered by first start: "{n} kommende Buchungen haben ihre Schlüsselmail noch mit dem alten Code {code} bekommen:" (plural) and one link per booking ("Di 12. Januar, 17:15 · Tom Brunner"), with the heading "Kommende Buchungen mit einem alten Code:" above two or more groups. The list shrinks as those bookings start.
+- **Route**: actions `season` and `keybox`, 3.7's result shapes. A season `conflict` is `fail(400, { card, errors: { start: 'settings_season_overlap' }, values })`; `past` with `field: 'end'` is `fail(400, { card, errors: { end: 'settings_season_end_past' }, values })`; `not_found`, any other `past`, a malformed hidden `id` and a lock timeout are `fail(503, { card, code: 'failed' })`.
+- **UI**: `SettingsCard.svelte` renders the read-only line, hidden fields, `type="date"` inputs (they shrink to fit two side by side at 320 px), the card's button label and the old-code groups. Focus and messages as in 3.7.
+- **Checked by hand** (no browser test layer yet, P3): focus after save and error, date inputs at 320 px, both themes.
+
+### Drafted copy for operator review (Story 3.8)
+
+From EXPERIENCE.md: the card headings and labels (Saison: Beginn · Ende / Season: Start · End; Schlüsselbox-Code: Code / Keybox code: Code), the DE note "Gilt für jede Schlüsselmail ab jetzt; verschickte Mails bleiben.", the old-code line in the plural (DE and EN) and "Das Ende muss nach dem Beginn liegen." / "The end must be after the start.". Everything else is a draft (epics list #35, plus the singular old-code line):
+
+| Key | DE | EN |
+| --- | --- | --- |
+| `admin_settings_season_create` (the button when no current or next season exists) | Nächste Saison anlegen | Add next season |
+| `admin_settings_season_last` (the read-only ended season) | Letzte Saison (vorbei) | Last season (ended) |
+| `admin_settings_season_range` (its dates, with the year) | {start} – {end} | {start} – {end} |
+| `settings_season_overlap` (dates overlapping another season, on Beginn) | Diese Daten überschneiden sich mit einer anderen Saison. | These dates overlap another season. |
+| `settings_season_end_past` (a season end before today, on Ende) | Das Ende darf nicht in der Vergangenheit liegen. | The end can't be in the past. |
+| `settings_keybox_invalid` (a code over 32 characters or with a line break) | Höchstens 32 Zeichen, ohne Zeilenumbruch. | At most 32 characters, no line breaks. |
+| `admin_settings_old_code_heading` (above two or more old-code groups) | Kommende Buchungen mit einem alten Code: | Upcoming bookings with an old code: |
+| `admin_settings_old_code` singular | 1 kommende Buchung hat ihre Schlüsselmail noch mit dem alten Code {code} bekommen: | 1 upcoming booking got its keybox email with the old code {code}: |
+| `admin_settings_keybox_note` (only the EN text is drafted) | Gilt für jede Schlüsselmail ab jetzt; verschickte Mails bleiben. | Applies to every keybox email from now on; emails already sent stay as they are. |
+
+A malformed season date reuses the block form's `block_date_invalid` (Bitte gib ein gültiges Datum an. / Please enter a valid date.).
 
 ## Scaffold decisions
 

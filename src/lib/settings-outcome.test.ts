@@ -1,4 +1,4 @@
-// Story 3.7: the settings page's client decisions, per card and for the pre-heat dialog.
+// Stories 3.7, 3.8: the settings page's client decisions, per card and for the pre-heat dialog.
 import { describe, expect, it } from 'vitest';
 import type { PreheatDialogView } from '#lib/server/settings-view.ts';
 import { cardOutcome, cardStep, firstErrorField, preheatSaveStep } from './settings-outcome.ts';
@@ -80,5 +80,28 @@ describe('firstErrorField', () => {
 	it('is the first field in form order', () => {
 		expect(firstErrorField(['min', 'max'], { max: 'settings_preheat_range', min: 'settings_preheat_swapped' })).toBe('min');
 		expect(firstErrorField(['min', 'max'], {})).toBeUndefined();
+	});
+});
+
+describe('season and keybox (Story 3.8)', () => {
+	it('an overlap is a field error on start; not_found / past / lock timeout are the in-card failure', () => {
+		expect(
+			cardStep(
+				{ type: 'failure', data: { card: 'season', errors: { start: 'settings_season_overlap' }, values: { start: '2027-04-01', end: '2027-05-31', id: '' } } },
+				'season'
+			)
+		).toEqual({ kind: 'errors', errors: { start: 'settings_season_overlap' } });
+		expect(firstErrorField(['start', 'end'], { start: 'settings_season_overlap' })).toBe('start');
+		expect(cardStep({ type: 'failure', data: { card: 'season', code: 'failed' } }, 'season')).toEqual({ kind: 'failed' });
+		expect(cardStep({ type: 'failure', data: { card: 'keybox', code: 'failed' } }, 'keybox')).toEqual({ kind: 'failed' });
+		expect(cardStep({ type: 'success', data: { card: 'keybox', saved: true } }, 'keybox')).toEqual({ kind: 'saved' });
+	});
+
+	it('after a native POST keeps the season values with the error, and shows saved for the keybox card', () => {
+		expect(
+			cardOutcome({ card: 'season', errors: { end: 'settings_season_order' }, values: { start: '2027-01-09', end: '2027-01-09', id: '1' } }, 'season')
+		).toEqual({ errors: { end: 'settings_season_order' }, values: { start: '2027-01-09', end: '2027-01-09', id: '1' }, status: null });
+		expect(cardOutcome({ card: 'keybox', saved: true }, 'keybox')).toEqual({ errors: {}, values: {}, status: 'saved' });
+		expect(cardOutcome({ card: 'season', code: 'failed' }, 'season')).toEqual({ errors: {}, values: {}, status: 'failed' });
 	});
 });

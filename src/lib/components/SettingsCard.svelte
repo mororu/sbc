@@ -1,9 +1,12 @@
 <!--
-	Settings card (EXPERIENCE "Settings card"; DESIGN settings forms; Story 3.7): a `surface` block with
-	a 1 px line, the section-label `h2`, the card's own form with its fields (paired fields in two
-	columns; textareas at least 132 px, resizable vertically), the note, the hours card's flag (the
-	bookings outside the current times, each linked), the inline message and the secondary
-	"Speichern" (`aria-disabled` while its request runs).
+	Settings card (EXPERIENCE "Settings card"; DESIGN settings forms; Stories 3.7, 3.8): a `surface`
+	block with a 1 px line, the section-label `h2`, the card's own form with an optional read-only line
+	("Letzte Saison (vorbei)" and the dates), its fields (paired fields in two columns; date inputs
+	shrink to fit at 320 px; textareas at least 132 px, resizable vertically) and hidden fields (the
+	season `id`), the note, the flag (the bookings outside the season or the hours, each linked), the
+	keybox card's old-code groups (an `h3` above two or more, then per code the count line and a link
+	per booking), the inline message and the secondary button with the card's label ("Speichern" or
+	"Nächste Saison anlegen"; `aria-disabled` while its request runs).
 	Errors sit under their field (`aria-invalid`, `aria-describedby`), values kept; the caller moves
 	focus to the first error (`autofocus` without JavaScript via `autofocusField`). "Gespeichert." is
 	a `role="status"` line in this card; a failure is the inline "Das hat nicht geklappt …", focused.
@@ -41,7 +44,7 @@
 		/** Counts results, so a repeat status is announced and focused anew. */
 		attempt?: number;
 		busy?: boolean;
-		/** "Speichern" */
+		/** "Speichern": the label used when the card gives none. */
 		save: string;
 		/** "Gespeichert." */
 		saved: string;
@@ -69,6 +72,12 @@
 <section class="card" aria-labelledby="settings-{view.card}-title">
 	<h2 id="settings-{view.card}-title">{view.title}</h2>
 	<form method="POST" action={view.action} novalidate use:enhance={submit}>
+		{#if view.readOnly}
+			<p class="read-only"><span class="read-only-label">{view.readOnly.label}</span> <span>{view.readOnly.text}</span></p>
+		{/if}
+		{#each view.hidden as field (field.name)}
+			<input type="hidden" name={field.name} value={field.value} />
+		{/each}
 		<div class="fields" class:pair={view.paired}>
 			{#each view.fields as field (field.name)}
 				{#if field.kind === 'textarea'}
@@ -101,6 +110,8 @@
 						min={field.min}
 						max={field.max}
 						step={field.step}
+						maxlength={field.maxlength}
+						readonly={field.readOnly}
 						inputmode={field.kind === 'number' ? 'numeric' : undefined}
 						autocomplete={field.autocomplete as never}
 						autocapitalize={field.kind === 'email' ? 'off' : undefined}
@@ -125,6 +136,20 @@
 				</ul>
 			</div>
 		{/if}
+		{#if view.groups.length > 0}
+			<div class="flag old-code">
+				{#if view.groupsHeading}<h3>{view.groupsHeading}</h3>{/if}
+				{#each view.groups as group (group.code)}
+					<p>{group.text}</p>
+					<ul>
+						{#each group.links as link (link.href)}
+							<!-- eslint-disable-next-line svelte/no-navigation-without-resolve -- an admin booking href from the server -->
+							<li><a href={link.href}>{link.text}</a></li>
+						{/each}
+					</ul>
+				{/each}
+			</div>
+		{/if}
 		{#key attempt}
 			{#if status === 'saved'}
 				<InlineMessage kind="info" text={saved} />
@@ -132,7 +157,7 @@
 				<InlineMessage text={failed} focus />
 			{/if}
 		{/key}
-		<button class="secondary" type="submit" bind:this={button} aria-disabled={busy ? 'true' : undefined}>{save}</button>
+		<button class="secondary" type="submit" bind:this={button} aria-disabled={busy ? 'true' : undefined}>{view.submitLabel || save}</button>
 	</form>
 </section>
 
@@ -170,6 +195,19 @@
 		display: grid;
 		grid-template-columns: repeat(2, minmax(0, 1fr));
 		gap: 18px;
+	}
+	/* Date inputs have a wide intrinsic width; at 320 px two must fit side by side. */
+	.fields :global(input[type='date']) {
+		min-width: 0;
+		width: 100%;
+	}
+	.read-only {
+		font-size: var(--type-body-sm-size);
+		font-weight: var(--type-body-sm-weight);
+	}
+	.read-only-label {
+		display: block;
+		color: var(--muted);
 	}
 	.field {
 		display: flex;
@@ -234,6 +272,14 @@
 		margin: 0;
 		padding: 0;
 		list-style: none;
+	}
+	.old-code h3 {
+		margin-bottom: var(--space-2);
+		font-size: inherit;
+		font-weight: 600;
+	}
+	.old-code ul + p {
+		margin-top: var(--space-2);
 	}
 	.flag a {
 		display: inline-flex;

@@ -1,6 +1,6 @@
 // Story 3.2 matrix, "Flag": the out-of-times flag against season 2027-01-09…2027-03-31, hours 16:00–22:00.
 import { describe, expect, it } from 'vitest';
-import { outsideCurrentTimes } from './flags.ts';
+import { outsideCurrentTimes, outsideReason } from './flags.ts';
 
 const SEASONS = [{ startDate: '2027-01-09', endDate: '2027-03-31' }];
 const HOURS = { openMinute: 16 * 60, closeMinute: 22 * 60 };
@@ -32,5 +32,36 @@ describe('outsideCurrentTimes', () => {
 		// 16:00 CEST is 14:00 UTC.
 		expect(outsideCurrentTimes({ start: '2027-04-05T14:00:00Z', durationMin: 60 }, summer, HOURS)).toBe(false);
 		expect(outsideCurrentTimes({ start: '2027-04-05T13:55:00Z', durationMin: 60 }, summer, HOURS)).toBe(true);
+	});
+});
+
+describe('outsideReason (Story 3.8)', () => {
+	it('is null inside the season and the hours', () => {
+		expect(outsideReason({ start: '2027-01-12T15:00:00Z', durationMin: 60 }, SEASONS, HOURS)).toBeNull();
+	});
+
+	it('is `hours` in season but outside the hours', () => {
+		expect(outsideReason({ start: '2027-01-12T20:30:00Z', durationMin: 90 }, SEASONS, HOURS)).toBe('hours');
+		expect(outsideReason({ start: '2027-01-12T14:30:00Z', durationMin: 60 }, SEASONS, HOURS)).toBe('hours');
+	});
+
+	it('is `season` in no season row, also when the hours do not fit either (season first)', () => {
+		expect(outsideReason({ start: '2027-04-05T16:00:00Z', durationMin: 60 }, SEASONS, HOURS)).toBe('season');
+		expect(outsideReason({ start: '2027-04-05T20:30:00Z', durationMin: 90 }, SEASONS, HOURS)).toBe('season');
+		expect(outsideReason({ start: '2027-01-12T15:00:00Z', durationMin: 60 }, [], HOURS)).toBe('season');
+	});
+});
+
+describe('outsideReason boundaries (Story 3.8)', () => {
+	it('is inside on the season\'s first and last day, `season` the day after the end', () => {
+		expect(outsideReason({ start: '2027-01-09T15:00:00Z', durationMin: 60 }, SEASONS, HOURS)).toBeNull();
+		expect(outsideReason({ start: '2027-03-31T15:00:00Z', durationMin: 60 }, SEASONS, HOURS)).toBeNull();
+		expect(outsideReason({ start: '2027-04-01T15:00:00Z', durationMin: 60 }, SEASONS, HOURS)).toBe('season');
+	});
+
+	it('is inside when it ends exactly at closing, `hours` when it ends 5 minutes after', () => {
+		// 21:00–22:00 and 21:05–22:05 Zurich.
+		expect(outsideReason({ start: '2027-01-12T20:00:00Z', durationMin: 60 }, SEASONS, HOURS)).toBeNull();
+		expect(outsideReason({ start: '2027-01-12T20:05:00Z', durationMin: 60 }, SEASONS, HOURS)).toBe('hours');
 	});
 });

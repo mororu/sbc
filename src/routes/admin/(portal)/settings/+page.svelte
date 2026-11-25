@@ -1,11 +1,12 @@
 <!--
-	Settings (EXPERIENCE "Settings card"; mockup key-admin-settings; FR-15, FR-20; Story 3.7): the
-	visually hidden h1 "Einstellungen", then one `SettingsCard` per group (Betriebszeiten, Wechselzeit,
-	Buchungshorizont, Vorheizzeit, Anleitung DE / EN, Kontaktadresse, Passwort; Story 3.8 adds Saison
-	and Schlüsselbox-Code), a grid: one column with a 20 px gap on phones, two equal columns from
+	Settings (EXPERIENCE "Settings card"; mockup key-admin-settings; FR-15, FR-20; Stories 3.7, 3.8):
+	the visually hidden h1 "Einstellungen", then one `SettingsCard` per group (Saison, Betriebszeiten,
+	Wechselzeit, Buchungshorizont, Vorheizzeit, Schlüsselbox-Code, Anleitung DE / EN, Kontaktadresse,
+	Passwort), a grid: one column with a 20 px gap on phones, two equal columns from
 	1024 px (rows aligned to the top, 20 px gaps; the shell caps the page at --admin-max). A grid, not
 	CSS columns, so a card never jumps column when a flag or an error appears. Each card is its own form with its own "Speichern" and its own result:
-	- saved: "Gespeichert." in that card (a polite status), the page data reloads (the hours flag);
+	- saved: "Gespeichert." in that card (a polite status), the page data reloads (the flags, the
+	  season card's target after "Nächste Saison anlegen", the old-code list);
 	- invalid: the errors under the fields, values kept, focus on the first error;
 	- failure (a lock timeout, an error result, a network error): the inline "Das hat nicht geklappt …"
 	  in that card, focused. Other cards keep what they show.

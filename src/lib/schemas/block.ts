@@ -34,8 +34,8 @@ export type BlockValues = Record<BlockField, string>;
 const DATE = /^(\d{4})-(\d{2})-(\d{2})$/;
 const TIME = /^([01]\d|2[0-3]):([0-5]\d)$/;
 
-/** True for a real calendar date `yyyy-mm-dd` (Gregorian, no clock read). */
-function isCalendarDate(value: string): boolean {
+/** True for a real calendar date `yyyy-mm-dd` (Gregorian, no clock read); also the settings season card's date check. */
+export function isCalendarDate(value: string): boolean {
 	const match = DATE.exec(value);
 	if (!match) return false;
 	const [year, month, day] = match.slice(1).map(Number);

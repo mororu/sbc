@@ -158,3 +158,64 @@ describe('helpers', () => {
 		expect(hhmm(1325)).toBe('22:05');
 	});
 });
+
+describe('season (Story 3.8)', () => {
+	it('gives the dates and the id, or null without one', () => {
+		expect(parseSettingsCard('season', { start: '2027-01-09', end: '2027-04-15', id: '1' })).toEqual({
+			ok: true,
+			value: { id: 1, startDate: '2027-01-09', endDate: '2027-04-15' }
+		});
+		expect(parseSettingsCard('season', { start: ' 2027-12-20 ', end: '2028-04-30' })).toEqual({
+			ok: true,
+			value: { id: null, startDate: '2027-12-20', endDate: '2028-04-30' }
+		});
+	});
+
+	it('Order: refuses an end on or before the start on `end`, values kept', () => {
+		expect(parseSettingsCard('season', { start: '2027-01-09', end: '2027-01-09', id: '1' })).toEqual({
+			ok: false,
+			errors: { end: 'settings_season_order' }
+		});
+		expect(parseSettingsCard('season', { start: '2027-01-09', end: '2027-01-08' })).toEqual({ ok: false, errors: { end: 'settings_season_order' } });
+		expect(settingsValues('season', { start: '2027-01-09', end: '2027-01-08', id: '1' })).toEqual({ start: '2027-01-09', end: '2027-01-08', id: '1' });
+	});
+
+	it('Empty: refuses an empty start with `field_required`; malformed dates and ids', () => {
+		expect(parseSettingsCard('season', { start: '', end: '2027-04-30', id: '1' })).toEqual({ ok: false, errors: { start: 'field_required' } });
+		expect(parseSettingsCard('season', {})).toEqual({ ok: false, errors: { start: 'field_required', end: 'field_required' } });
+		expect(parseSettingsCard('season', { start: '2027-02-30', end: '9.1.2027' })).toEqual({
+			ok: false,
+			errors: { start: 'block_date_invalid', end: 'block_date_invalid' }
+		});
+		expect(parseSettingsCard('season', { start: '2027-01-09', end: '2027-04-30', id: '0' })).toEqual({ ok: false, errors: { id: 'field_required' } });
+		expect(parseSettingsCard('season', { start: '2027-01-09', end: '2027-04-30', id: '1.5' })).toEqual({ ok: false, errors: { id: 'field_required' } });
+		expect(settingsErrorFields('season', { end: 'settings_season_order', start: 'field_required' })).toEqual(['start', 'end']);
+	});
+});
+
+describe('keybox (Story 3.8)', () => {
+	it('gives the trimmed code', () => {
+		expect(parseSettingsCard('keybox', { code: ' 5822 ' })).toEqual({ ok: true, value: { code: '5822' } });
+	});
+
+	it('Empty code: refuses blanks with `field_required`, values kept as posted', () => {
+		expect(parseSettingsCard('keybox', { code: '  ' })).toEqual({ ok: false, errors: { code: 'field_required' } });
+		expect(parseSettingsCard('keybox', {})).toEqual({ ok: false, errors: { code: 'field_required' } });
+		expect(settingsValues('keybox', { code: '  ' })).toEqual({ code: '  ' });
+	});
+});
+
+describe('season id and keybox code limits (Story 3.8 review)', () => {
+	it('accepts a season id of up to 9 digits, refuses 10', () => {
+		expect(parseSettingsCard('season', { start: '2027-01-09', end: '2027-04-30', id: '999999999' })).toMatchObject({ ok: true, value: { id: 999999999 } });
+		expect(parseSettingsCard('season', { start: '2027-01-09', end: '2027-04-30', id: '1000000000' })).toEqual({ ok: false, errors: { id: 'field_required' } });
+	});
+
+	it('accepts a code of 32 characters after trimming; refuses 33 and any line break', () => {
+		const code32 = 'A'.repeat(32);
+		expect(parseSettingsCard('keybox', { code: `  ${code32}  ` })).toEqual({ ok: true, value: { code: code32 } });
+		expect(parseSettingsCard('keybox', { code: 'A'.repeat(33) })).toEqual({ ok: false, errors: { code: 'settings_keybox_invalid' } });
+		expect(parseSettingsCard('keybox', { code: '47\n11' })).toEqual({ ok: false, errors: { code: 'settings_keybox_invalid' } });
+		expect(parseSettingsCard('keybox', { code: '47\r\n11' })).toEqual({ ok: false, errors: { code: 'settings_keybox_invalid' } });
+	});
+});

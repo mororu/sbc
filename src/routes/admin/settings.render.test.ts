@@ -2,7 +2,9 @@
 // its section-label h2, labels, notes, prefilled values (no password value), the secondary
 // "Speichern" per card, the hours flag with its link, errors with aria-invalid and autofocus after a
 // native POST (values kept, other cards unchanged), "Gespeichert." as a status and the failure alert
-// in that card only.
+// in that card only. Story 3.8: the Saison card (date inputs, hidden id, the read-only ended season
+// and "Nächste Saison anlegen", its flag, the overlap error) and the Schlüsselbox-Code card (note,
+// old-code groups with links, the intro heading above two or more groups), in the card order.
 import { render } from 'svelte/server';
 import { describe, expect, it, vi } from 'vitest';
 import SettingsPage from './(portal)/settings/+page.svelte';
@@ -15,8 +17,13 @@ const inputs: SettingsInputs = {
 	settings: { changeoverMin: 15, openMinute: 600, closeMinute: 1320, horizonDays: 14, preheatMinMin: 30, preheatMaxMin: 40 },
 	instructions: { de: 'Box links.', en: 'Box left.' },
 	contact: 'sauna@example.ch',
-	outside: null
+	flags: { season: null, hours: null },
+	seasons: [{ id: 1, startDate: '2027-01-09', endDate: '2027-04-30' }],
+	today: '2027-01-12',
+	keyboxCode: '4711',
+	oldCode: []
 };
+const flag = (text: string, id: number, link: string) => ({ kind: 'outside' as const, text, links: [{ href: `/admin/booking/${id}` as never, text: link }] });
 
 const page = (form: unknown = null, over: Partial<SettingsInputs> = {}, locale: 'de' | 'en' = 'de') =>
 	render(SettingsPage, { props: { data: { view: buildSettingsView({ ...inputs, ...over }, locale) }, form } as never });
@@ -32,15 +39,17 @@ describe('settings page', () => {
 		expect(head).toContain('<title>Einstellungen · Sauna Luegisee</title>');
 		expect(body).toMatch(/<h1 class="visually-hidden"[^>]*>Einstellungen<\/h1>/);
 		expect([...body.matchAll(/<h2 id="settings-([a-z]+)-title"[^>]*>(.*?)<\/h2>/g)].map((h) => [h[1], h[2]])).toEqual([
+			['season', 'Saison'],
 			['hours', 'Betriebszeiten'],
 			['changeover', 'Wechselzeit'],
 			['horizon', 'Buchungshorizont'],
 			['preheat', 'Vorheizzeit'],
+			['keybox', 'Schlüsselbox-Code'],
 			['instructions', 'Anleitung DE / EN'],
 			['contact', 'Kontaktadresse'],
 			['password', 'Passwort']
 		]);
-		expect(body.match(/<button class="secondary[^"]*" type="submit"[^>]*>Speichern<\/button>/g)).toHaveLength(7);
+		expect(body.match(/<button class="secondary[^"]*" type="submit"[^>]*>Speichern<\/button>/g)).toHaveLength(9);
 		expect(body).not.toContain('role="alert"');
 		expect(body).not.toContain('<dialog');
 	});
@@ -48,10 +57,12 @@ describe('settings page', () => {
 	it('posts each card to its action; the pre-heat card to its check', () => {
 		const { body } = page();
 		expect([...body.matchAll(/<form method="POST" action="([^"]+)"/g)].map((f) => f[1])).toEqual([
+			'?/season',
 			'?/hours',
 			'?/changeover',
 			'?/horizon',
 			'?/preheatCheck',
+			'?/keybox',
 			'?/instructions',
 			'?/contact',
 			'?/password'
@@ -87,25 +98,98 @@ describe('settings page', () => {
 		expect(body).toMatch(/<label for="settings-password-password"[^>]*>Neues Passwort<\/label>/);
 	});
 
-	it('shows the notes under Wechselzeit and Passwort only', () => {
+	it('shows the notes under Wechselzeit, Schlüsselbox-Code and Passwort only', () => {
 		const { body } = page();
 		expect(section(body, 'changeover')).toContain('<p class="note');
 		expect(section(body, 'changeover')).toContain('Gilt nur für neue Buchungen.');
+		expect(section(body, 'keybox')).toContain('Gilt für jede Schlüsselmail ab jetzt; verschickte Mails bleiben.');
 		expect(section(body, 'password')).toContain('Alle anderen Admins werden abgemeldet.');
-		expect(body.match(/<p class="note/g)).toHaveLength(2);
+		expect(body.match(/<p class="note/g)).toHaveLength(3);
 	});
 
-	it('shows the hours flag with a link to each booking', () => {
+	it('shows each flag in its own card with a link to each booking', () => {
 		const { body } = page(null, {
-			outside: {
-				kind: 'outside',
-				text: '1 Buchung liegt ausserhalb der neuen Zeiten. Sie bleibt gültig.',
-				links: [{ href: '/admin/booking/7' as never, text: 'Di 12. Januar, 20:30 · Tom Brunner' }]
+			flags: {
+				hours: flag('1 Buchung liegt ausserhalb der neuen Zeiten. Sie bleibt gültig.', 7, 'Di 12. Januar, 20:30 · Tom Brunner'),
+				season: flag('1 Buchung liegt ausserhalb der neuen Zeiten. Sie bleibt gültig.', 8, 'Do 21. Januar, 18:00 · Lena Graf')
 			}
 		});
 		const hours = section(body, 'hours');
 		expect(hours).toContain('1 Buchung liegt ausserhalb der neuen Zeiten. Sie bleibt gültig.');
 		expect(hours).toMatch(/<a href="\/admin\/booking\/7"[^>]*>Di 12\. Januar, 20:30 · Tom Brunner<\/a>/);
+		expect(hours).not.toContain('/admin/booking/8');
+		const season = section(body, 'season');
+		expect(season).toMatch(/<a href="\/admin\/booking\/8"[^>]*>Do 21\. Januar, 18:00 · Lena Graf<\/a>/);
+		expect(season).not.toContain('/admin/booking/7');
+	});
+
+	it('the running season\'s Beginn is readonly, Ende not; the code input has maxlength 32', () => {
+		const { body } = page();
+		expect(input(body, 'settings-season-start')).toMatch(/readonly/);
+		expect(input(body, 'settings-season-end')).not.toMatch(/readonly/);
+		expect(input(page(null, { today: '2027-01-05' }).body, 'settings-season-start')).not.toMatch(/readonly/);
+		expect(input(body, 'settings-keybox-code')).toMatch(/maxlength="32"/);
+	});
+
+	it('the Saison card: date inputs prefilled, the hidden id, "Speichern"', () => {
+		const { body } = page();
+		const season = section(body, 'season');
+		expect(season).toMatch(/<label for="settings-season-start"[^>]*>Beginn<\/label>/);
+		expect(season).toMatch(/<label for="settings-season-end"[^>]*>Ende<\/label>/);
+		expect(input(body, 'settings-season-start')).toMatch(/type="date"/);
+		expect(input(body, 'settings-season-start')).toMatch(/value="2027-01-09"/);
+		expect(input(body, 'settings-season-end')).toMatch(/type="date"/);
+		expect(input(body, 'settings-season-end')).toMatch(/value="2027-04-30"/);
+		expect(season).toMatch(/<input type="hidden" name="id" value="1"/);
+		expect(season).toMatch(/>Speichern<\/button>/);
+		expect(season).not.toContain('Letzte Saison');
+	});
+
+	it('the Saison card after the season ended: the read-only last season, empty fields, "Nächste Saison anlegen", no id', () => {
+		const { body } = page(null, { today: '2027-05-10' });
+		const season = section(body, 'season');
+		expect(season).toMatch(/Letzte Saison \(vorbei\).*9\. Januar 2027 – 30\. April 2027/s);
+		expect(input(body, 'settings-season-start')).not.toMatch(/value="[^"]/);
+		expect(input(body, 'settings-season-end')).not.toMatch(/value="[^"]/);
+		expect(season).not.toContain('type="hidden"');
+		expect(season).toMatch(/>Nächste Saison anlegen<\/button>/);
+		const none = section(page(null, { seasons: [] }).body, 'season');
+		expect(none).not.toContain('Letzte Saison');
+		expect(none).toMatch(/>Nächste Saison anlegen<\/button>/);
+	});
+
+	it('the Saison card after an overlap: the error on Beginn, values kept, autofocused', () => {
+		const { body } = page({ card: 'season', errors: { start: 'settings_season_overlap' }, values: { start: '2027-04-01', end: '2027-05-31', id: '' } });
+		const start = input(body, 'settings-season-start');
+		expect(start).toMatch(/value="2027-04-01"/);
+		expect(start).toMatch(/aria-invalid="true"/);
+		expect(start).toMatch(/autofocus/);
+		expect(body).toMatch(/id="settings-season-start-error"[^>]*>.*Diese Daten überschneiden sich mit einer anderen Saison\./s);
+		expect(input(body, 'settings-season-end')).toMatch(/value="2027-05-31"/);
+		const order = page({ card: 'season', errors: { end: 'settings_season_order' }, values: { start: '2027-01-09', end: '2027-01-09', id: '1' } }).body;
+		expect(order).toMatch(/id="settings-season-end-error"[^>]*>.*Das Ende muss nach dem Beginn liegen\./s);
+	});
+
+	it('the Schlüsselbox-Code card: the prefilled code and the old-code group with its links', () => {
+		const oldCode = [
+			{ id: 3, start: '2027-01-12T16:15:00Z', name: 'Tom Brunner', code: '4711' },
+			{ id: 4, start: '2027-01-13T17:00:00Z', name: 'Lena Graf', code: '4711' },
+			{ id: 5, start: '2027-01-14T17:00:00Z', name: 'Anna Meier', code: '4711' }
+		];
+		const { body } = page(null, { keyboxCode: '5822', oldCode });
+		const keybox = section(body, 'keybox');
+		expect(keybox).toMatch(/<label for="settings-keybox-code"[^>]*>Code<\/label>/);
+		expect(input(body, 'settings-keybox-code')).toMatch(/type="text"/);
+		expect(input(body, 'settings-keybox-code')).toMatch(/value="5822"/);
+		expect(keybox).toContain('3 kommende Buchungen haben ihre Schlüsselmail noch mit dem alten Code 4711 bekommen:');
+		expect(keybox).toMatch(/<a href="\/admin\/booking\/3"[^>]*>Di 12\. Januar, 17:15 · Tom Brunner<\/a>/);
+		expect(keybox.match(/<a href="\/admin\/booking\/\d+"/g)).toHaveLength(3);
+		expect(keybox).not.toContain('<h3');
+		const two = section(
+			page(null, { keyboxCode: '6933', oldCode: [{ ...oldCode[0], code: '5822' }, oldCode[1], oldCode[2]] }).body,
+			'keybox'
+		);
+		expect(two).toMatch(/<h3[^>]*>Kommende Buchungen mit einem alten Code:<\/h3>.*1 kommende Buchung hat ihre Schlüsselmail noch mit dem alten Code 5822 bekommen:.*2 kommende Buchungen haben/s);
 	});
 
 	it('after an invalid native POST: errors in that card, values kept, first error autofocused, other cards unchanged', () => {
@@ -147,6 +231,8 @@ describe('settings page', () => {
 		const { body } = page(null, {}, 'en');
 		expect(body).toContain('Operating hours');
 		expect(body).toMatch(/<label for="settings-preheat-min"[^>]*>Shortest time \(minutes\)<\/label>/);
-		expect(body.match(/>Save<\/button>/g)).toHaveLength(7);
+		expect(body.match(/>Save<\/button>/g)).toHaveLength(9);
+		expect(body).toMatch(/<label for="settings-season-start"[^>]*>Start<\/label>/);
+		expect(body).toContain('Keybox code');
 	});
 });

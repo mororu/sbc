@@ -2,7 +2,8 @@
 // kept, never the password), the pre-heat check (unchanged, dialog), save and stale, the password
 // card (hash replaced, other sessions deleted, own kept), a lock timeout (503 in the card), and a
 // guest read after a save seeing the new value. An in-memory database; DEV_NOW Tue 12 Jan 2027,
-// 11:06 Zurich.
+// 11:06 Zurich. Story 3.8: the season and keybox actions (saved, order/empty, overlap → 400 on
+// start, not_found/past/lock timeout → 503 failed), never writing an outbox row or a booking.
 import { isActionFailure, isRedirect } from '@sveltejs/kit';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 // The test migrates and edits its own in-memory database; routes never touch the db layer.
@@ -62,7 +63,7 @@ vi.mock('#lib/server/env.ts', () => ({
 
 /** The seeded setting row as each test starts from it. */
 const SEED =
-	"update setting set changeover_min = 15, preheat_min_min = 30, preheat_max_min = 40, horizon_days = 14, open_minute = 600, close_minute = 1320, admin_contact = 'platzhalter@sauna-luegisee.ch', keybox_instructions_de = null, keybox_instructions_en = null";
+	"update setting set changeover_min = 15, preheat_min_min = 30, preheat_max_min = 40, horizon_days = 14, open_minute = 600, close_minute = 1320, admin_contact = 'platzhalter@sauna-luegisee.ch', keybox_instructions_de = null, keybox_instructions_en = null, keybox_code = null";
 
 const OWN = 'AAAAAAAAAAAAAAAAAAAAAA';
 const OTHER = 'BBBBBBBBBBBBBBBBBBBBBB';
@@ -78,6 +79,8 @@ beforeEach(async () => {
 	clock.passwordInvalid = false;
 	sqlite().exec(SEED);
 	sqlite().exec('delete from outbox; delete from booking; delete from admin_session');
+	sqlite().exec("delete from season where id <> 1; update season set start_date = '2027-01-09', end_date = '2027-04-30' where id = 1");
+	clock.now = '2027-01-12T10:06:00Z';
 	setAdminPassword({ hash: await hashPassword('correct horse battery'), reset: true });
 	const insert = sqlite().prepare("insert into admin_session (id, created_at, expires_at) values (?, '2027-01-12T09:00:00Z', '2027-02-11T09:00:00Z')");
 	insert.run(OWN);
@@ -120,7 +123,17 @@ describe('load', () => {
 	it('gives the settings view', async () => {
 		const outcome = (await run(() => (load as (e: unknown) => unknown)({}))) as { data: { view: { kind: string; cards: { card: string }[] } } };
 		expect(outcome.data.view.kind).toBe('admin-settings');
-		expect(outcome.data.view.cards.map((c) => c.card)).toEqual(['hours', 'changeover', 'horizon', 'preheat', 'instructions', 'contact', 'password']);
+		expect(outcome.data.view.cards.map((c) => c.card)).toEqual([
+			'season',
+			'hours',
+			'changeover',
+			'horizon',
+			'preheat',
+			'keybox',
+			'instructions',
+			'contact',
+			'password'
+		]);
 	});
 });
 
@@ -186,6 +199,102 @@ describe('plain cards', () => {
 		expect(guest().adminContact?.address).toBe('platzhalter@sauna-luegisee.ch');
 		await post('contact', { email: 'sauna@example.ch' });
 		expect(guest().adminContact).toEqual({ address: 'sauna@example.ch', href: 'mailto:sauna@example.ch' });
+	});
+});
+
+describe('season and keybox (Story 3.8)', () => {
+	const seasons = () => sqlite().prepare('select * from season order by id').all();
+	const bookings = () => JSON.stringify(sqlite().prepare('select * from booking order by id').all());
+
+	it('Edit current: saves in place; no outbox row, bookings unchanged', async () => {
+		insertBooking('2027-01-12T17:00:00Z', COLD_1800);
+		const before = bookings();
+		expect(await post('season', { start: '2027-01-09', end: '2027-04-15', id: '1' })).toEqual({ data: { card: 'season', saved: true } });
+		expect(seasons()).toEqual([{ id: 1, start_date: '2027-01-09', end_date: '2027-04-15' }]);
+		expect(bookings()).toBe(before);
+		expect(outboxCount()).toBe(0);
+	});
+
+	it('Order / empty: 400 on end / start, values kept; nothing saved', async () => {
+		expect(await post('season', { start: '2027-01-09', end: '2027-01-09', id: '1' })).toEqual({
+			failure: {
+				status: 400,
+				data: { card: 'season', errors: { end: 'settings_season_order' }, values: { start: '2027-01-09', end: '2027-01-09', id: '1' } }
+			}
+		});
+		expect(await post('season', { start: '', end: '2027-04-15', id: '1' })).toEqual({
+			failure: { status: 400, data: { card: 'season', errors: { start: 'field_required' }, values: { start: '', end: '2027-04-15', id: '1' } } }
+		});
+		expect(seasons()).toEqual([{ id: 1, start_date: '2027-01-09', end_date: '2027-04-30' }]);
+	});
+
+	it('Overlap: 400 with the overlap error on start, values kept; nothing written', async () => {
+		expect(await post('season', { start: '2027-04-01', end: '2027-05-31' })).toEqual({
+			failure: {
+				status: 400,
+				data: { card: 'season', errors: { start: 'settings_season_overlap' }, values: { start: '2027-04-01', end: '2027-05-31', id: '' } }
+			}
+		});
+		expect(seasons()).toHaveLength(1);
+		expect(outboxCount()).toBe(0);
+	});
+
+	it('Ended: creates the next season without an id; posting the ended row is `past` → 503 failed', async () => {
+		clock.now = '2027-05-10T08:00:00Z';
+		expect(await post('season', { start: '2027-12-20', end: '2028-04-30' })).toEqual({ data: { card: 'season', saved: true } });
+		expect(seasons()).toEqual([
+			{ id: 1, start_date: '2027-01-09', end_date: '2027-04-30' },
+			{ id: 2, start_date: '2027-12-20', end_date: '2028-04-30' }
+		]);
+		expect(await post('season', { start: '2027-01-09', end: '2027-05-31', id: '1' })).toEqual({ failure: { status: 503, data: { card: 'season', code: 'failed' } } });
+		expect(seasons()).toHaveLength(2);
+	});
+
+	it('an unknown id (the row is gone) → 503 failed; a lock timeout → 503 failed', async () => {
+		expect(await post('season', { start: '2027-12-20', end: '2028-04-30', id: '9' })).toEqual({ failure: { status: 503, data: { card: 'season', code: 'failed' } } });
+		clock.busy = true;
+		expect(await post('season', { start: '2027-01-09', end: '2027-04-15', id: '1' })).toEqual({ failure: { status: 503, data: { card: 'season', code: 'failed' } } });
+		expect(await post('keybox', { code: '5822' })).toEqual({ failure: { status: 503, data: { card: 'keybox', code: 'failed' } } });
+		expect(seasons()).toEqual([{ id: 1, start_date: '2027-01-09', end_date: '2027-04-30' }]);
+	});
+
+	it('an end before today is 400 on end; a changed start of the running season and a malformed id are 503 failed', async () => {
+		expect(await post('season', { start: '2027-01-09', end: '2027-01-11', id: '1' })).toEqual({
+			failure: {
+				status: 400,
+				data: { card: 'season', errors: { end: 'settings_season_end_past' }, values: { start: '2027-01-09', end: '2027-01-11', id: '1' } }
+			}
+		});
+		expect(await post('season', { start: '2026-11-01', end: '2026-12-31' })).toEqual({
+			failure: { status: 400, data: { card: 'season', errors: { end: 'settings_season_end_past' }, values: { start: '2026-11-01', end: '2026-12-31', id: '' } } }
+		});
+		expect(await post('season', { start: '2027-01-10', end: '2027-04-30', id: '1' })).toEqual({ failure: { status: 503, data: { card: 'season', code: 'failed' } } });
+		expect(await post('season', { start: '2027-01-09', end: '2027-04-30', id: 'x' })).toEqual({ failure: { status: 503, data: { card: 'season', code: 'failed' } } });
+		expect(await post('season', { start: '2027-01-09', end: '2027-04-30', id: '1000000000' })).toEqual({
+			failure: { status: 503, data: { card: 'season', code: 'failed' } }
+		});
+		expect(seasons()).toEqual([{ id: 1, start_date: '2027-01-09', end_date: '2027-04-30' }]);
+	});
+
+	it('a code over 32 characters is 400 settings_keybox_invalid', async () => {
+		const long = 'A'.repeat(33);
+		expect(await post('keybox', { code: long })).toEqual({
+			failure: { status: 400, data: { card: 'keybox', errors: { code: 'settings_keybox_invalid' }, values: { code: long } } }
+		});
+	});
+
+	it('Code change: replaced and saved, no outbox row; an empty code is 400 field_required', async () => {
+		sqlite().exec("update setting set keybox_code = '4711'");
+		insertBooking('2027-01-12T17:00:00Z', COLD_1800);
+		const before = bookings();
+		expect(await post('keybox', { code: '5822' })).toEqual({ data: { card: 'keybox', saved: true } });
+		expect(sqlite().prepare('select keybox_code as code from setting').get()).toEqual({ code: '5822' });
+		expect(bookings()).toBe(before);
+		expect(outboxCount()).toBe(0);
+		expect(await post('keybox', { code: '  ' })).toEqual({
+			failure: { status: 400, data: { card: 'keybox', errors: { code: 'field_required' }, values: { code: '  ' } } }
+		});
+		expect(sqlite().prepare('select keybox_code as code from setting').get()).toEqual({ code: '5822' });
 	});
 });
 

@@ -7,20 +7,27 @@
 // `min`), instructions (`de`, `en`: trimmed, line breaks as LF, required, at most 4000 UTF-16 code
 // units, as the textarea's `maxlength` counts them), contact (the
 // booking form's email rules, its own error text) and password (`validateNewPassword`). A password
-// is never trimmed and never part of `values`. Imports nothing from the app.
+// is never trimmed and never part of `values`. Story 3.8 adds season (`start`, `end`: real
+// `yyyy-mm-dd` dates, end after start, the order error on `end`; an optional hidden `id`, a positive
+// integer of at most 9 digits) and keybox (`code`: trimmed, required, at most 32 characters, no line
+// break). Imports nothing from the app (the date check is
+// the block form's `isCalendarDate`, as `#lib/time` may not be imported here).
 import * as v from 'valibot';
 import { validateNewPassword } from './admin.ts';
+import { isCalendarDate } from './block.ts';
 import { emailSchema } from './booking.ts';
 
-export const SETTINGS_CARDS = ['hours', 'changeover', 'horizon', 'preheat', 'instructions', 'contact', 'password'] as const;
+export const SETTINGS_CARDS = ['season', 'hours', 'changeover', 'horizon', 'preheat', 'keybox', 'instructions', 'contact', 'password'] as const;
 export type SettingsCard = (typeof SETTINGS_CARDS)[number];
 
 /** The posted fields of each card, in form order. */
 export const SETTINGS_FIELDS = {
+	season: ['start', 'end', 'id'],
 	hours: ['open', 'close'],
 	changeover: ['minutes'],
 	horizon: ['days'],
 	preheat: ['min', 'max'],
+	keybox: ['code'],
 	instructions: ['de', 'en'],
 	contact: ['email'],
 	password: ['password']
@@ -34,13 +41,20 @@ export const HORIZON_RANGE = { min: 1, max: 60, step: 1 } as const;
 export const PREHEAT_RANGE = { min: 15, max: 90, step: 5 } as const;
 /** Operating hours are `HH:MM` on this step. */
 export const HOURS_STEP_MIN = 5;
+/** The longest keybox code, after trimming; it holds no line break. */
+export const KEYBOX_CODE_MAX = 32;
 /** The longest access instructions, per locale: UTF-16 code units after CRLF → LF, as `maxlength` counts. */
 export const INSTRUCTIONS_MAX = 4000;
 
 /** Message keys in messages/*.json. */
 export type SettingsErrorKey =
 	| 'field_required'
+	| 'block_date_invalid'
 	| 'block_time_step'
+	| 'settings_season_order'
+	| 'settings_season_overlap'
+	| 'settings_season_end_past'
+	| 'settings_keybox_invalid'
 	| 'settings_hours_order'
 	| 'settings_changeover_range'
 	| 'settings_horizon_range'
@@ -53,7 +67,12 @@ export type SettingsErrorKey =
 
 export const SETTINGS_ERROR_KEYS: readonly SettingsErrorKey[] = [
 	'field_required',
+	'block_date_invalid',
 	'block_time_step',
+	'settings_season_order',
+	'settings_season_overlap',
+	'settings_season_end_past',
+	'settings_keybox_invalid',
 	'settings_hours_order',
 	'settings_changeover_range',
 	'settings_horizon_range',
@@ -71,10 +90,13 @@ export type SettingsValues = Record<string, string>;
 
 /** The parsed value of each card. */
 export type SettingsInput = {
+	/** `id` null: create the next season. Dates `yyyy-mm-dd`, end after start. */
+	season: { id: number | null; startDate: string; endDate: string };
 	hours: { openMinute: number; closeMinute: number };
 	changeover: { changeoverMin: number };
 	horizon: { horizonDays: number };
 	preheat: { minMin: number; maxMin: number };
+	keybox: { code: string };
 	instructions: { de: string; en: string };
 	contact: { contact: string };
 	password: { password: string };
@@ -130,7 +152,25 @@ const instructions = () =>
 		v.check((value) => value.length <= INSTRUCTIONS_MAX, 'settings_instructions_too_long')
 	);
 
+const date = () => v.pipe(required(), v.check(isCalendarDate, 'block_date_invalid'));
+
+/** A season row id: a positive integer as text, or empty for none. */
+const SEASON_ID = /^[1-9]\d{0,8}$/;
+
 const schemas = {
+	season: v.pipe(
+		v.object({
+			start: date(),
+			end: date(),
+			id: v.pipe(v.string(), v.trim(), v.check((id) => id === '' || SEASON_ID.test(id), 'field_required'))
+		}),
+		// `yyyy-mm-dd` compares as text.
+		v.forward(
+			v.check((value) => value.end > value.start, 'settings_season_order'),
+			['end']
+		),
+		v.transform((value) => ({ id: value.id === '' ? null : Number(value.id), startDate: value.start, endDate: value.end }))
+	),
 	hours: v.pipe(
 		v.object({ open: time(), close: time() }),
 		// "Bis" 00:00 is midnight at the end of the day, after any "Von".
@@ -157,6 +197,12 @@ const schemas = {
 		),
 		v.transform((value) => ({ minMin: value.min, maxMin: value.max }))
 	),
+	keybox: v.object({
+		code: v.pipe(
+			required(),
+			v.check((code) => code.length <= KEYBOX_CODE_MAX && !/[\r\n]/.test(code), 'settings_keybox_invalid')
+		)
+	}),
 	instructions: v.object({ de: instructions(), en: instructions() }),
 	contact: v.pipe(
 		v.object({ email: emailSchema }),

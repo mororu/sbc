@@ -1,34 +1,45 @@
-// The settings page (EXPERIENCE "Settings card", Voice and Tone "Settings"; FR-15, FR-20; Story 3.7):
-// one card per group, in order Betriebszeiten, Wechselzeit (note), Buchungshorizont, Vorheizzeit,
-// Anleitung DE / EN, Kontaktadresse, Passwort (note), each with its fields prefilled from the setting
-// row (the password always empty), its labels, and the text of every error key. The hours card
-// carries the "outside the times" flag (`buildHomeFlags` over `getFutureFlagCandidates`, the home's
-// flag) whenever a booking that has not started lies outside the current times; it is derived on
-// every load, so it stays until those bookings pass. Story 3.8 adds Saison and Schlüsselbox-Code.
+// The settings page (EXPERIENCE "Settings card", Voice and Tone "Settings"; FR-15, FR-20; Stories
+// 3.7, 3.8): one card per group, in order Saison, Betriebszeiten, Wechselzeit (note),
+// Buchungshorizont, Vorheizzeit, Schlüsselbox-Code (note), Anleitung DE / EN, Kontaktadresse,
+// Passwort (note), each with its fields prefilled from the setting row (the password always empty),
+// its labels, and the text of every error key. The "outside the times" flag is split by cause
+// (`outsideReason`): the season card lists the bookings in no season, the hours card those outside
+// the hours (the home keeps one combined flag). Both are derived on every load, so they stay until
+// those bookings start.
+// The season card (`seasonTarget`) edits the row containing today, else the next one; with neither,
+// it shows the last ended row read-only and creates the next season. The keybox card lists the
+// upcoming bookings whose keybox email went out with an old code, grouped by code.
 // `preheatDialog` words the pre-heat impact for the dialog. Every string is formatted here on the
 // server; client code never needs src/lib/time. Read-only: nothing here writes.
 import { m } from '#lib/paraglide/messages.js';
+import { outsideReason } from '#lib/domain/index.ts';
 import {
 	CHANGEOVER_RANGE,
 	HORIZON_RANGE,
 	hhmm,
 	HOURS_STEP_MIN,
 	INSTRUCTIONS_MAX,
+	KEYBOX_CODE_MAX,
 	PREHEAT_RANGE,
 	SETTINGS_ERROR_KEYS,
 	type SettingsCard,
 	type SettingsErrorKey
 } from '#lib/schemas/index.ts';
-import type { Instant, Locale } from '#lib/time/index.ts';
-import { loadAdminRowContext } from './admin-day-view.ts';
-import { buildHomeFlags, type HomeFlag } from './admin-view.ts';
+import { compareDates, compareInstants, formatDateWithYear, today, type Instant, type LocalDate, type Locale } from '#lib/time/index.ts';
+import { loadAdminRowContext, type AdminRowContext } from './admin-day-view.ts';
+import { flagLink, type HomeFlag } from './admin-view.ts';
 import { now as clockNow } from './clock.ts';
 import {
 	getAdminContact,
 	getFutureFlagCandidates,
 	getKeyboxSettings,
+	getOldCodeBookings,
+	getSeasonRows,
 	getSettings,
-	type PreheatImpact
+	type FlagCandidate,
+	type OldCodeBooking,
+	type PreheatImpact,
+	type SeasonRow
 } from './db/queries/index.ts';
 
 type Db = Parameters<typeof getSettings>[0];
@@ -39,12 +50,14 @@ export type SettingsFieldView = {
 	label: string;
 	/** The prefilled value; always empty for the password. */
 	value: string;
-	kind: 'time' | 'number' | 'textarea' | 'email' | 'password';
+	kind: 'time' | 'number' | 'date' | 'text' | 'textarea' | 'email' | 'password';
 	min?: number;
 	max?: number;
 	/** `step` in the input's unit: seconds for time inputs (300), else the number step. */
 	step?: number;
 	maxlength?: number;
+	/** Shown and posted but not editable: the Beginn of a season that has started. */
+	readOnly?: boolean;
 	/** The language of the field's content (the instructions). */
 	lang?: Locale;
 	autocomplete?: string;
@@ -61,9 +74,22 @@ export type SettingsCardView = {
 	paired: boolean;
 	/** "Gilt nur für neue Buchungen." · "Alle anderen Admins werden abgemeldet." */
 	note: string | null;
-	/** The hours card: the bookings outside the current times, with links; else null. */
+	/** The season card: the bookings in no season; the hours card: those outside the hours; with links, else null. */
 	flag: HomeFlag | null;
+	/** Posted with the form but not shown: the season row's `id`. */
+	hidden: { name: string; value: string }[];
+	/** The button: "Speichern", or "Nächste Saison anlegen". */
+	submitLabel: string;
+	/** A read-only line above the fields: "Letzte Saison (vorbei)" with "9. Januar 2027 – 30. April 2027". */
+	readOnly: { label: string; text: string } | null;
+	/** The keybox card: the upcoming bookings sent an old code, one group per code; else empty. */
+	groups: OldCodeGroup[];
+	/** "Kommende Buchungen mit einem alten Code:" above two or more groups; else null. */
+	groupsHeading: string | null;
 };
+
+/** One old code: "3 kommende Buchungen haben ihre Schlüsselmail noch mit dem alten Code 4711 bekommen:" and a link per booking. */
+export type OldCodeGroup = { code: string; text: string; links: HomeFlag['links'] };
 
 export type SettingsView = {
 	kind: 'admin-settings';
@@ -85,13 +111,72 @@ export type SettingsInputs = {
 	settings: ReturnType<typeof getSettings>;
 	instructions: { de: string | null; en: string | null };
 	contact: string | null;
-	/** The home's "outside the times" flag, or null. */
-	outside: HomeFlag | null;
+	/** The "outside the times" flag split by cause (`buildSettingsFlags`). */
+	flags: SettingsFlags;
+	/** Every season row, and today in Zurich (the season card's target). */
+	seasons: SeasonRow[];
+	today: LocalDate;
+	/** The current keybox code (trimmed), or null when unset. */
+	keyboxCode: string | null;
+	/** `getOldCodeBookings`: the upcoming bookings sent an old code, in start order. */
+	oldCode: OldCodeBooking[];
 };
+
+/** The bookings outside the current times, by cause: in no season, or outside the hours. */
+export type SettingsFlags = { season: HomeFlag | null; hours: HomeFlag | null };
+
+/** Pure: the season and hours flags over the bookings that have not started (`outsideReason`, season first). */
+export function buildSettingsFlags(candidates: FlagCandidate[], context: AdminRowContext): SettingsFlags {
+	const { locale } = context;
+	const future = candidates.filter((b) => compareInstants(b.start, context.now) > 0);
+	const flag = (reason: 'season' | 'hours'): HomeFlag | null => {
+		const list = future.filter((b) => outsideReason(b, context.seasons, context.settings) === reason);
+		if (list.length === 0) return null;
+		return { kind: 'outside', text: m.admin_flag_outside({ count: list.length }, { locale }), links: list.map((b) => flagLink(b, locale)) };
+	};
+	return { season: flag('season'), hours: flag('hours') };
+}
+
+/**
+ * Pure: what the season card edits, with `today` in Zurich:
+ * 1. the row containing today, else 2. the earliest row starting after today (`edit`);
+ * 3. else `create`, showing the latest ended row (4. with no row at all, none).
+ */
+export type SeasonTarget = { kind: 'edit'; row: SeasonRow } | { kind: 'create'; last: SeasonRow | null };
+
+export function seasonTarget(rows: SeasonRow[], today: LocalDate): SeasonTarget {
+	const current = rows.find((r) => compareDates(r.startDate, today) <= 0 && compareDates(today, r.endDate) <= 0);
+	if (current) return { kind: 'edit', row: current };
+	const next = rows
+		.filter((r) => compareDates(r.startDate, today) > 0)
+		.sort((a, b) => compareDates(a.startDate, b.startDate))[0];
+	if (next) return { kind: 'edit', row: next };
+	const last = rows
+		.filter((r) => compareDates(r.endDate, today) < 0)
+		.sort((a, b) => compareDates(b.endDate, a.endDate))[0];
+	return { kind: 'create', last: last ?? null };
+}
+
+/** Pure: the old-code groups, one per code, ordered by their first booking's start. */
+export function oldCodeGroups(bookings: OldCodeBooking[], locale: Locale): OldCodeGroup[] {
+	const byCode = new Map<string, OldCodeBooking[]>();
+	// `bookings` are in start order, so the map's insertion order is the order of first starts.
+	for (const b of bookings) byCode.set(b.code, [...(byCode.get(b.code) ?? []), b]);
+	return [...byCode].map(([code, list]) => ({
+		code,
+		text: m.admin_settings_old_code({ count: list.length, code }, { locale }),
+		links: list.map((b) => flagLink(b, locale))
+	}));
+}
 
 const ERROR_TEXT: Record<SettingsErrorKey, (locale: Locale) => string> = {
 	field_required: (locale) => m.field_required({}, { locale }),
+	block_date_invalid: (locale) => m.block_date_invalid({}, { locale }),
 	block_time_step: (locale) => m.block_time_step({}, { locale }),
+	settings_season_order: (locale) => m.settings_season_order({}, { locale }),
+	settings_season_overlap: (locale) => m.settings_season_overlap({}, { locale }),
+	settings_season_end_past: (locale) => m.settings_season_end_past({}, { locale }),
+	settings_keybox_invalid: (locale) => m.settings_keybox_invalid({}, { locale }),
 	settings_hours_order: (locale) => m.settings_hours_order({}, { locale }),
 	settings_changeover_range: (locale) => m.settings_changeover_range({}, { locale }),
 	settings_horizon_range: (locale) => m.settings_horizon_range({}, { locale }),
@@ -124,18 +209,57 @@ const time = (name: string, label: string, minuteOfDay: number): SettingsFieldVi
 /** Pure: the settings page. */
 export function buildSettingsView(input: SettingsInputs, locale: Locale): SettingsView {
 	const { settings } = input;
-	const card = (c: Omit<SettingsCardView, 'action' | 'note' | 'flag' | 'paired'> & Partial<SettingsCardView>): SettingsCardView => ({
+	const save = m.admin_settings_save({}, { locale });
+	const card = (
+		c: Omit<SettingsCardView, 'action' | 'note' | 'flag' | 'paired' | 'hidden' | 'submitLabel' | 'readOnly' | 'groups' | 'groupsHeading'> &
+			Partial<SettingsCardView>
+	): SettingsCardView => ({
 		action: `?/${c.card}`,
 		paired: false,
 		note: null,
 		flag: null,
+		hidden: [],
+		submitLabel: save,
+		readOnly: null,
+		groups: [],
+		groupsHeading: null,
 		...c
 	});
+	const target = seasonTarget(input.seasons, input.today);
+	const date = (name: 'start' | 'end', label: string, value: string): SettingsFieldView => ({ name, label, value, kind: 'date' });
+	const edited = target.kind === 'edit' ? target.row : null;
+	const last = target.kind === 'create' ? target.last : null;
+	const groups = oldCodeGroups(input.oldCode, locale);
 	const errors = Object.fromEntries(SETTINGS_ERROR_KEYS.map((key) => [key, ERROR_TEXT[key](locale)])) as Record<SettingsErrorKey, string>;
 	return {
 		kind: 'admin-settings',
 		title: m.admin_nav_settings({}, { locale }),
 		cards: [
+			card({
+				card: 'season',
+				title: m.admin_settings_season({}, { locale }),
+				paired: true,
+				fields: [
+					{
+						...date('start', m.admin_settings_season_start({}, { locale }), edited?.startDate ?? ''),
+						// A running season's start has passed; `changeSettings` refuses a change.
+						...(edited && compareDates(edited.startDate, input.today) < 0 ? { readOnly: true } : {})
+					},
+					date('end', m.admin_settings_season_end({}, { locale }), edited?.endDate ?? '')
+				],
+				hidden: edited ? [{ name: 'id', value: String(edited.id) }] : [],
+				submitLabel: edited ? save : m.admin_settings_season_create({}, { locale }),
+				readOnly: last
+					? {
+							label: m.admin_settings_season_last({}, { locale }),
+							text: m.admin_settings_season_range(
+								{ start: formatDateWithYear(last.startDate, locale), end: formatDateWithYear(last.endDate, locale) },
+								{ locale }
+							)
+						}
+					: null,
+				flag: input.flags.season
+			}),
 			card({
 				card: 'hours',
 				title: m.admin_settings_hours({}, { locale }),
@@ -144,7 +268,7 @@ export function buildSettingsView(input: SettingsInputs, locale: Locale): Settin
 					time('open', m.admin_settings_hours_open({}, { locale }), settings.openMinute),
 					time('close', m.admin_settings_hours_close({}, { locale }), settings.closeMinute)
 				],
-				flag: input.outside
+				flag: input.flags.hours
 			}),
 			card({
 				card: 'changeover',
@@ -166,6 +290,23 @@ export function buildSettingsView(input: SettingsInputs, locale: Locale): Settin
 					number('min', m.admin_settings_preheat_min({}, { locale }), settings.preheatMinMin, PREHEAT_RANGE),
 					number('max', m.admin_settings_preheat_max({}, { locale }), settings.preheatMaxMin, PREHEAT_RANGE)
 				]
+			}),
+			card({
+				card: 'keybox',
+				title: m.admin_settings_keybox({}, { locale }),
+				fields: [
+					{
+						name: 'code',
+						label: m.admin_settings_keybox_code({}, { locale }),
+						value: input.keyboxCode ?? '',
+						kind: 'text',
+						maxlength: KEYBOX_CODE_MAX,
+						autocomplete: 'off'
+					}
+				],
+				note: m.admin_settings_keybox_note({}, { locale }),
+				groups,
+				groupsHeading: groups.length >= 2 ? m.admin_settings_old_code_heading({}, { locale }) : null
 			}),
 			card({
 				card: 'instructions',
@@ -207,20 +348,28 @@ export function buildSettingsView(input: SettingsInputs, locale: Locale): Settin
 				note: m.admin_settings_password_note({}, { locale })
 			})
 		],
-		save: m.admin_settings_save({}, { locale }),
+		save,
 		saved: m.admin_settings_saved({}, { locale }),
 		failed: m.admin_action_failed({}, { locale }),
 		errors
 	};
 }
 
-/** The settings page at `now`: the setting row, the instructions, the contact and the hours flag. */
+/** The settings page at `now`: the setting row, the seasons, the keybox code and instructions, the contact, the flags and the old-code list. */
 export function loadSettings(locale: Locale, now: Instant = clockNow(), db?: Db): SettingsView {
 	const context = loadAdminRowContext(locale, now, db);
-	const outside = buildHomeFlags(getFutureFlagCandidates(now, db), context).find((f) => f.kind === 'outside') ?? null;
 	const keybox = getKeyboxSettings(db);
 	return buildSettingsView(
-		{ settings: getSettings(db), instructions: keybox.instructions, contact: getAdminContact(db), outside },
+		{
+			settings: getSettings(db),
+			instructions: keybox.instructions,
+			contact: getAdminContact(db),
+			flags: buildSettingsFlags(getFutureFlagCandidates(now, db), context),
+			seasons: getSeasonRows(db),
+			today: today(now),
+			keyboxCode: keybox.code,
+			oldCode: getOldCodeBookings(now, db)
+		},
 		locale
 	);
 }

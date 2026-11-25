@@ -1,4 +1,4 @@
-// The settings page's client logic (Story 3.7), pure and client-safe: what an action result means
+// The settings page's client logic (Stories 3.7, 3.8), pure and client-safe: what an action result means
 // for one card ("Speichern", the pre-heat check) and for the pre-heat dialog's confirm, and which
 // result of a native POST belongs to which card. The page only carries the decisions out.
 import type { SettingsCard, SettingsErrors, SettingsValues } from '#lib/schemas/index.ts';
@@ -26,8 +26,8 @@ const hasErrors = (data: SettingsFormData) => !!data.errors && Object.keys(data.
  * - `saved`: "Gespeichert." in the card, then reload the page data;
  * - `errors`: the field errors, values kept, focus on the first error;
  * - `dialog`: the pre-heat dialog for the checked window;
- * - `failed`: the inline failure in the card, focused (a lock timeout, an error result, a network
- *   error, or an answer for another card).
+ * - `failed`: the inline failure in the card, focused (a lock timeout, a season row gone or ended
+ *   meanwhile, an error result, a network error, or an answer for another card).
  */
 export type CardStep =
 	| { kind: 'redirect' }

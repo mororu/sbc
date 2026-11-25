@@ -17,6 +17,7 @@ import {
 	getCallContacts,
 	getCallFeed,
 	getFutureFlagCandidates,
+	getOldCodeBookings,
 	getReplyReminders
 } from './admin.ts';
 import { getSendProblemRows } from './outbox.ts';
@@ -403,5 +404,61 @@ describe('getFutureFlagCandidates', () => {
 			{ id: resolved, start: '2027-01-17T17:00:00Z', durationMin: 90, name: null, refused: false },
 			{ id: keyboxRefused, start: '2027-01-18T17:00:00Z', durationMin: 90, name: null, refused: false }
 		]);
+	});
+});
+
+describe('getOldCodeBookings (Story 3.8)', () => {
+	const setCode = (code: string | null) => sqlite.prepare('update setting set keybox_code = ? where id = 1').run(code);
+	const sent = (start: string, code: string | null, state = 'accepted') => {
+		const id = insertBooking({ start });
+		insertOutbox(id, 'keybox', state, { code });
+		return id;
+	};
+
+	it('Old-code list: lists the 3 future bookings sent with 4711, not the past one; empty once all start', () => {
+		setCode('5822');
+		const past = sent('2027-01-12T08:00:00Z', '4711');
+		const c = sent('2027-01-14T17:00:00Z', '4711');
+		const a = sent('2027-01-12T17:00:00Z', ' 4711 ');
+		const b = sent('2027-01-13T17:00:00Z', '4711');
+		sqlite.prepare("update booking set name = 'Tom Brunner' where id = ?").run(a);
+		const list = getOldCodeBookings(NOW, db);
+		expect(list).toEqual([
+			{ id: a, start: '2027-01-12T17:00:00Z', name: 'Tom Brunner', code: '4711' },
+			{ id: b, start: '2027-01-13T17:00:00Z', name: null, code: '4711' },
+			{ id: c, start: '2027-01-14T17:00:00Z', name: null, code: '4711' }
+		]);
+		expect(list.map((r) => r.id)).not.toContain(past);
+		expect(getOldCodeBookings('2027-01-14T17:00:00Z', db)).toEqual([]);
+	});
+
+	it('Second change: both old codes, in start order', () => {
+		setCode('6933');
+		const a = sent('2027-01-12T17:00:00Z', '4711');
+		const b = sent('2027-01-13T17:00:00Z', '5822');
+		const c = sent('2027-01-14T17:00:00Z', '4711');
+		expect(getOldCodeBookings(NOW, db).map((r) => [r.id, r.code])).toEqual([
+			[a, '4711'],
+			[b, '5822'],
+			[c, '4711']
+		]);
+	});
+
+	it('leaves out the current code (trimmed), blank snapshots, unsent or deleted bookings, and lists nothing while the code is unset', () => {
+		setCode(' 5822 ');
+		sent('2027-01-12T17:00:00Z', '5822');
+		sent('2027-01-12T18:00:00Z', '  ');
+		sent('2027-01-12T19:00:00Z', null);
+		sent('2027-01-12T20:00:00Z', '4711', 'in_flight');
+		sent('2027-01-13T17:00:00Z', '4711', 'refused');
+		const deleted = sent('2027-01-13T18:00:00Z', '4711');
+		sqlite.prepare("update booking set deleted_at = '2027-01-12T08:00:00Z' where id = ?").run(deleted);
+		expect(getOldCodeBookings(NOW, db)).toEqual([]);
+		const old = sent('2027-01-13T19:00:00Z', '4711');
+		expect(getOldCodeBookings(NOW, db).map((r) => r.id)).toEqual([old]);
+		setCode('  ');
+		expect(getOldCodeBookings(NOW, db)).toEqual([]);
+		setCode(null);
+		expect(getOldCodeBookings(NOW, db)).toEqual([]);
 	});
 });

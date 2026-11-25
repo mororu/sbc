@@ -12,6 +12,12 @@
 // keeps the admin's own session and deletes every other one. If that own session was deleted
 // meanwhile (another admin changed the password first), the cookie is cleared and the admin goes to
 // sign-in with "Bitte melde dich wieder an.", as the guard does for an ended session.
+// Story 3.8 adds `season` and `keybox`, plain cards through `changeSettings`: a season `conflict`
+// (dates overlapping another season) is `fail(400, { card, errors: { start: 'settings_season_overlap' },
+// values })`; an end before today (`past` with `field: 'end'`) is `fail(400, { card, errors: { end:
+// 'settings_season_end_past' }, values })`; `not_found` (the row is gone), any other `past` (the row
+// has ended, or its start passed and was changed) and a malformed hidden `id` are the in-card
+// failure, `fail(503, { card, code: 'failed' })`, like a lock timeout.
 import { fail, redirect } from '@sveltejs/kit';
 import { getLocale } from '#lib/paraglide/runtime.js';
 import {
@@ -68,6 +74,8 @@ async function write<T>(card: SettingsCard, run: () => T | Promise<T>): Promise<
  * range check disagreeing): the field and key to blame when the schema, rerun, cannot tell.
  */
 const INVALID_FIELD: Record<Exclude<SettingsCard, 'password'>, [string, SettingsErrors[string]]> = {
+	season: ['end', 'settings_season_order'],
+	keybox: ['code', 'settings_keybox_invalid'],
 	hours: ['close', 'settings_hours_order'],
 	changeover: ['minutes', 'settings_changeover_range'],
 	horizon: ['days', 'settings_horizon_range'],
@@ -85,6 +93,8 @@ function plainCard<C extends Exclude<SettingsCard, 'password' | 'preheat'>>(
 		const data = await posted(request);
 		const values = settingsValues(card, data);
 		const parsed = parseSettingsCard(card, data);
+		// The hidden season id is never typed: a bad one is a failure, not an invisible field error.
+		if (!parsed.ok && parsed.errors.id) return fail(503, { card, code: 'failed' } satisfies SettingsResult);
 		if (!parsed.ok) return fail(400, { card, errors: parsed.errors, values } satisfies SettingsResult);
 		const result = await write(card, () => changeSettings(toInput(parsed.value), { now: now() }));
 		if (!result.ok) return result.failure;
@@ -92,10 +102,23 @@ function plainCard<C extends Exclude<SettingsCard, 'password' | 'preheat'>>(
 	};
 }
 
-/** Saved, or the 400 for a command `invalid`: the schema's errors when a rerun finds any, else the card's fallback field. */
+/**
+ * Saved; a season overlap (`conflict`) as the field error on `start`; `not_found`/`past` as the in-card
+ * failure; or the 400 for a command `invalid`: the schema's errors when a rerun finds any, else the
+ * card's fallback field.
+ */
 function answer(card: Exclude<SettingsCard, 'password'>, result: ChangeSettingsResult, data: Record<string, unknown>) {
 	if (result.ok) return { card, saved: true } satisfies SettingsResult;
 	const values = settingsValues(card, data);
+	if (card === 'season' && result.code === 'conflict') {
+		return fail(400, { card, errors: { start: 'settings_season_overlap' }, values } satisfies SettingsResult);
+	}
+	if (card === 'season' && result.code === 'past' && result.field === 'end') {
+		return fail(400, { card, errors: { end: 'settings_season_end_past' }, values } satisfies SettingsResult);
+	}
+	if (result.code === 'conflict' || result.code === 'not_found' || result.code === 'past') {
+		return fail(503, { card, code: 'failed' } satisfies SettingsResult);
+	}
 	const rerun = parseSettingsCard(card, data);
 	if (!rerun.ok) return fail(400, { card, errors: rerun.errors, values } satisfies SettingsResult);
 	const [field, key] = INVALID_FIELD[card];
@@ -106,6 +129,8 @@ function answer(card: Exclude<SettingsCard, 'password'>, result: ChangeSettingsR
 const dialogFor = (minMin: number, maxMin: number) => preheatDialog(getPreheatImpact({ minMin, maxMin }, now()), getLocale());
 
 export const actions: Actions = {
+	season: plainCard('season', (v) => ({ card: 'season', ...v })),
+	keybox: plainCard('keybox', (v) => ({ card: 'keybox', ...v })),
 	hours: plainCard('hours', (v) => ({ card: 'hours', ...v })),
 	changeover: plainCard('changeover', (v) => ({ card: 'changeover', ...v })),
 	horizon: plainCard('horizon', (v) => ({ card: 'horizon', ...v })),

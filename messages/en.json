@@ -467,6 +467,32 @@
 	"admin_settings_password": "Password",
 	"admin_settings_password_new": "New password",
 	"admin_settings_password_note": "All other admins will be signed out.",
+	"admin_settings_season": "Season",
+	"admin_settings_season_start": "Start",
+	"admin_settings_season_end": "End",
+	"admin_settings_season_create": "Add next season",
+	"admin_settings_season_last": "Last season (ended)",
+	"admin_settings_season_range": "{start} – {end}",
+	"admin_settings_keybox": "Keybox code",
+	"admin_settings_keybox_code": "Code",
+	"admin_settings_keybox_note": "Applies to every keybox email from now on; emails already sent stay as they are.",
+	"admin_settings_old_code_heading": "Upcoming bookings with an old code:",
+	"admin_settings_old_code": [
+		{
+			"declarations": [
+				"input count",
+				"input code",
+				"local countPlural = count: plural"
+			],
+			"selectors": [
+				"countPlural"
+			],
+			"match": {
+				"countPlural=one": "{count} upcoming booking got its keybox email with the old code {code}:",
+				"countPlural=*": "{count} upcoming bookings got their keybox email with the old code {code}:"
+			}
+		}
+	],
 	"admin_settings_preheat_title": "Change pre-heat window?",
 	"admin_settings_preheat_what": [
 		{
@@ -485,6 +511,10 @@
 			}
 		}
 	],
+	"settings_season_order": "The end must be after the start.",
+	"settings_season_overlap": "These dates overlap another season.",
+	"settings_season_end_past": "The end can't be in the past.",
+	"settings_keybox_invalid": "At most 32 characters, no line breaks.",
 	"settings_hours_order": "\"To\" must be after \"From\".",
 	"settings_changeover_range": "Please enter 0 to 60, in steps of 5.",
 	"settings_horizon_range": "Please enter 1 to 60.",

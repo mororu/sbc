@@ -245,6 +245,28 @@ describe('tick: the keybox email (Story 2.2)', () => {
 		expect(sqlite.prepare('select last_told_notice = (select snapshot_notice from outbox where id = ?) as same from booking').get(keybox.id)).toEqual({ same: 1 });
 	});
 
+	it('sends the code saved on the settings page since, resending nothing already sent and logging no code (Story 3.8)', async () => {
+		setKeybox('4711', 'Box links.');
+		book('2027-01-12T17:00:00Z', LATE);
+		await tick(lateDeps());
+		const first = rows().find((r) => r.kind === 'keybox');
+		expect(first?.state).toBe('accepted');
+		expect(changeSettings({ card: 'keybox', code: '5822' }, { now: '2027-01-12T14:31:00Z', db })).toEqual({ ok: true });
+		book('2027-01-12T19:00:00Z', LATE, 60);
+		await tick(lateDeps());
+		const keybox = rows().filter((r) => r.kind === 'keybox');
+		expect(keybox.map((r) => r.state)).toEqual(['accepted', 'accepted']);
+		const read = (id: number) => readFileSync(join(dir, 'mail-sink', `${id}-keybox-1.eml`), 'utf8');
+		expect(read(keybox[0].id)).toContain('Code: 4 7 1 1');
+		expect(read(keybox[1].id)).toContain('Code: 5 8 2 2');
+		const sink = readdirSync(join(dir, 'mail-sink'));
+		expect(sink.filter((f) => f.startsWith(`${keybox[0].id}-keybox-`))).toEqual([`${keybox[0].id}-keybox-1.eml`]);
+		const snapshots = sqlite.prepare("select snapshot_keybox_code as code from outbox where kind = 'keybox' order by id").all();
+		expect(snapshots).toEqual([{ code: '4711' }, { code: '5822' }]);
+		const log = lines.join('\n');
+		for (const secret of ['4711', '5822']) expect(log).not.toContain(secret);
+	});
+
 	it('holds a keybox row without a code, logging it once, and still sends the rest', async () => {
 		setKeybox(null, 'Box links.');
 		book('2027-01-12T17:00:00Z', LATE);

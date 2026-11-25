@@ -7,13 +7,22 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type Database from 'better-sqlite3';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { deriveCallList, impactToken, offeredStartTimes, selectableDays } from '#lib/domain/index.ts';
+import { calendarState, deriveCallList, impactToken, offeredStartTimes, selectableDays } from '#lib/domain/index.ts';
 import { addDays, addMinutes, toInstant } from '#lib/time/index.ts';
 import { createDb, openDatabase, type Db } from '../db/index.ts';
 import { applyMigrations, MIGRATIONS_FOLDER } from '../db/migrate.ts';
-import { getCallFeed, getDayData, getDeletionImpact, getPreheatImpact, getSeasons, getSettings } from '../db/queries/index.ts';
+import {
+	getCallFeed,
+	getDayData,
+	getDeletionImpact,
+	getOldCodeBookings,
+	getPreheatImpact,
+	getSeasons,
+	getSettings
+} from '../db/queries/index.ts';
 import { changeSettings, type ChangeSettingsInput } from './change-settings.ts';
 import { deleteBooking } from './delete-booking.ts';
+import { claimDueRow } from './outbox.ts';
 
 const DAY = '2027-01-12';
 /** Tue 12 Jan 2027, 11:06 Zurich. */
@@ -60,6 +69,7 @@ const bookings = () => JSON.stringify(sqlite.prepare('select * from booking orde
 const outbox = () => sqlite.prepare('select * from outbox order by id').all() as Record<string, unknown>[];
 const heatRows = () => outbox().filter((r) => r.kind === 'heat_change');
 const settingRow = () => sqlite.prepare('select * from setting').get() as Record<string, unknown>;
+const seasonRows = () => sqlite.prepare('select * from season order by id').all() as Record<string, unknown>[];
 const change = (input: ChangeSettingsInput, now = NOW) => changeSettings(input, { now, db });
 const preheatToken = (minMin: number, maxMin: number) => getPreheatImpact({ minMin, maxMin }, NOW, db).token;
 const savePreheat = (minMin: number, maxMin: number, token = preheatToken(minMin, maxMin)) =>
@@ -216,11 +226,17 @@ describe('Invalid', () => {
 		['hours off step', { card: 'hours', openMinute: 721, closeMinute: 1260 }],
 		['empty instructions', { card: 'instructions', de: ' ', en: 'Box left.' }],
 		['bad email', { card: 'contact', contact: 'sauna@' }],
-		['unknown card', { card: 'season' } as unknown as ChangeSettingsInput]
+		['unknown card', { card: 'nope' } as unknown as ChangeSettingsInput],
+		['season without dates', { card: 'season' } as unknown as ChangeSettingsInput],
+		['season end before start', { card: 'season', id: 1, startDate: '2027-01-09', endDate: '2027-01-08' }],
+		['season end = start', { card: 'season', id: null, startDate: '2027-12-20', endDate: '2027-12-20' }],
+		['season bad date', { card: 'season', id: null, startDate: '2027-02-30', endDate: '2027-04-30' }],
+		['season id 0', { card: 'season', id: 0, startDate: '2027-01-09', endDate: '2027-04-30' }],
+		['blank code', { card: 'keybox', code: '  ' }]
 	])('refuses %s and saves nothing', (_, input) => {
-		const before = JSON.stringify(settingRow());
+		const before = JSON.stringify([settingRow(), seasonRows()]);
 		expect(change(input)).toEqual({ ok: false, code: 'invalid' });
-		expect(JSON.stringify(settingRow())).toBe(before);
+		expect(JSON.stringify([settingRow(), seasonRows()])).toBe(before);
 		expect(outbox()).toEqual([]);
 	});
 });
@@ -248,5 +264,150 @@ describe('Instructions and contact', () => {
 		});
 		expect(bookings()).toBe(before);
 		expect(outbox()).toEqual([]);
+	});
+});
+
+// Story 3.8 matrix: seasons and the keybox code. Neither card writes an outbox row or changes a booking.
+describe('Season: edit current', () => {
+	it('id 1, 2027-01-09 – 2027-04-15: row 1 updated in place, bookings unchanged (season_id too), 0 outbox rows', () => {
+		insertBooking(at('18:00'), { lastTold: HOT });
+		const before = bookings();
+		expect(change({ card: 'season', id: 1, startDate: '2027-01-09', endDate: '2027-04-15' })).toEqual({ ok: true });
+		expect(seasonRows()).toEqual([{ id: 1, start_date: '2027-01-09', end_date: '2027-04-15' }]);
+		expect(bookings()).toBe(before);
+		expect(outbox()).toEqual([]);
+	});
+});
+
+describe('Season: shorten', () => {
+	it('end 2027-01-20 keeps the bookings on 21 and 22 January; guests can pick days up to 2027-01-20 only', () => {
+		insertBooking(at('18:00', '2027-01-21'));
+		insertBooking(at('18:00', '2027-01-22'));
+		const before = bookings();
+		expect(change({ card: 'season', id: 1, startDate: '2027-01-09', endDate: '2027-01-20' })).toEqual({ ok: true });
+		expect(bookings()).toBe(before);
+		expect(outbox()).toEqual([]);
+		expect(selectableDays({ seasons: getSeasons(db), settings: getSettings(db), now: NOW }).at(-1)).toBe('2027-01-20');
+	});
+});
+
+describe('Season: overlap', () => {
+	it('creating 2027-04-01 – 2027-05-31 while row 1 exists is a conflict; nothing written', () => {
+		const before = JSON.stringify([seasonRows(), bookings()]);
+		expect(change({ card: 'season', id: null, startDate: '2027-04-01', endDate: '2027-05-31' })).toEqual({ ok: false, code: 'conflict' });
+		// Inclusive: a season starting on the last day of another overlaps.
+		expect(change({ card: 'season', id: null, startDate: '2027-04-30', endDate: '2027-05-31' })).toEqual({ ok: false, code: 'conflict' });
+		expect(JSON.stringify([seasonRows(), bookings()])).toBe(before);
+		expect(outbox()).toEqual([]);
+	});
+
+	it('editing a row into another row is a conflict; the day after another ends is fine', () => {
+		expect(change({ card: 'season', id: null, startDate: '2027-05-01', endDate: '2027-05-31' })).toEqual({ ok: true });
+		expect(change({ card: 'season', id: 1, startDate: '2027-01-09', endDate: '2027-05-10' })).toEqual({ ok: false, code: 'conflict' });
+		expect(seasonRows().map((r) => r.end_date)).toEqual(['2027-04-30', '2027-05-31']);
+	});
+});
+
+describe('Season: ended, create next', () => {
+	const LATER = '2027-05-10T08:00:00Z';
+	it('now 2027-05-10: creates 2027-12-20 – 2028-04-30, row 1 unchanged; the guest calendar is `before` the new dates', () => {
+		insertBooking(at('18:00'), { lastTold: HOT });
+		const before = bookings();
+		expect(change({ card: 'season', id: null, startDate: '2027-12-20', endDate: '2028-04-30' }, LATER)).toEqual({ ok: true });
+		expect(seasonRows()).toEqual([
+			{ id: 1, start_date: '2027-01-09', end_date: '2027-04-30' },
+			{ id: 2, start_date: '2027-12-20', end_date: '2028-04-30' }
+		]);
+		expect(bookings()).toBe(before);
+		expect(outbox()).toEqual([]);
+		expect(calendarState({ seasons: getSeasons(db), settings: getSettings(db), now: LATER })).toEqual({
+			kind: 'before',
+			seasonStart: '2027-12-20',
+			bookingOpens: '2027-12-06'
+		});
+	});
+
+	it('Past row: id 1 posted at 2027-05-10 is `past`, row unchanged', () => {
+		const before = JSON.stringify(seasonRows());
+		expect(change({ card: 'season', id: 1, startDate: '2027-01-09', endDate: '2027-05-31' }, LATER)).toEqual({ ok: false, code: 'past' });
+		expect(JSON.stringify(seasonRows())).toBe(before);
+	});
+
+	it('an unknown id is `not_found`, nothing written', () => {
+		const before = JSON.stringify(seasonRows());
+		expect(change({ card: 'season', id: 9, startDate: '2027-12-20', endDate: '2028-04-30' })).toEqual({ ok: false, code: 'not_found' });
+		expect(JSON.stringify(seasonRows())).toBe(before);
+	});
+
+	it('a row ending today is still editable', () => {
+		expect(change({ card: 'season', id: 1, startDate: '2027-01-09', endDate: '2027-04-30' }, '2027-04-30T20:00:00Z')).toEqual({ ok: true });
+	});
+});
+
+describe('Keybox code change', () => {
+	it('4711 → 5822: replaced, 0 outbox rows, no resend; the next keybox claim snapshots 5822', () => {
+		sqlite
+			.prepare("update setting set keybox_code = '4711', keybox_instructions_de = 'Box links.', keybox_instructions_en = 'Box left.' where id = 1")
+			.run();
+		const sentId = insertBooking(at('18:00', '2027-01-13'), { keybox: 'accepted' });
+		sqlite.prepare("update outbox set snapshot_keybox_code = '4711' where booking_id = ?").run(sentId);
+		const pendingId = insertBooking(at('18:00'));
+		const beforeBookings = bookings();
+		const beforeOutbox = JSON.stringify(outbox());
+		expect(change({ card: 'keybox', code: ' 5822 ' })).toEqual({ ok: true });
+		expect(settingRow().keybox_code).toBe('5822');
+		expect(bookings()).toBe(beforeBookings);
+		expect(JSON.stringify(outbox())).toBe(beforeOutbox);
+		// The booking sent with 4711 is listed; nothing was resent.
+		expect(getOldCodeBookings(NOW, db).map((b) => [b.id, b.code])).toEqual([[sentId, '4711']]);
+		sqlite.prepare("insert into outbox (booking_id, kind, state, due_at) values (?, 'keybox', 'pending', '2027-01-11T17:00:00Z')").run(pendingId);
+		const claim = claimDueRow({ now: NOW, db });
+		expect(claim).toMatchObject({ ok: true, code: 'claimed', row: { bookingId: pendingId, kind: 'keybox', snapshotKeyboxCode: '5822' } });
+	});
+});
+
+describe('Season: past dates and edges (Story 3.8 review)', () => {
+	it('refuses a new season that already ended (`past`, field end); nothing written', () => {
+		const before = JSON.stringify(seasonRows());
+		expect(change({ card: 'season', id: null, startDate: '2026-11-01', endDate: '2026-12-31' })).toEqual({ ok: false, code: 'past', field: 'end' });
+		expect(JSON.stringify(seasonRows())).toBe(before);
+	});
+
+	it('refuses shortening the running season to end yesterday (`past`, field end); today is fine', () => {
+		const before = JSON.stringify(seasonRows());
+		expect(change({ card: 'season', id: 1, startDate: '2027-01-09', endDate: '2027-01-11' })).toEqual({ ok: false, code: 'past', field: 'end' });
+		expect(JSON.stringify(seasonRows())).toBe(before);
+		expect(change({ card: 'season', id: 1, startDate: '2027-01-09', endDate: '2027-01-12' })).toEqual({ ok: true });
+	});
+
+	it('refuses a changed start on the running season (`past`, no field); nothing written', () => {
+		const before = JSON.stringify(seasonRows());
+		expect(change({ card: 'season', id: 1, startDate: '2027-01-10', endDate: '2027-04-30' })).toEqual({ ok: false, code: 'past' });
+		expect(change({ card: 'season', id: 1, startDate: '2027-01-05', endDate: '2027-04-30' })).toEqual({ ok: false, code: 'past' });
+		expect(JSON.stringify(seasonRows())).toBe(before);
+	});
+
+	it('uses the Zurich date: at 2027-04-30T22:30Z (1 May in Zurich) row 1 has ended (`past`)', () => {
+		const before = JSON.stringify(seasonRows());
+		expect(change({ card: 'season', id: 1, startDate: '2027-01-09', endDate: '2027-05-31' }, '2027-04-30T22:30:00Z')).toEqual({ ok: false, code: 'past' });
+		expect(JSON.stringify(seasonRows())).toBe(before);
+	});
+
+	it('Overlap at the start edge: 2026-12-01 – 2027-01-09 against row 1 starting 2027-01-09 is a conflict', () => {
+		const before = JSON.stringify(seasonRows());
+		expect(change({ card: 'season', id: null, startDate: '2026-12-01', endDate: '2027-01-09' }, '2026-11-20T10:00:00Z')).toEqual({
+			ok: false,
+			code: 'conflict'
+		});
+		expect(JSON.stringify(seasonRows())).toBe(before);
+	});
+
+	it('edits the next row (target case 2: starting after today), start included', () => {
+		expect(change({ card: 'season', id: null, startDate: '2027-12-20', endDate: '2028-04-30' })).toEqual({ ok: true });
+		expect(change({ card: 'season', id: 2, startDate: '2027-12-27', endDate: '2028-04-15' })).toEqual({ ok: true });
+		expect(seasonRows()).toEqual([
+			{ id: 1, start_date: '2027-01-09', end_date: '2027-04-30' },
+			{ id: 2, start_date: '2027-12-27', end_date: '2028-04-15' }
+		]);
 	});
 });

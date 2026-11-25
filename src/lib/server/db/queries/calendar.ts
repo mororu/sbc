@@ -32,6 +32,18 @@ export function getSeasons(db: Db = getDb()): Season[] {
 		.all();
 }
 
+/** A season row with its id (Story 3.8: the settings card and `changeSettings`). */
+export type SeasonRow = Season & { id: number };
+
+/** Every season row with its id, earliest first (ties by id). */
+export function getSeasonRows(db: Db = getDb()): SeasonRow[] {
+	return db
+		.select({ id: season.id, startDate: season.startDate, endDate: season.endDate })
+		.from(season)
+		.orderBy(asc(season.startDate), asc(season.id))
+		.all();
+}
+
 /** Live bookings starting in [from, to) and blocks overlapping [from, to), in start order. */
 export function getDayItems(
 	from: Instant,

@@ -95,16 +95,21 @@ export function buildNextBookings(bookings: AdminBooking[], context: AdminRowCon
 	};
 }
 
-/** Pure: the home flags over the bookings that have not started. A flag with no booking is left out. */
-export function buildHomeFlags(candidates: FlagCandidate[], context: AdminRowContext): HomeFlag[] {
-	const { locale } = context;
-	const link = (b: FlagCandidate) => ({
+/** A flag's link to a booking's detail: "Di 12. Januar, 17:15 · Tom Brunner". */
+export function flagLink(b: { id: number; start: Instant; name: string | null }, locale: Locale): HomeFlag['links'][number] {
+	return {
 		href: adminBookingHref(b.id),
 		text: m.admin_flag_link(
 			{ date: formatDateShort(localDate(b.start), locale), time: formatTime(b.start), name: b.name ?? m.admin_no_name({}, { locale }) },
 			{ locale }
 		)
-	});
+	};
+}
+
+/** Pure: the home flags over the bookings that have not started. A flag with no booking is left out. */
+export function buildHomeFlags(candidates: FlagCandidate[], context: AdminRowContext): HomeFlag[] {
+	const { locale } = context;
+	const link = (b: FlagCandidate) => flagLink(b, locale);
 	const outside = candidates.filter((b) => isFlagged(b, context));
 	const refused = candidates.filter((b) => b.refused && compareInstants(b.start, context.now) > 0);
 	const flags: HomeFlag[] = [];

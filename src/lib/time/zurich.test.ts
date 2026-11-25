@@ -8,6 +8,7 @@ import {
 	formatDateShort,
 	formatDateTitle,
 	formatDayMonth,
+	formatDateWithYear,
 	formatTime,
 	formatWeekday,
 	formatWeekdayShort,
@@ -142,6 +143,8 @@ describe('formatting', () => {
 	it('formats single-digit days and other months', () => {
 		expect(formatDayMonth('2027-01-09', 'de')).toBe('9. Januar');
 		expect(formatDayMonth('2026-12-26', 'en')).toBe('26 December');
+		expect(formatDateWithYear('2027-01-09', 'de')).toBe('9. Januar 2027');
+		expect(formatDateWithYear('2027-04-30', 'en')).toBe('30 April 2027');
 		expect(formatDateTitle('2027-03-28', 'de')).toBe('So, 28. März');
 	});
 

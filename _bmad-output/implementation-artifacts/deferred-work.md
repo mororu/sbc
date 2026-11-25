@@ -96,3 +96,6 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-3-7-admin-changes-the-settings.md`
   summary: Changing the admin password keeps the current session id; consider issuing a fresh session id and cookie on success.
   evidence: Story 3.7 review: a leaked session id survives the credential change (AD-10 hardening).
+- source_spec: `_bmad-output/implementation-artifacts/spec-3-8-admin-manages-seasons-and-rotates-the-keybox-code.md`
+  summary: The Saison card shows only the current (or next) season, so a later season row cannot be edited or a second future season created while one runs; consider a season list if operators plan more than one winter ahead.
+  evidence: Story 3.8 review (blind hunter); AC scopes the card to "a current season, or a next season if none is current", so it is by design for now.
