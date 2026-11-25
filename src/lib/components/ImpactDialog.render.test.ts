@@ -69,4 +69,27 @@ describe('ImpactDialog', () => {
 		expect(body).toMatch(/role="alert"[^>]*tabindex="-1"[^>]*>.*Das hat nicht geklappt\. Nichts wurde geändert\./s);
 		expect(buttons(body)).toEqual(['Buchung löschen', 'Abbrechen']);
 	});
+
+	it('without a row (the pre-heat dialog, Story 3.7): no mini row, the what line is the consequence', () => {
+		const body = render(ImpactDialog, {
+			props: {
+				id: 'preheat',
+				title: 'Vorheizzeit ändern?',
+				what: '30–40 → 40–50 Minuten · 1 Buchung bekommt eine neue Ankunftszeit',
+				confirm: 'Speichern',
+				cancel: 'Abbrechen',
+				action: '?/preheat',
+				fields: { min: '40', max: '50', impactToken: 'T' },
+				submit: () => {}
+			}
+		}).body;
+		expect(body).toMatch(/<dialog[^>]*aria-describedby="preheat-consequence"/);
+		expect(body).toMatch(/<p class="what tabular[^"]*" id="preheat-consequence">30–40 → 40–50 Minuten · 1 Buchung bekommt eine neue Ankunftszeit<\/p>/);
+		expect(body).not.toContain('class="mini');
+		expect(body.match(/id="preheat-consequence"/g)).toHaveLength(1);
+		expect(body).toMatch(/<form method="POST" action="\?\/preheat"/);
+		expect(body).toMatch(/<input type="hidden" name="min" value="40"/);
+		expect(buttons(body)).toEqual(['Speichern', 'Abbrechen']);
+		expect(body).not.toMatch(/class="confirm[^"]*destructive/);
+	});
 });

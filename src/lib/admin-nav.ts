@@ -1,7 +1,7 @@
 // The admin nav (UX-DR46; Story 3.1): the five tabs and which one a path belongs to, the admin page
 // hrefs, and the client decisions for switching days in the admin day view (Story 3.2). Client-safe:
 // no framework or server imports. Hrefs are root-relative (the app has no base path); Blocks has its
-// routes since Story 3.5, later stories add those behind Einstellungen and Auswertung.
+// routes since Story 3.5, Einstellungen since Story 3.7; a later story adds those behind Auswertung.
 import type { ResolvedPathname } from '$app/types';
 
 export const ADMIN_TABS = ['home', 'day', 'blocks', 'settings', 'analytics'] as const;

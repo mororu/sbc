@@ -445,5 +445,51 @@
 	"admin_call_reason_keybox_overdue": "Schlüsselmail hängt seit über 15 Minuten",
 	"admin_call_reason_warning_refused": "Warnmail abgelehnt",
 	"admin_call_reason_warning_expired": "Warnmail ist nicht rausgegangen",
-	"admin_call_reason_warning_overdue": "Warnmail ist noch nicht raus, es wird knapp"
+	"admin_call_reason_warning_overdue": "Warnmail ist noch nicht raus, es wird knapp",
+	"admin_settings_save": "Speichern",
+	"admin_settings_saved": "Gespeichert.",
+	"admin_settings_hours": "Betriebszeiten",
+	"admin_settings_hours_open": "Von",
+	"admin_settings_hours_close": "Bis",
+	"admin_settings_changeover": "Wechselzeit",
+	"admin_settings_minutes": "Minuten",
+	"admin_settings_changeover_note": "Gilt nur für neue Buchungen.",
+	"admin_settings_horizon": "Buchungshorizont",
+	"admin_settings_days": "Tage",
+	"admin_settings_preheat": "Vorheizzeit",
+	"admin_settings_preheat_min": "Kürzeste Zeit (Minuten)",
+	"admin_settings_preheat_max": "Längste Zeit (Minuten)",
+	"admin_settings_instructions": "Anleitung DE / EN",
+	"admin_settings_instructions_de": "Deutsch",
+	"admin_settings_instructions_en": "English",
+	"admin_settings_contact": "Kontaktadresse",
+	"admin_settings_contact_email": "E-Mail",
+	"admin_settings_password": "Passwort",
+	"admin_settings_password_new": "Neues Passwort",
+	"admin_settings_password_note": "Alle anderen Admins werden abgemeldet.",
+	"admin_settings_preheat_title": "Vorheizzeit ändern?",
+	"admin_settings_preheat_what": [
+		{
+			"declarations": [
+				"input count",
+				"input from",
+				"input to",
+				"local countPlural = count: plural"
+			],
+			"selectors": [
+				"countPlural"
+			],
+			"match": {
+				"countPlural=one": "{from} → {to} Minuten · {count} Buchung bekommt eine neue Ankunftszeit",
+				"countPlural=*": "{from} → {to} Minuten · {count} Buchungen bekommen eine neue Ankunftszeit"
+			}
+		}
+	],
+	"settings_hours_order": "„Bis“ muss nach „Von“ liegen.",
+	"settings_changeover_range": "Bitte eine Zahl von 0 bis 60, in 5er-Schritten.",
+	"settings_horizon_range": "Bitte eine Zahl von 1 bis 60.",
+	"settings_preheat_range": "Bitte eine Zahl von 15 bis 90, in 5er-Schritten.",
+	"settings_preheat_swapped": "Die kürzeste Zeit darf nicht länger sein als die längste.",
+	"settings_instructions_too_long": "Der Text ist zu lang. Bitte höchstens 4000 Zeichen.",
+	"settings_contact_invalid": "Diese E-Mail-Adresse stimmt so nicht. Bitte prüf sie."
 }

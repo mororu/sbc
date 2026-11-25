@@ -6,8 +6,11 @@
 // - signOut: deletes the session row.
 // - setAdminPassword: stores a new argon2id hash; refused when one exists unless `reset`, which
 //   also deletes every session (the recovery path for the CLI).
+// - changeAdminPassword: the settings card (Story 3.7) replaces the hash and deletes every session
+//   except the admin's own, so the other admins have to sign in again. If the own session is gone
+//   meanwhile (another admin's change deleted it), it is `not_found` and writes nothing.
 // The password is never logged, stored or returned. Logs name no guest.
-import { eq, lte } from 'drizzle-orm';
+import { eq, lte, ne } from 'drizzle-orm';
 import { addMinutes, compareInstants, minutesBetween, type Instant } from '#lib/time/index.ts';
 import {
 	pruneSignInRecords,
@@ -187,6 +190,31 @@ export function setAdminPassword(
 		if (updated.changes !== 1) throw new Error('The setting row is missing');
 		const sessionsDeleted = input.reset ? db.delete(adminSession).run().changes : 0;
 		return { ok: true, code: 'set', replaced, sessionsDeleted };
+	});
+	return run.immediate();
+}
+
+export type ChangeAdminPasswordResult = { ok: true; sessionsDeleted: number } | { ok: false; code: 'invalid' | 'not_found' };
+
+/**
+ * The password card (FR-15; Story 3.7): stores `hash` (an argon2id PHC string, hashed by the caller
+ * outside the transaction, never a password) and deletes every admin session except
+ * `keepSessionId`, the admin's own. A hash that is not argon2id is `invalid`; an own session that
+ * no longer exists (another admin changed the password first) is `not_found`. Both change nothing.
+ */
+export function changeAdminPassword(
+	input: { hash: string; keepSessionId: string },
+	options: Options = {}
+): ChangeAdminPasswordResult {
+	if (typeof input.hash !== 'string' || !input.hash.startsWith(ARGON2ID_PREFIX)) return { ok: false, code: 'invalid' };
+	const { db } = resolve(options);
+	const run = db.$client.transaction((): ChangeAdminPasswordResult => {
+		const own = db.select({ id: adminSession.id }).from(adminSession).where(eq(adminSession.id, input.keepSessionId)).get();
+		if (!own) return { ok: false, code: 'not_found' };
+		const updated = db.update(setting).set({ adminPasswordHash: input.hash }).where(eq(setting.id, 1)).run();
+		if (updated.changes !== 1) throw new Error('The setting row is missing');
+		const sessionsDeleted = db.delete(adminSession).where(ne(adminSession.id, input.keepSessionId)).run().changes;
+		return { ok: true, sessionsDeleted };
 	});
 	return run.immediate();
 }

@@ -9,7 +9,9 @@
 	without a confirm button, on `failed` the inline error, focused. Confirm first, "Abbrechen" second:
 	stacked on phones (bottom-anchored), side by side and right-aligned from 1024 px (centred, at most
 	480 px). The panel scrolls within 90 dvh. The confirm is a POST form with the hidden `fields`,
-	enhanced by the caller's `submit`. Delete booking uses it now; blocks and pre-heat (3.5, 3.7) later.
+	enhanced by the caller's `submit`. Delete booking, blocks (3.5) and the pre-heat window (3.7) use it.
+	The pre-heat dialog has no mini row (`row` left out): its "what" line is then the consequence
+	(`{id}-consequence`).
 -->
 <script lang="ts">
 	import { enhance, type SubmitFunction } from '$app/forms';
@@ -21,7 +23,7 @@
 		id,
 		title,
 		what,
-		row,
+		row = null,
 		confirm,
 		cancel,
 		destructive = false,
@@ -37,7 +39,8 @@
 		id: string;
 		title: string;
 		what: string;
-		row: ImpactRowView;
+		/** The mini row; without it the "what" line carries the consequence id. */
+		row?: ImpactRowView | null;
 		confirm: string;
 		cancel: string;
 		destructive?: boolean;
@@ -117,17 +120,19 @@
 	<div class="panel" bind:this={panel}>
 		<h2 id="{id}-title" tabindex="-1" bind:this={heading}>{title}</h2>
 		{#if outcome?.kind === 'stale'}<InlineMessage kind="info" text={outcome.text} />{/if}
-		<p class="what tabular">{what}</p>
-		<div class="mini">
-			{#if row.who}
-				<p class="who tabular"><span>{row.who}</span> {#if row.line}<HeatChangeLine line={row.line} />{/if}</p>
-			{/if}
-			<p class="consequence" id="{id}-consequence">
-				<span>{row.text}</span>
-				{#if row.marker}<span class="marker" class:urgent={row.marker.urgent}>{row.marker.text}</span>{/if}
-			</p>
-			{#if row.notice}<p class="consequence tabular">{row.notice}</p>{/if}
-		</div>
+		<p class="what tabular" id={row ? undefined : `${id}-consequence`}>{what}</p>
+		{#if row}
+			<div class="mini">
+				{#if row.who}
+					<p class="who tabular"><span>{row.who}</span> {#if row.line}<HeatChangeLine line={row.line} />{/if}</p>
+				{/if}
+				<p class="consequence" id="{id}-consequence">
+					<span>{row.text}</span>
+					{#if row.marker}<span class="marker" class:urgent={row.marker.urgent}>{row.marker.text}</span>{/if}
+				</p>
+				{#if row.notice}<p class="consequence tabular">{row.notice}</p>{/if}
+			</div>
+		{/if}
 		{#if outcome?.kind === 'past'}<InlineMessage kind="info" text={outcome.text} focus />{/if}
 		{#if outcome?.kind === 'failed'}
 			{#key attempt}<InlineMessage text={outcome.text} focus />{/key}

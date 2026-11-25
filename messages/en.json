@@ -445,5 +445,51 @@
 	"admin_call_reason_keybox_overdue": "Keybox email stuck for over 15 minutes",
 	"admin_call_reason_warning_refused": "Warning email refused",
 	"admin_call_reason_warning_expired": "Warning email never went out",
-	"admin_call_reason_warning_overdue": "Warning email not out yet, time is short"
+	"admin_call_reason_warning_overdue": "Warning email not out yet, time is short",
+	"admin_settings_save": "Save",
+	"admin_settings_saved": "Saved.",
+	"admin_settings_hours": "Operating hours",
+	"admin_settings_hours_open": "From",
+	"admin_settings_hours_close": "To",
+	"admin_settings_changeover": "Changeover",
+	"admin_settings_minutes": "Minutes",
+	"admin_settings_changeover_note": "Only applies to new bookings.",
+	"admin_settings_horizon": "Booking horizon",
+	"admin_settings_days": "Days",
+	"admin_settings_preheat": "Pre-heat window",
+	"admin_settings_preheat_min": "Shortest time (minutes)",
+	"admin_settings_preheat_max": "Longest time (minutes)",
+	"admin_settings_instructions": "Instructions DE / EN",
+	"admin_settings_instructions_de": "German",
+	"admin_settings_instructions_en": "English",
+	"admin_settings_contact": "Contact address",
+	"admin_settings_contact_email": "Email",
+	"admin_settings_password": "Password",
+	"admin_settings_password_new": "New password",
+	"admin_settings_password_note": "All other admins will be signed out.",
+	"admin_settings_preheat_title": "Change pre-heat window?",
+	"admin_settings_preheat_what": [
+		{
+			"declarations": [
+				"input count",
+				"input from",
+				"input to",
+				"local countPlural = count: plural"
+			],
+			"selectors": [
+				"countPlural"
+			],
+			"match": {
+				"countPlural=one": "{from} → {to} minutes · {count} booking gets a new arrival time",
+				"countPlural=*": "{from} → {to} minutes · {count} bookings get a new arrival time"
+			}
+		}
+	],
+	"settings_hours_order": "\"To\" must be after \"From\".",
+	"settings_changeover_range": "Please enter 0 to 60, in steps of 5.",
+	"settings_horizon_range": "Please enter 1 to 60.",
+	"settings_preheat_range": "Please enter 15 to 90, in steps of 5.",
+	"settings_preheat_swapped": "The shortest time can't be longer than the longest.",
+	"settings_instructions_too_long": "That text is too long. Please keep it to 4000 characters.",
+	"settings_contact_invalid": "That email address doesn't look right. Please check it."
 }

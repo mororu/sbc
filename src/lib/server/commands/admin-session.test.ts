@@ -1,5 +1,5 @@
 // Story 3.1 matrix, command rows: no hash, sign in, wrong, limit, expiry, sign out, password set and
-// reset. A temp-file database; `now` is explicit (Tue 12 Jan 2027, 10:00 Zurich).
+// reset; Story 3.7 matrix "Password": the password card's change. A temp-file database; `now` is explicit (Tue 12 Jan 2027, 10:00 Zurich).
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -10,6 +10,7 @@ import { createDb, openDatabase, type Db } from '../db/index.ts';
 import { applyMigrations, MIGRATIONS_FOLDER } from '../db/migrate.ts';
 import { hashPassword } from '../password.ts';
 import {
+	changeAdminPassword,
 	peekSignInAttempts,
 	resetSignInAttempts,
 	SESSION_TTL_MIN,
@@ -239,5 +240,51 @@ describe('signOut', () => {
 		expect(sessions()).toEqual([]);
 		expect(touchSession(result.sessionId, { now: NOW, db })).toEqual({ ok: false, code: 'not_found' });
 		expect(signOut('unknown', { db })).toEqual({ ok: true, code: 'signed_out' });
+	});
+});
+
+describe('changeAdminPassword (Story 3.7)', () => {
+	const signedIn = async (at: string) => {
+		const result = await signIn({ password: PASSWORD, address: '10.0.0.9' }, { now: at, db });
+		if (!result.ok) throw new Error(result.code);
+		return result.sessionId;
+	};
+
+	it('replaces the hash and deletes every other session, keeping the own one', async () => {
+		setAdminPassword({ hash: HASH, reset: false }, { db });
+		const own = await signedIn(NOW);
+		const other = await signedIn(at('01:00'));
+		const third = await signedIn(at('02:00'));
+		expect(changeAdminPassword({ hash: OTHER_HASH, keepSessionId: own }, { db })).toEqual({ ok: true, sessionsDeleted: 2 });
+		expect(storedHash()).toBe(OTHER_HASH);
+		expect(sessions()).toEqual([expect.objectContaining({ id: own })]);
+		// The others end: the guard sends them to sign in again ("Bitte melde dich wieder an.").
+		expect(touchSession(other, { now: at('03:00'), db })).toEqual({ ok: false, code: 'not_found' });
+		expect(touchSession(third, { now: at('03:00'), db })).toEqual({ ok: false, code: 'not_found' });
+		expect(touchSession(own, { now: at('03:00'), db })).toMatchObject({ ok: true });
+		// The new password signs in, the old one no longer does.
+		expect(await attempt('another long password', at('04:00'))).toMatchObject({ ok: true });
+		expect(await attempt(PASSWORD, at('05:00'))).toEqual({ ok: false, code: 'invalid' });
+	});
+
+	it('is not_found and writes nothing when the own session is already gone (another admin changed it first)', async () => {
+		setAdminPassword({ hash: HASH, reset: false }, { db });
+		const first = await signedIn(NOW);
+		const second = await signedIn(at('01:00'));
+		expect(changeAdminPassword({ hash: OTHER_HASH, keepSessionId: first }, { db })).toEqual({ ok: true, sessionsDeleted: 1 });
+		const third = await signedIn(at('02:00')).catch(() => null);
+		expect(third).toBeNull();
+		expect(changeAdminPassword({ hash: HASH, keepSessionId: second }, { db })).toEqual({ ok: false, code: 'not_found' });
+		expect(storedHash()).toBe(OTHER_HASH);
+		expect(sessions()).toEqual([expect.objectContaining({ id: first })]);
+	});
+
+	it('refuses a hash that is not argon2id and changes nothing', async () => {
+		setAdminPassword({ hash: HASH, reset: false }, { db });
+		const own = await signedIn(NOW);
+		await signedIn(at('01:00'));
+		expect(changeAdminPassword({ hash: 'correct horse battery', keepSessionId: own }, { db })).toEqual({ ok: false, code: 'invalid' });
+		expect(storedHash()).toBe(HASH);
+		expect(sessions()).toHaveLength(2);
 	});
 });

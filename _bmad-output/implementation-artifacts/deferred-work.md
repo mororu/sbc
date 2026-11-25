@@ -86,3 +86,13 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-3-6-admin-works-the-call-list.md`
   summary: A call entry for an overdue keybox email held back by an empty keybox code or instructions does not tell the admin the setting is missing (the code line is hidden when no code is set).
   evidence: `admin_call_reason_keybox_overdue` covers both retrying and held rows; no hint or settings link for the empty setting (fits Story 3.7/3.8 or the 5.5 readiness check).
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-3-7-admin-changes-the-settings.md`
+  summary: The settings page's enhanced client flow (pre-heat check → dialog → save, stale swap with focus on the title, saved refresh and focus) has no executing test; only the pure decisions in `settings-outcome.ts` are unit-tested.
+  evidence: Story 3.7 review (verification gap, blind hunter): dropping `dialog.open()` or the close on `saved` in `+page.svelte` keeps CI green. Needs the browser test layer (P3).
+- source_spec: `_bmad-output/implementation-artifacts/spec-3-7-admin-changes-the-settings.md`
+  summary: The pre-heat dialog shows only "{n} Buchungen bekommen eine neue Ankunftszeit", not how many of them go to the call list (keybox mail already ended) or are urgent.
+  evidence: Story 3.7 review: the delete and block dialogs show the consequence in the mini row; the pre-heat dialog follows EXPERIENCE's what line only. Needs a UX decision on the wording.
+- source_spec: `_bmad-output/implementation-artifacts/spec-3-7-admin-changes-the-settings.md`
+  summary: Changing the admin password keeps the current session id; consider issuing a fresh session id and cookie on success.
+  evidence: Story 3.7 review: a leaked session id survives the credential change (AD-10 hardening).

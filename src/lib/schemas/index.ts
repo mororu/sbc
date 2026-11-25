@@ -2,3 +2,4 @@
 export * from './booking.ts';
 export * from './admin.ts';
 export * from './block.ts';
+export * from './settings.ts';

@@ -7,3 +7,4 @@ export * from './mark-reply-done.ts';
 export * from './mark-called.ts';
 export * from './outbox.ts';
 export * from './admin-session.ts';
+export * from './change-settings.ts';
