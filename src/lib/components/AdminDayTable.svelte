@@ -95,6 +95,7 @@
 		text-align: start;
 		text-transform: uppercase;
 		vertical-align: bottom;
+		white-space: nowrap;
 	}
 	tr {
 		position: relative;
@@ -141,8 +142,15 @@
 		font-weight: var(--type-note-weight);
 		line-height: var(--type-note-leading);
 	}
+	/* Contact data stays readable at 1024 px: an email breaks only at its @ or dots when it must,
+	   a mobile number never breaks; the notice columns give way instead. */
 	.contact {
-		overflow-wrap: anywhere;
+		min-width: 16ch;
+		overflow-wrap: break-word;
+	}
+	.contact.num {
+		min-width: 0;
+		white-space: nowrap;
 	}
 	.num {
 		font-variant-numeric: tabular-nums;

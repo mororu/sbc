@@ -43,7 +43,7 @@ const state = vi.hoisted(() => ({
 
 vi.mock('$app/state', () => ({ page: state.page, navigating: { to: null } }));
 
-vi.mock('$app/navigation', () => ({ afterNavigate: () => {}, invalidateAll: async () => {}, replaceState: () => {} }));
+vi.mock('$app/navigation', () => ({ afterNavigate: () => {}, invalidateAll: async () => {}, replaceState: () => {}, goto: async () => {} }));
 
 vi.mock('#lib/paraglide/runtime.js', async (importOriginal) => ({
 	...(await importOriginal<typeof import('#lib/paraglide/runtime.js')>()),
