@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type Database from 'better-sqlite3';
 import { createDb, openDatabase, type Db } from '../index.ts';
 import { applyMigrations, MIGRATIONS_FOLDER } from '../migrate.ts';
-import { getDayData, getDayItems, getSeasons, getSettings } from './calendar.ts';
+import { getDayData, getDayItems, getSeasonRows, getSeasons, getSettings } from './calendar.ts';
 
 let sqlite: Database.Database;
 let db: Db;
@@ -35,6 +35,14 @@ describe('getSettings and getSeasons', () => {
 	it('order seasons by start', () => {
 		sqlite.prepare("insert into season (start_date, end_date) values ('2026-01-10', '2026-04-30')").run();
 		expect(getSeasons(db).map((s) => s.startDate)).toEqual(['2026-01-10', '2027-01-09']);
+	});
+
+	it('getSeasonRows: the rows with their ids, earliest first (Story 3.8)', () => {
+		const id = Number(sqlite.prepare("insert into season (start_date, end_date) values ('2026-01-10', '2026-04-30')").run().lastInsertRowid);
+		expect(getSeasonRows(db)).toEqual([
+			{ id, startDate: '2026-01-10', endDate: '2026-04-30' },
+			{ id: 1, startDate: '2027-01-09', endDate: '2027-04-30' }
+		]);
 	});
 
 	it('throws without a setting row', () => {

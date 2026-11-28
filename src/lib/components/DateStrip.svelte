@@ -3,7 +3,8 @@
 	cells over a 1 px line-strong baseline. Selectable days are plain links to /day/{date}; days
 	outside a season are muted, struck-through spans whose hidden name says "nicht buchbar". The
 	selected cell is weight 600 with a 2 px primary underline over the baseline and carries
-	aria-current="date". Only the strip scrolls horizontally, never the page: on mount, whenever the
+	aria-current="date". The admin strip (Story 3.2) marks a flagged day with a small dot (hidden from
+	screen readers: the cell's name says it). Only the strip scrolls horizontally, never the page: on mount, whenever the
 	selection moves and whenever the cells change, the strip container scrolls the selected cell
 	into the middle (smooth; a jump on first render and under reduced motion).
 -->
@@ -45,6 +46,7 @@
 							<span class="visually-hidden">{cell.name}</span>
 							<span class="weekday" aria-hidden="true">{cell.weekday}</span>
 							<span class="day" aria-hidden="true">{cell.day}</span>
+							{#if cell.flagged}<span class="flag" aria-hidden="true"></span>{/if}
 						</a>
 					{:else}
 						<span class="cell off">
@@ -93,6 +95,7 @@
 		display: flex;
 	}
 	.cell {
+		position: relative;
 		display: flex;
 		flex-direction: column;
 		align-items: center;
@@ -129,6 +132,21 @@
 	.selected .weekday,
 	.selected .day {
 		font-weight: 600;
+	}
+	/* A filled dot in the top corner: a shape, not a colour, so it also shows in forced colours. */
+	.flag {
+		position: absolute;
+		top: 2px;
+		right: 4px;
+		width: 7px;
+		height: 7px;
+		border-radius: 50%;
+		background: var(--text);
+	}
+	@media (forced-colors: active) {
+		.flag {
+			background: CanvasText;
+		}
 	}
 	.off,
 	.off .weekday {

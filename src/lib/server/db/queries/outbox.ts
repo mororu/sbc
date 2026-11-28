@@ -84,9 +84,13 @@ export function getHeldKeyboxRows(now: Instant, db: Db = getDb()): HeldKeyboxRow
 /**
  * The outbox rows of every live booking that has not started at `now` (AD-21), by booking id, with
  * the current pre-heat maximum, for `callList`/`sendProblems`. A booking drops off once it starts. Selects no contact
- * data and no keybox code.
+ * data and no keybox code. With `bookingId`, only that booking's rows (the mark-called command's read).
  */
-export function getSendProblemRows(now: Instant, db: Db = getDb()): Map<number, SendProblemEntry> {
+export function getSendProblemRows(
+	now: Instant,
+	db: Db = getDb(),
+	filter: { bookingId?: number } = {}
+): Map<number, SendProblemEntry> {
 	const rows = db
 		.select({
 			bookingId: booking.id,
@@ -100,7 +104,13 @@ export function getSendProblemRows(now: Instant, db: Db = getDb()): Map<number, 
 		})
 		.from(outbox)
 		.innerJoin(booking, eq(booking.id, outbox.bookingId))
-		.where(and(isNull(booking.deletedAt), gt(booking.startAt, now)))
+		.where(
+			and(
+				isNull(booking.deletedAt),
+				gt(booking.startAt, now),
+				filter.bookingId === undefined ? undefined : eq(booking.id, filter.bookingId)
+			)
+		)
 		.orderBy(booking.startAt, booking.id, outbox.id)
 		.all();
 	const settings = db.select({ preheatMaxMin: setting.preheatMaxMin }).from(setting).where(eq(setting.id, 1)).get();

@@ -1,9 +1,13 @@
 // Send problems (Story 2.4; AD-21): which bookings' guests must be phoned because an email that
 // counts did not reach them, and which other sends were refused. Epic 3's call list (3.6) shows
 // them and sets `resolved_at` when an admin marks a guest called.
+// The call list (Story 3.1; AD-21) adds trigger (a): once the keybox email has finished, a heat
+// change can no longer be emailed, so it must be phoned (urgent) or may be (good news).
 // Pure: `now` is always a parameter.
 import { addMinutes, compareInstants, type Instant } from '#lib/time/index.ts';
-import { keyboxDueAt } from './keybox.ts';
+import { classifyHeatChange, type HeatChangeClass } from './heat-change.ts';
+import { isKeyboxPhase, keyboxDueAt } from './keybox.ts';
+import type { Notice } from './notice.ts';
 import {
 	KEYBOX_OVERDUE_BEFORE_START_MIN,
 	KEYBOX_OVERDUE_MIN,
@@ -134,4 +138,60 @@ export function callList(feed: ReadonlyMap<number, SendProblemEntry>, now: Insta
 		}
 	}
 	return list.sort((a, b) => compareInstants(a.start, b.start) || a.bookingId - b.bookingId);
+}
+
+/**
+ * One booking's call-list input: its send-problem entry plus the notice the guest was last told and
+ * the notice it has now (AD-24). Either is null when unknown (a booking made before notices were
+ * stored, or an unreadable value): trigger (a) then gives nothing.
+ */
+export type CallFeedEntry = SendProblemEntry & { lastTold: Notice | null; current: Notice | null };
+
+/** `call_required` is *Anruf nötig*; `optional` is good news the admin may phone. */
+export type CallMarker = 'call_required' | 'optional';
+
+/** One call-list entry: one per booking. */
+export type CallEntry = {
+	bookingId: number;
+	start: Instant;
+	marker: CallMarker;
+	/** The send-problem reasons (trigger b), by row id; empty for an entry from trigger (a) alone. */
+	reasons: CallReason[];
+	/** `classifyHeatChange(lastTold, current)` while in the keybox phase, else `none`. */
+	heatChange: HeatChangeClass;
+};
+
+/**
+ * Trigger (a): the heat change that must or may be phoned, or `none`. Only once the latest keybox
+ * row is in the keybox phase (`accepted`, `refused`, `expired`): before that the change still goes
+ * out by email (a heat-change row, or the keybox email with the current notice).
+ */
+export function keyboxPhaseHeatChange(entry: CallFeedEntry): HeatChangeClass {
+	const keybox = latest(entry.rows.filter((r) => r.kind === 'keybox'));
+	if (!keybox || !isKeyboxPhase(keybox.state) || !entry.lastTold || !entry.current) return 'none';
+	return classifyHeatChange(entry.lastTold, entry.current);
+}
+
+/**
+ * The call list at `now` (AD-21), derived from `feed` (by booking id), never stored:
+ * - a booking whose start is at or before `now` is dropped;
+ * - trigger (a), `keyboxPhaseHeatChange`: urgent is `call_required`, good news `optional`;
+ * - trigger (b), `sendProblems(…).callRequired`: `call_required`, with the reasons;
+ * - one entry per booking: `call_required` wins, and keeps both the reasons and the heat change.
+ * Ordered `call_required` first, then by start, then booking id.
+ */
+export function deriveCallList(feed: ReadonlyMap<number, CallFeedEntry>, now: Instant): CallEntry[] {
+	const list: CallEntry[] = [];
+	for (const [bookingId, entry] of feed) {
+		if (compareInstants(entry.start, now) <= 0) continue;
+		const heatChange = keyboxPhaseHeatChange(entry);
+		const reasons = sendProblems(entry, now).callRequired.map((c) => c.reason);
+		if (reasons.length === 0 && heatChange === 'none') continue;
+		const marker: CallMarker = reasons.length > 0 || heatChange === 'urgent' ? 'call_required' : 'optional';
+		list.push({ bookingId, start: entry.start, marker, reasons, heatChange });
+	}
+	const rank = (marker: CallMarker) => (marker === 'call_required' ? 0 : 1);
+	return list.sort(
+		(a, b) => rank(a.marker) - rank(b.marker) || compareInstants(a.start, b.start) || a.bookingId - b.bookingId
+	);
 }

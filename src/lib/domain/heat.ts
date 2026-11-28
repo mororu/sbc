@@ -81,12 +81,12 @@ export function freeHeat(
 }
 
 /** Whole minutes between two instants; stray seconds never turn a back-to-back pair cold. */
-function gapMinutes(from: Instant, to: Instant): number {
+export function gapMinutes(from: Instant, to: Instant): number {
 	return Math.round(minutesBetween(from, to));
 }
 
 /** Whichever of two bookings was made later: by `createdAt`, then by row id. */
-function laterMade(a: Booking, b: Booking): Booking {
+export function laterMade(a: Booking, b: Booking): Booking {
 	const order = compareInstants(a.createdAt, b.createdAt);
 	if (order !== 0) return order > 0 ? a : b;
 	return a.id > b.id ? a : b;

@@ -65,7 +65,8 @@ describe('applyMigrations', () => {
 				admin_contact: 'platzhalter@sauna-luegisee.ch',
 				keybox_code: null,
 				keybox_instructions_de: null,
-				keybox_instructions_en: null
+				keybox_instructions_en: null,
+				admin_password_hash: null
 			}
 		]);
 		expect(sqlite.prepare('select * from season').all()).toEqual([
@@ -248,6 +249,38 @@ describe('applyMigrations', () => {
 		expect(set('2027-01-10T09:05:00Z')().changes).toBe(1);
 		expect(set(null)().changes).toBe(1);
 		expect(set('2027-01-10 09:05')).toThrow(/CHECK constraint failed: worker_heartbeat_failing_since/);
+		sqlite.close();
+	});
+
+	it('keeps bookings and settings through migration 0009 and checks admin_session instants (Story 3.1)', () => {
+		const folder = join(dir, 'migrations');
+		cpSync(MIGRATIONS_FOLDER, folder, { recursive: true });
+		const journalPath = join(folder, 'meta', '_journal.json');
+		const journal = JSON.parse(readFileSync(journalPath, 'utf8')) as { entries: { tag: string }[] };
+		const full = JSON.stringify(journal);
+		writeFileSync(journalPath, JSON.stringify({ ...journal, entries: journal.entries.filter((e) => e.tag < '0009') }));
+		const sqlite = openDatabase(join(dir, 'admin.sqlite'));
+		const db = createDb(sqlite);
+		applyMigrations(db, folder);
+		sqlite
+			.prepare(
+				"insert into booking (start_at, duration_min, changeover_min, created_at, season_id, party_size, locale, public_id, submit_token, email, deleted_at) values ('2027-01-12T16:00:00Z', 60, 15, '2027-01-05T08:00:00Z', 1, 2, 'de', 'p1', 't1', 'lena@example.ch', '2027-01-06T08:00:00Z')"
+			)
+			.run();
+		writeFileSync(journalPath, full);
+		applyMigrations(db, folder);
+		expect(sqlite.prepare('select public_id, deleted_at, reply_done_at from booking').all()).toEqual([
+			{ public_id: 'p1', deleted_at: '2027-01-06T08:00:00Z', reply_done_at: null }
+		]);
+		expect(sqlite.prepare('select admin_password_hash from setting').all()).toEqual([{ admin_password_hash: null }]);
+		// reply_done_at is a plain nullable column (no CHECK, so the booking table was not rebuilt).
+		expect(sqlite.prepare("update booking set reply_done_at = '2027-01-07T08:00:00Z'").run().changes).toBe(1);
+		const insertSession = (createdAt: string, expiresAt: string) => () =>
+			sqlite.prepare('insert into admin_session (id, created_at, expires_at) values (?, ?, ?)').run(`s-${createdAt}-${expiresAt}`, createdAt, expiresAt);
+		expect(insertSession('2027-01-12T09:00:00Z', '2027-02-11T09:00:00Z')().changes).toBe(1);
+		expect(insertSession('2027-01-12 09:00', '2027-02-11T09:00:00Z')).toThrow(/CHECK constraint failed: admin_session_instants/);
+		expect(insertSession('2027-01-12T09:00:00Z', '2027-02-11')).toThrow(/CHECK constraint failed: admin_session_instants/);
+		expect(() => sqlite.prepare("insert into admin_session (id, created_at, expires_at) values ('x', '2027-01-12T09:00:00Z', null)").run()).toThrow(/NOT NULL/);
 		sqlite.close();
 	});
 

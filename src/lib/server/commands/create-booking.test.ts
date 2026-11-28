@@ -101,7 +101,8 @@ describe('createBooking', () => {
 				public_id: result.publicId,
 				submit_token: token,
 				notice_at_booking: COLD_1800_JSON,
-				last_told_notice: COLD_1800_JSON
+				last_told_notice: COLD_1800_JSON,
+				reply_done_at: null
 			}
 		]);
 	});

@@ -3,13 +3,14 @@
 	44 px group of native radios, visually hidden behind styled labels, so arrow keys and the checked
 	state come free. Selected: `text` fill, check icon. Unavailable: disabled radio, muted, struck
 	through. Each option may carry a fuller accessible name ("90 Minuten, bis 19:30"); the notes
-	below are tied to the fieldset with aria-describedby.
+	below are tied to the fieldset with aria-describedby. Values are numbers (durations, party sizes)
+	or strings (block reasons, Story 3.5).
 -->
-<script lang="ts">
+<script lang="ts" generics="T extends string | number">
 	import type { Snippet } from 'svelte';
 	import Icon from './Icon.svelte';
 
-	type Option = { value: number; text: string; name?: string; enabled?: boolean };
+	type Option = { value: T; text: string; name?: string; enabled?: boolean };
 
 	let {
 		id,
@@ -25,7 +26,7 @@
 		legend: string;
 		name: string;
 		options: Option[];
-		value: number;
+		value: T;
 		describedby?: string;
 		onchange?: (event: Event & { currentTarget: HTMLInputElement }) => void;
 		notes?: Snippet;

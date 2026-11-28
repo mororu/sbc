@@ -17,7 +17,8 @@ export function getAdminContact(db: Db = getDb()): string | null {
 
 /**
  * The keybox code and the instructions per locale, each trimmed, or null when unset or blank.
- * For the worker only: the code never reaches a guest page or a log line.
+ * For the worker and the admin pages (the old-code tag, Story 3.2): the code never reaches a guest
+ * page or a log line.
  */
 export function getKeyboxSettings(db: Db = getDb()): KeyboxSettings {
 	const row = db

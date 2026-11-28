@@ -64,6 +64,13 @@
       "when": 1794754180346,
       "tag": "0008_heartbeat_failing_since",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "6",
+      "when": 1795019236489,
+      "tag": "0009_admin_session",
+      "breakpoints": true
     }
   ]
 }

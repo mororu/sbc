@@ -2,7 +2,18 @@
 // Tue 12 Jan 2027 18:00 Zurich start; booked early, the keybox row is due Mon 11 Jan 18:00 (17:00Z).
 import { describe, expect, it } from 'vitest';
 import { addMinutes, type Instant } from '#lib/time/index.ts';
-import { callList, keyboxOverdueAt, sendProblems, warningOverdueAt, type SendProblemEntry, type SendProblemRow } from './call-list.ts';
+import {
+	callList,
+	deriveCallList,
+	keyboxOverdueAt,
+	keyboxPhaseHeatChange,
+	sendProblems,
+	warningOverdueAt,
+	type CallFeedEntry,
+	type SendProblemEntry,
+	type SendProblemRow
+} from './call-list.ts';
+import type { Notice } from './notice.ts';
 
 const START: Instant = '2027-01-12T17:00:00Z';
 const CUTOFF: Instant = '2027-01-11T17:00:00Z';
@@ -304,5 +315,105 @@ describe('callList', () => {
 
 	it('is empty for an empty feed', () => {
 		expect(callList(new Map(), CUTOFF)).toEqual([]);
+	});
+});
+
+// Story 3.1 matrix, "Call (a)", "Call none", "Call merge", "Call order/drop". Now is Tue 12 Jan 10:00 Zurich.
+describe('deriveCallList', () => {
+	const NOW: Instant = '2027-01-12T09:00:00Z';
+	const HOT: Notice = { heat: 'hot', earliest: null, latest: null };
+	const COLD: Notice = { heat: 'cold', earliest: '2027-01-12T16:20:00Z', latest: '2027-01-12T16:30:00Z' };
+	const feedEntry = (rows: SendProblemRow[], lastTold: Notice | null, current: Notice | null, start = START): CallFeedEntry => ({
+		start,
+		createdAt: BOOKED_EARLY,
+		preheatMaxMin: PREHEAT_MAX,
+		rows,
+		lastTold,
+		current
+	});
+	const one = (entry: CallFeedEntry) => deriveCallList(new Map([[7, entry]]), NOW);
+
+	it('makes a hot → cold change in the keybox phase call required', () => {
+		expect(one(feedEntry([confirmation(), keybox('accepted')], HOT, COLD))).toEqual([
+			{ bookingId: 7, start: START, marker: 'call_required', reasons: [], heatChange: 'urgent' }
+		]);
+	});
+
+	it('makes a cold → hot change in the keybox phase optional', () => {
+		expect(one(feedEntry([confirmation(), keybox('accepted')], COLD, HOT))).toEqual([
+			{ bookingId: 7, start: START, marker: 'optional', reasons: [], heatChange: 'good_news' }
+		]);
+	});
+
+	it.each(['refused', 'expired'] as const)('counts a %s keybox row as the keybox phase', (state) => {
+		expect(keyboxPhaseHeatChange(feedEntry([keybox(state)], HOT, COLD))).toBe('urgent');
+	});
+
+	it.each(['pending', 'in_flight', 'transient_failure', 'cancelled'] as const)(
+		'gives no trigger (a) entry for a %s keybox row with a change',
+		(state) => {
+			expect(keyboxPhaseHeatChange(feedEntry([confirmation(), keybox(state)], HOT, COLD))).toBe('none');
+		}
+	);
+
+	// Thursday 18:00: its keybox row is due on Wednesday, so it is not overdue yet.
+	const THURSDAY = '2027-01-14T17:00:00Z';
+
+	it('gives no entry for a pending keybox row with a change (Call none)', () => {
+		expect(one(feedEntry([confirmation(), keybox('pending')], HOT, COLD, THURSDAY))).toEqual([]);
+	});
+
+	it('gives no entry once the notice is back to the last-told one (Call none)', () => {
+		expect(one(feedEntry([confirmation(), keybox('accepted')], COLD, { ...COLD }))).toEqual([]);
+	});
+
+	it('gives no trigger (a) entry without a keybox row or without notices', () => {
+		expect(one(feedEntry([confirmation()], HOT, COLD))).toEqual([]);
+		expect(one(feedEntry([keybox('accepted')], null, COLD))).toEqual([]);
+		expect(one(feedEntry([keybox('accepted')], HOT, null))).toEqual([]);
+	});
+
+	it('reads the latest keybox row by id', () => {
+		const rows = [r(5, 'keybox', 'pending'), r(2, 'keybox', 'accepted')];
+		expect(keyboxPhaseHeatChange(feedEntry(rows, HOT, COLD))).toBe('none');
+	});
+
+	it('merges good news with keybox_refused into one call-required entry with the reason (Call merge)', () => {
+		expect(one(feedEntry([confirmation(), keybox('refused')], COLD, HOT))).toEqual([
+			{ bookingId: 7, start: START, marker: 'call_required', reasons: ['keybox_refused'], heatChange: 'good_news' }
+		]);
+	});
+
+	it('gives a trigger (b) entry without a heat change', () => {
+		expect(deriveCallList(new Map([[7, feedEntry([confirmation(), keybox('refused')], HOT, HOT)]]), NOW)).toEqual([
+			{ bookingId: 7, start: START, marker: 'call_required', reasons: ['keybox_refused'], heatChange: 'none' }
+		]);
+	});
+
+	it('leaves out bookings with only non-urgent refusals', () => {
+		expect(one(feedEntry([confirmation('refused'), keybox('pending')], HOT, HOT, THURSDAY))).toEqual([]);
+	});
+
+	it('puts call required first, then orders by start, and drops started bookings (Call order/drop)', () => {
+		const at1800 = '2027-01-12T17:00:00Z';
+		const at1900 = '2027-01-12T18:00:00Z';
+		const feed = new Map<number, CallFeedEntry>([
+			[1, feedEntry([keybox('accepted')], COLD, HOT, at1800)],
+			[2, feedEntry([keybox('accepted')], HOT, COLD, at1900)],
+			[3, feedEntry([keybox('accepted')], HOT, COLD, '2027-01-12T09:00:00Z')],
+			[4, feedEntry([keybox('refused')], HOT, COLD, '2027-01-12T08:00:00Z')],
+			[5, feedEntry([keybox('accepted')], COLD, HOT, at1900)],
+			[6, feedEntry([keybox('accepted')], HOT, COLD, at1800)]
+		]);
+		expect(deriveCallList(feed, NOW).map((e) => [e.bookingId, e.marker])).toEqual([
+			[6, 'call_required'],
+			[2, 'call_required'],
+			[1, 'optional'],
+			[5, 'optional']
+		]);
+	});
+
+	it('is empty for an empty feed', () => {
+		expect(deriveCallList(new Map(), NOW)).toEqual([]);
 	});
 });

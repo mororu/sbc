@@ -136,6 +136,12 @@ export function formatDayMonth(date: LocalDate, locale: Locale): string {
 	return locale === 'de' ? `${day}. ${month}` : `${day} ${month}`;
 }
 
+/** "9. Januar 2027" / "9 January 2027": a date with its year (an ended season, Story 3.8). */
+export function formatDateWithYear(date: LocalDate, locale: Locale): string {
+	const year = date.slice(0, 4);
+	return `${formatDayMonth(date, locale)} ${year}`;
+}
+
 /** "Dienstag" / "Tuesday": the date heading's eyebrow. */
 export function formatWeekday(date: LocalDate, locale: Locale): string {
 	return dateParts(date, locale, 'long').weekday;

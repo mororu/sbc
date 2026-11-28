@@ -26,6 +26,7 @@ npm run dev
 | `npm run lint` | ESLint, including the layer boundary rules |
 | `npm run i18n:types` | Compiles `messages/` into `src/lib/paraglide` (also run by `check` and `lint`) |
 | `npm run db:generate` | Generates a SQL migration from `src/lib/server/db/schema.ts` |
+| `npm run set-admin-password` | Sets the shared admin password from stdin (`-- --reset` replaces it and signs out every admin) |
 
 ## Layers
 
@@ -381,7 +382,7 @@ The headings and the footer label are drafted copy. The bodies are placeholders:
 
 ### Setting the keybox code and instructions in development
 
-The admin settings UI comes in Story 3.8. Until then, set the keybox code and the access and return instructions (DE and EN) in the dev database by hand, for example with the `sqlite3` CLI:
+The access and return instructions (DE and EN) are set on `/admin/settings` since Story 3.7, the keybox code since Story 3.8 (the Schlüsselbox-Code card). For a quick dev setup you can still set them in the dev database by hand, for example with the `sqlite3` CLI:
 
 ```sh
 sqlite3 data/dev.sqlite "UPDATE setting SET
@@ -453,6 +454,334 @@ A collapsed range, or an arrival already past at the send, reuses the day-view c
   - urgent and still not sent (`pending`, `in_flight`, `transient_failure`) from `start − (pre-heat maximum + 20 min)` (`WARNING_OVERDUE_MARGIN_MIN`; 60 minutes with the default 30–40 window) gives `warning_overdue`. The feed carries the pre-heat maximum setting.
   - An urgent change enqueued inside that window is call required at once, before its settle delay ends: a late urgent change should be phoned. An `in_flight` urgent row past the window counts as overdue until its send outcome is recorded.
   - A newer non-urgent row (good news, or a change cancelled at recheck or by the keybox claim) supersedes an older urgent one: no call from the warning, and an older refused row is listed under refusals only. The keybox rules still apply, e.g. a refused keybox row still raises `keybox_refused`.
+
+## Admin sign-in (Story 3.1)
+
+### The admin password
+
+The shared password is set with a CLI that reads it from stdin. Only its argon2id hash goes into `setting.admin_password_hash`:
+
+```bash
+npm run set-admin-password                 # asks twice, with no echo
+printf '%s\n' "$PW" | npm run set-admin-password   # or piped (one trailing newline is dropped)
+npm run set-admin-password -- --reset      # replace it: also deletes every admin session
+```
+
+- It needs at least 12 characters. It refuses to replace an existing hash without `--reset`, and then stores nothing (exit 1).
+- The password is never an argument or env value. It is never echoed, logged or printed. The command takes only `--reset`.
+- It reads the app env through `src/lib/server/env.ts`, so it needs what the app needs: in development `DATABASE_PATH` and `GUEST_KEY_SECRET` (from `.env`), in the production container the full production env, which `docker compose exec app npm run set-admin-password` already has (Epic 5). It applies the migrations first, so it also works before the first start.
+- It refuses a password with a line break or any other control character (one trailing line break of piped input is dropped first). On the terminal prompt, arrow keys and other escape sequences are ignored. A failure prints one short line, never a stack trace: "The database is busy. …" on a lock timeout, else "The password could not be stored.".
+- The password is normalised to Unicode NFC before hashing and verifying, so a decomposed "ü" from a terminal matches the browser's.
+- It prints "Admin password set." for a first password and "Admin password replaced. Signed out sessions: N." when `--reset` replaced one.
+- Until a password is set, every sign-in fails with the wrong-password message, and the app logs `[admin] sign-in refused: no admin password is set. Run \`npm run set-admin-password\`.`
+
+### Sessions and the guard (AD-10, AD-11)
+
+- Migration `0009_admin_session.sql` adds `setting.admin_password_hash`, `booking.reply_done_at` (for Story 3.4; a plain `ALTER TABLE ADD` without a CHECK, so `booking` is not rebuilt) and `admin_session(id, created_at, expires_at)` with instant GLOB checks.
+- The sign-in command (`src/lib/server/commands/admin-session.ts`) checks the password with argon2 outside the transaction. Inside the transaction it reads the hash again, so a password reset during the check wins, and inserts a session. The session id is `randomId()` (128 bits). It is stored as is and expires 30 days after its last use.
+- The cookie is `admin_session`: `Path=/admin; HttpOnly; Secure; SameSite=Lax; Max-Age=2592000`. It is the only cookie besides the language cookie. Safari may refuse a `Secure` cookie on plain `http://localhost`; use Chrome or Firefox in development.
+- `src/hooks.server.ts` runs the guard first (`sequence(guard, paraglide)`). Every `/admin` path except `/admin/login` needs a valid session. The guard decodes the path the way the router does, so `/%61dmin` is guarded too, and it also checks the route id.
+  - Without a cookie, the request gets a 303 to `/admin/login?to=<path and query>`. No route code runs.
+  - With an unknown or expired session, the cookie is deleted and the redirect adds `expired=1` ("Bitte melde dich wieder an.").
+  - A valid session is extended (row and cookie) and set as `locals.adminSession`. Every `/admin` response gets `cache-control: private, no-store`.
+- `safeReturnTarget` (`src/lib/server/admin-auth.ts`) accepts only a same-origin path under `/admin` (normalised, so `/admin/../x` is refused). It refuses the sign-in and sign-out paths, backslashes and control characters. Anything else goes to `/admin`.
+- Sign-out is `POST /admin/logout`, a form styled as the last nav tab: a GET link could be preloaded. It deletes the row, clears the cookie and redirects to sign-in. With no or an ended session the guard just clears the cookie and redirects to plain `/admin/login` (no "Bitte melde dich wieder an."); a lock timeout on the delete still signs the browser out.
+- A lock timeout during the guard's session check answers 503 with "Das hat nicht geklappt. Nichts wurde geändert. …" (never cached) instead of a 500. Each sign-in also deletes ended session rows.
+
+### Rate limit (FR-15)
+
+`src/lib/domain/sign-in-limit.ts` is the pure gate. The `Map` of records per client address lives in the sign-in command, in memory, so a restart resets it. From the 5th failure on, the next try is allowed only 60 s after the last failure. It is refused as `rate_limited` with `retryAt` and is not checked. A correct password deletes the record. Records are dropped 15 minutes after their last failure. A try is counted before the slow verify, so parallel tries cannot slip past the gate; if the session insert then throws, the record is put back. The map holds at most 10,000 records: past that, expired ones are pruned, then the oldest evicted (a full prune also runs at most once a minute). **Behind Caddy the client address is the proxy's unless adapter-node's `ADDRESS_HEADER`/`XFF_DEPTH` are set (Epic 5): without them every client shares one record, and wrong tries slow everyone's sign-in to one a minute.** The sign-in page then shows "Zu viele Versuche. …" and disables the button until `retryAt`, using a timer; without JavaScript, a reload brings the button back.
+
+### Admin shell and home
+
+- `src/routes/admin/(portal)/+layout.svelte` holds the app header, the nav (Übersicht · Buchungen · Blocks · Einstellungen · Auswertung · Abmelden) and `main`, capped at `--admin-max`. Nav hrefs live in `src/lib/admin-nav.ts`. Buchungen opens the admin day view (Story 3.2), Blocks the blocks list (Story 3.5), Einstellungen the settings (Story 3.7); the target behind Auswertung comes with a later story and is a 404 until then.
+- The Übersicht tab carries two badges: a phone icon with the call-list count and a mail icon with the reply-reminder count. Each shows "0" when empty and has a hidden singular/plural text. The counts come from `loadNavCounts` (`src/lib/server/admin-view.ts`):
+  - calls: `deriveCallList(getCallFeed(now), now).length`;
+  - replies: `countReplyReminders()` (`deleted_at IS NOT NULL AND reply_done_at IS NULL AND email IS NOT NULL`).
+- The admin home has the `h1` "Übersicht" (visually hidden, as in the mockup) and the worker warning from `workerHealth`:
+  - no heartbeat: "Der Versand läuft nicht.";
+  - `stale`: "Der Versand läuft seit 09:55 nicht.";
+  - `failing`: "Seit 09:45 geht keine Mail raus. …".
+  The time is the clock time when it falls on today, else "Mo 11. Januar, 22:30". Below the warning is the empty two-column grid (two columns from 1024 px).
+
+### Call list core (AD-21)
+
+`deriveCallList(feed, now)` in `src/lib/domain/call-list.ts` derives the call list from `CallFeedEntry` (the send-problem entry plus `lastTold` and `current` notices). It is never stored.
+
+- It drops bookings that have started.
+- Trigger (a): only while the latest keybox row is in the keybox phase (`isKeyboxPhase`: accepted, refused, expired), `classifyHeatChange(lastTold, current)`. `urgent` is `call_required` and `good_news` is `optional`.
+- Trigger (b): `sendProblems(…).callRequired` is `call_required`, with its reasons.
+- Each booking gets one entry, and `call_required` wins. The list is ordered `call_required` first, then by start.
+- `getCallFeed(now)` (`src/lib/server/db/queries/admin.ts`) reads each day once and selects no contact data. Story 3.6 displays the list.
+
+### Drafted copy for operator review (Story 3.1)
+
+The nav labels, the plural badge texts, "Das Passwort stimmt nicht.", "Zu viele Versuche. …", "Bitte melde dich wieder an." and "Das hat nicht geklappt. Nichts wurde geändert. …" come from EXPERIENCE.md, DE and EN. The DE stale warning is the epics' draft. Everything else is a draft:
+
+| Key | DE | EN |
+| --- | --- | --- |
+| `admin_login_title` (`h1`, `<title>`) | Anmelden | Sign in |
+| `admin_sign_in` (button) | Anmelden | Sign in |
+| `admin_password_label` | Passwort | Password |
+| `admin_home_title` (`h1`, `<title>`) | Übersicht | Overview |
+| `admin_nav_name` (nav `aria-label`) | Admin | Admin |
+| `admin_badge_calls` (singular) | 1 Anruf offen | 1 call open |
+| `admin_badge_replies` (singular) | 1 Antwort offen | 1 reply open |
+| `admin_worker_not_running` (no heartbeat yet) | Der Versand läuft nicht. | Sending isn't running. |
+| `admin_worker_stale` | Der Versand läuft seit {time} nicht. | Sending hasn't run since {time}. |
+| `admin_worker_failing` (sends failing for 15 min) | Seit {time} geht keine Mail raus. Der Versand versucht es weiter. | No email has gone out since {time}. Sending keeps trying. |
+| `admin_password_too_short` (for Story 3.7) | Das Passwort braucht mindestens 12 Zeichen. | The password needs at least 12 characters. |
+| `admin_password_too_long` (for Story 3.7) | Das Passwort ist zu lang. | That password is too long. |
+
+## Admin bookings by day (Story 3.2)
+
+Read-only pages behind the 3.1 guard. They read through `src/lib/server/db/queries/admin.ts` only (`getAdminBookings`, `getAdminBooking`, `adminDayAccepted`, `getAdminStripExtraDates`, `getFutureFlagCandidates`); the view models live in `src/lib/server/admin-day-view.ts` (day, rows, detail) and `src/lib/server/admin-view.ts` (home). Deleted bookings appear nowhere.
+
+- **`/admin/day`** redirects (303) to today when it lies in a season, else to the first day of the next season, else to today.
+- **`/admin/day/{yyyy-mm-dd}`** shows a day that lies in any season row (past ones too, by URL), has a live booking or a block, or is today. Anything else, and a malformed date, is an admin 404 (`(portal)/+error.svelte`, inside the shell, with a link to Buchungen).
+  - The strip: the current season's days (else the next season's), plus every future day a live booking or a block overlaps (a block across midnight adds each day), in date order. Every cell is a link. A day with a booking outside the current times carries a dot and says so in its hidden name. The arrows go to the nearest strip day each side and are disabled at the ends.
+  - Below 1024 px the bookings are rows (time range and heat state; "Tom Brunner · 2 Personen" with the tags; chevron). From 1024 px they are a table with `<th scope="col">` columns time · name · party · email · mobile · notice now · last told · code sent; one stretched link on the time makes the whole row clickable.
+  - The skip link is "Zu den Buchungen" (`#bookings`). Switching days follows the guest pattern: the list dims with `aria-busy`, "Lädt …" shows after 1 s, and the status announces "Dienstag, 12. Januar: 2 Buchungen" or "Dienstag, 12. Januar: Keine Buchungen.". The shown day is always a strip cell (added when it is not a season or extra day), so one cell is selected.
+- **`/admin/booking/{id}`** shows a live booking (unknown or malformed ids are an admin 404; since Story 3.3 a deleted one shows "Diese Buchung gibt es nicht mehr."): the back link to its day, the eyebrow date, the time range as `h1`, Name · E-Mail · Handy · Personen · Dauer · Schlüsselmail (email and mobile as text inside `mailto:`/`tel:` links), "Hinweis jetzt" and "Zuletzt gesagt" side by side (one column on phones), and the refused non-urgent emails.
+- **Admin home**: "Nächste Buchungen" with one `h3` per day ("Heute · Di 12. Januar", "Morgen · Mi 13. Januar"), each with its rows or the empty line, and the flags above the grid with one link per booking.
+
+Rules:
+
+- "Hinweis geändert" comes only from `!noticeEquals(current, lastTold)`; there is no tag when no last-told notice is stored. Notice texts use `badgeText` (moved to `src/lib/server/notice-text.ts`, re-exported from `booked-view.ts`) with `now` as the "at" instant.
+- The code shown is the keybox row's `snapshot_keybox_code` once accepted (a blank one counts as none): muted "Code 4711", or the tag "Alter Code 1234" when it differs from the current keybox code setting. With the setting unset there is no old-code tag. Keybox times read "Mo 16:00" within 6 days of today, else "Mo 1. März, 16:00".
+- The out-of-times flag is `outsideCurrentTimes({ start, durationMin }, seasons, settings)` in `src/lib/domain/flags.ts`: the local date is in no season row, or the booking starts before opening or ends after closing. It is derived on every request, never stored, and only for bookings that have not started. Since Story 3.8 it sits on `outsideReason(…)` (`'season' | 'hours' | null`, season checked first), so the settings page can split it by cause; the home and the row tags stay combined.
+- Refused emails listed on the detail and flagged on the home are unresolved refused confirmations and non-urgent heat-change emails. A refused keybox or urgent heat-change email belongs to the call list (Story 3.6).
+
+### Drafted copy for operator review (Story 3.2)
+
+From EXPERIENCE.md: "Hinweis geändert" · "Alter Code 4711", the detail terms, the keybox status patterns "verschickt … · Code …" / "geplant …" / "abgelehnt: …", the plural flag line "{n} Buchungen liegen ausserhalb der neuen Zeiten. Sie bleiben gültig.", "Keine Buchungen an diesem Tag.", "Zu den Buchungen", "Nächste Buchungen", "Heute · …" / "Morgen · …" and "Hat schon begonnen.", DE and EN. Everything else is a draft:
+
+| Key | DE | EN |
+| --- | --- | --- |
+| `skip_to_bookings` (only the EN text is drafted; the DE text is from EXPERIENCE.md) | Zu den Buchungen | Skip to bookings |
+| `admin_day_title` (`<title>`) | {date} · Buchungen | {date} · Bookings |
+| `admin_day_status` (after a day switch, singular / plural) | {date}: 1 Buchung / {date}: {count} Buchungen | {date}: 1 booking / {date}: {count} bookings |
+| `admin_day_status_empty` (after a switch to a day without bookings; the visible line stays "Keine Buchungen an diesem Tag.") | {date}: Keine Buchungen. | {date}: No bookings. |
+| `admin_table_caption` (hidden) | Buchungen am {date} | Bookings on {date} |
+| `admin_col_time` / `admin_col_keybox_code` (table headers) | Zeit / Code verschickt | Time / Code sent |
+| `admin_code` (muted, row) | Code {code} | Code {code} |
+| `admin_keybox_sent_no_code` | verschickt {when} | sent {when} |
+| `admin_keybox_refused_plain` (no reason stored) | abgelehnt | refused |
+| `admin_keybox_in_flight` | wird gerade verschickt | sending now |
+| `admin_keybox_retrying` (transient failure) | nicht zugestellt, neuer Versuch {when} | not delivered, trying again {when} |
+| `admin_keybox_expired` | nicht verschickt: zu spät | not sent: too late |
+| `admin_keybox_cancelled` | nicht verschickt: abgebrochen | not sent: cancelled |
+| `admin_keybox_none` (no keybox row) | keine geplant | none planned |
+| `admin_duration` | {minutes} Minuten | {minutes} minutes |
+| `admin_no_name` (contact data erased) | (ohne Name) | (no name) |
+| `admin_notice_none` (no notice stored) | nicht gespeichert | not stored |
+| `admin_booking_title` (`<title>`) | Buchung {date}, {time} | Booking {date}, {time} |
+| `admin_flag_tag` (row tag) | Ausserhalb der Zeiten | Outside the times |
+| `admin_flag_detail` | Diese Buchung liegt ausserhalb der neuen Zeiten. Sie bleibt gültig. | This booking falls outside the new times. It stays valid. |
+| `admin_strip_flagged` (hidden name of a flagged strip day) | {date}, ausserhalb der Zeiten | {date}, outside the times |
+| `admin_flag_outside` (singular) | 1 Buchung liegt ausserhalb der neuen Zeiten. Sie bleibt gültig. | 1 booking falls outside the new times. It stays valid. |
+| `admin_flag_refused` (singular / plural) | 1 Buchung hat eine abgelehnte Mail. / {count} Buchungen haben eine abgelehnte Mail. | 1 booking has a refused email. / {count} bookings have a refused email. |
+| `admin_flag_link` | {date}, {time} · {name} | {date}, {time} · {name} |
+| `admin_refused_heading` (detail) | Abgelehnte Mails | Refused emails |
+| `admin_refused_item` / `admin_refused_item_plain` | {kind} abgelehnt: {reason} / {kind} abgelehnt | {kind} refused: {reason} / {kind} refused |
+| `admin_kind_confirmation` / `admin_kind_heat_change` | Bestätigung / Hinweismail | Confirmation / Notice email |
+| `admin_not_found_link` (admin 404) | Zu den Buchungen | To the bookings |
+
+## Admin deletes a booking (Story 3.3)
+
+"Buchung löschen" on `/admin/booking/{id}` (only before the start) opens the impact dialog; confirming deletes the booking (FR-18). Without JavaScript the button does nothing (the dialog needs it; accepted for the admin tool).
+
+- **Impact core**: `impactOn` in `src/lib/domain/impact.ts` takes the affected booking (or null), the live bookings and blocks *after* the change, the pre-heat window, the told notice and the affected booking's keybox state. It returns `{ affected, told, current, class, consequence }`: `none` (no affected booking, no told notice, or `classifyHeatChange` says `none`), `mail` (no keybox row, or one that does not end heat-change mail per `endsHeatChangeMail`) or `call`. `impactToken(impact)` is a deterministic string over the affected booking's id and start, the told and current notices, the class and the consequence; the guest's name and the `now`-dependent wording are deliberately left out. Blocks (3.5) and the pre-heat window (3.7) reuse both.
+- **Told notice**: `toldNotice(bookingId)` (`db/queries/booking.ts`) is the snapshot of an in-flight heat-change email, else `last_told_notice`. The heat-change helper and the preview both use it.
+- **One query for preview and command**: `getDeletionImpact(bookingId, now)` (`db/queries/impact.ts`) reads the deleted booking's day data, finds `affectedBooking({ end, bookingId })`, reads its told notice, keybox state and the guest's first name, and runs `impactOn` over the bookings without the deleted one.
+- **Command**: `deleteBooking({ bookingId, impactToken }, { now })` (`commands/delete-booking.ts`), one `BEGIN IMMEDIATE`. Refusals in this order, writing nothing: `not_found` (unknown or deleted), `past` (start ≤ now), `stale` (the posted token differs from the recomputed one: a new booking, a block or a pre-heat change since the dialog opened). Then it sets `deleted_at = now`, cancels the booking's own `pending`/`transient_failure` outbox rows of every kind (`outcome_at = now`; finished and in-flight rows stay, the worker handles an in-flight one) and calls `enqueueHeatChanges([affected.id])`. The deleted guest is never emailed.
+- **Route**: the `delete` action posts the token; success is a 303 to `/admin/day/{date}` with focus on its `h1`; `stale`/`past` are `fail(409, { code })`, `not_found` `fail(410)`, a lock timeout `fail(503, { code: 'failed' })`. On `stale` the page data reloads and the dialog shows the new impact with "Die Auswirkung hat sich geändert. Bitte prüf sie nochmal.", focus on the dialog title. On `past` the dialog says "Hat schon begonnen." without a confirm. On `not_found` the detail turns into "Diese Buchung gibt es nicht mehr." with the link to the day. A failure shows the inline "Das hat nicht geklappt …", focused.
+- **Detail of a deleted booking**: no longer a 404. It shows "Diese Buchung gibt es nicht mehr." and the link to its day (`deletedBookingDate`). An unknown id is still a 404.
+- **Dialog** (`src/lib/components/ImpactDialog.svelte`, `HeatChangeLine.svelte`; text model `src/lib/server/impact-view.ts`): native `<dialog>` with `showModal()`, focus on "Abbrechen", Esc or a scrim tap cancels, focus back to the trigger; `aria-labelledby` the title, `aria-describedby` the consequence line. Bottom-anchored with stacked buttons on phones; from 1024 px centred, at most 480 px, buttons side by side and right-aligned. The panel scrolls within 90 dvh; the scrim is `--scrim` (the dark scrim in dark mode). Targets are at least 44 px. Dialog focus, Esc/scrim, the inert background, the layouts and the dark scrim are checked by hand (no browser test layer yet, P3).
+- **A8 decision**: a guest resubmit of a booking an admin deleted keeps returning `conflict` with the generic message. The resubmit window is seconds, the form re-renders with a new token and the time is offered again. No code change; AD-3's "never conflict" wording is amended with the S1 spine reconciliation.
+
+### Drafted copy for operator review (Story 3.3)
+
+From EXPERIENCE.md (DE and EN): "Buchung löschen?" (DE), the what line "Anna Meier · Di 12. Januar, 16:00–17:00", "bekommt eine Mail." · "weniger als 24 h." · "Kein Effekt auf andere Buchungen.", the markers "Anruf nötig" · "optional", "Neuer Hinweis: komm zwischen … und ….", the hidden "wird zu", "Die Auswirkung hat sich geändert. Bitte prüf sie nochmal.", "Hat schon begonnen.", "Diese Buchung gibt es nicht mehr.", "Das hat nicht geklappt. Nichts wurde geändert. Versuch es bitte nochmal.", and the DE "Buchung löschen" · "Abbrechen". Everything else is a draft:
+
+| Key | DE | EN |
+| --- | --- | --- |
+| `admin_delete_button` (only the EN text is drafted) | Buchung löschen | Delete booking |
+| `admin_delete_title` (only the EN text is drafted) | Buchung löschen? | Delete booking? |
+| `admin_cancel` (only the EN text is drafted) | Abbrechen | Cancel |
+| `admin_delete_what_no_name` (what line when the name is erased or blank) | {date}, {time} | {date}, {time} |
+| `admin_booking_gone_title` (`<title>` of a deleted booking's detail) | Gelöschte Buchung | Deleted booking |
+| `impact_who` / `impact_who_no_name` (mini row label; the short weekday is added on another date) | {name}, {time}: / {time}: | {name}, {time}: / {time}: |
+| `impact_heat_hot` / `impact_heat_cold` (heat-change line; from EXPERIENCE "heiss wird zu Kaltstart") | heiss / Kaltstart | hot / cold start |
+| `impact_heat_new_arrival` (cold → cold: "Kaltstart → neue Ankunftszeit") | neue Ankunftszeit | new arrival time |
+| `impact_new_notice_hot` | Neuer Hinweis: schon heiss um {time}. | New notice: already hot at {time}. |
+| `impact_new_notice_other` (collapsed window, arrival already past: the cold notice text) | Neuer Hinweis: {notice} | New notice: {notice} |
+
+## Admin answers cancelled guests (Story 3.4)
+
+Every booking deletion leaves a reply reminder (FR-31): `deleted_at IS NOT NULL AND reply_done_at IS NULL AND email IS NOT NULL`. The admins answer the guest from their own mail program; the app never sends the reply.
+
+- **Query**: `getReplyReminders({ date? })` (`db/queries/admin.ts`) lists the open reminders oldest deletion first (`deleted_at`, then `id`) with id, name, email, locale, start and duration; `date` limits it to bookings starting that local day. It shares its predicate with `countReplyReminders` (a blank or whitespace-only email counts as none), so the home's "Antworten" count (the length of the same list) and the nav badge always agree. `adminDayAccepted` also accepts a day whose deleted booking has an open reminder, so its day view never 404s while the reminder is open.
+- **Command**: `markReplyDone({ bookingId }, { now })` (`commands/mark-reply-done.ts`), one `BEGIN IMMEDIATE`, the only writer of `reply_done_at`. Refusals, writing nothing: `not_found` (unknown id or a live booking), then `conflict` (already done, or the email was purged or is blank). Otherwise `reply_done_at = now`.
+- **View model**: `src/lib/server/reply-view.ts`. The line "Di 12. Januar, 16:00–17:00 · gelöscht" is in the admin's locale; the prepared reply is in the booking's stored locale: subject, then the body lines greeting ("Hallo Lena,", the first word of the name; "Hallo," without one), a blank line, the sentence with `formatDateShort` + the start time, a blank line, the brand. `mailtoHref(email, { subject, body })` (`src/lib/mailto.ts`) encodes both with `encodeURIComponent` and joins the body lines with CRLF. "Text kopieren" copies address, subject, a blank line and the body.
+- **Action**: `replyDone` on `/admin` and `/admin/day/{date}` (`src/lib/server/reply-action.ts`): `{ done: true }`, `fail(409, { code: 'already_done', bookingId })` for `conflict` or `not_found`, `fail(503, { code: 'failed', bookingId })` on a lock timeout, an admin 404 for a missing or malformed id. Without JavaScript the pages pass `form` down: "Schon erledigt." or "Erledigt. Antworten: {n}." in the status, or the failure line at the reminder `bookingId` names.
+- **UI** (`ReplyReminders.svelte`, `ReplyReminder.svelte`): on the home, the left column's "Antworten" with its count badge, always shown, the empty line "Keine offenen Antworten." when none are open; on the day view, the day's reminders above the bookings, only while there are any (a deletion redirects to the booking's day, so the deleted guest's reminder is right there, also after a reload). Each reminder: the name (`h3`), the muted line, the address as text inside the `mailto:` link with the mail icon, "Text kopieren" and "Erledigt" (`aria-disabled` while it runs). After "Erledigt" the page data reloads (list and badges), focus moves to the next reminder's `h3`, else the section `h2`, else (day view, none left) the page `h1`, and the polite status says "Erledigt. Antworten: {n}." (every open reminder). Already done elsewhere: the same refresh and "Schon erledigt.". Only a failed command (503, an error result or a network error) shows the inline "Das hat nicht geklappt …" at the reminder, focused; the reminder stays. A failing reload after a written result never does. A redirect (an ended session) is applied with `applyAction`. The result mapping and the focus target live in `src/lib/reply-outcome.ts`. "Text kopieren" uses `navigator.clipboard.writeText` ("Kopiert."); without a clipboard, or when it refuses, a readonly textarea with the text appears, focused and selected, with the hint.
+- **Checked by hand** (no browser test layer yet, P3): clipboard success and fallback, focus after "Erledigt", 320 px and dark mode.
+
+### Drafted copy for operator review (Story 3.4)
+
+Source per key: "EXPERIENCE" means the text is in EXPERIENCE.md (Microcopy and Voice and Tone); "drafted" means it was written for this story under the voice rules and needs a check by the operators.
+
+| Key | DE | DE source | EN | EN source |
+| --- | --- | --- | --- | --- |
+| `admin_replies_heading` | Antworten | EXPERIENCE | Replies | EXPERIENCE |
+| `admin_replies_empty` | Keine offenen Antworten. | EXPERIENCE | No replies waiting. | EXPERIENCE |
+| `admin_reply_when` | {date}, {time} · gelöscht | EXPERIENCE | {date}, {time} · deleted | EXPERIENCE |
+| `admin_reply_copy` | Text kopieren | EXPERIENCE | Copy text | EXPERIENCE |
+| `admin_reply_done` | Erledigt | EXPERIENCE | Done | EXPERIENCE |
+| `admin_reply_status_done` | Erledigt. Antworten: {count}. | EXPERIENCE | Done. Replies: {count}. | EXPERIENCE |
+| `admin_reply_already_done` | Schon erledigt. | EXPERIENCE | Already done. | EXPERIENCE |
+| `admin_reply_copied` (status after "Text kopieren") | Kopiert. | drafted | Copied. | drafted |
+| `admin_reply_copy_hint` (label of the fallback textarea) | Kopieren ging nicht. Markier den Text und kopier ihn selbst. | drafted | Copying didn't work. Select the text and copy it yourself. | drafted |
+| `admin_reply_subject` | Deine Sauna-Buchung ist gelöscht | EXPERIENCE | Your sauna booking is cancelled | EXPERIENCE |
+| `admin_reply_greeting` | Hallo {name}, | EXPERIENCE | Hello {name}, | drafted |
+| `admin_reply_greeting_no_name` (the name is blank or erased) | Hallo, | drafted | Hello, | drafted |
+| `admin_reply_body` | wir haben deine Buchung vom {date}, {time} gelöscht. Danke für die Nachricht, bis bald an der Sauna! | EXPERIENCE | we have cancelled your booking for {date}, {time}. Thanks for letting us know, see you soon at the sauna! | drafted |
+
+- **Layout of the body**: EXPERIENCE gives the reply as one run of text ("Hallo Lena, wir haben … gelöscht. Danke für die Nachricht, bis bald an der Sauna! Sauna Luegisee"). The app splits it into the greeting, a blank line, the sentence, a blank line and the brand (`brand`).
+- **"cancelled" vs "deleted"**: the EN guest subject and body say "cancelled" on purpose: the guest asked to cancel, and "deleted" reads like a system action to them. The admin's own line says "deleted" ("· gelöscht"), the word the admins use for the action.
+- **Example dates**: the two EXPERIENCE examples are different bookings. The reminder line "Di 12. Januar, 16:00–17:00 · gelöscht" is Anna's 16:00–17:00 booking from UJ-4; the reply body "Hallo Lena, … vom Di 12. Januar, 18:00 …" is Lena's 18:00 booking from Voice and Tone. Both are generated from the same booking start: for Anna the body says "vom Di 12. Januar, 16:00". The line shows the time range, the body only the start.
+
+## Admin creates and deletes blocks (Story 3.5)
+
+Blocks (`/admin/blocks`) lists the upcoming blocks and deletes them; `/admin/blocks/new` creates one. Both go through an impact preview, like deleting a booking (FR-17, FR-19). No migration: the Story 1.3 `block` table (id, start, end, reason); deleting a block removes its row.
+
+- **Conflict core**: `blockConflict(candidate, bookings)` in `src/lib/domain/block.ts` returns `{ kind: 'overlap', bookings }` (the live bookings intersecting [start, end), in start order), else `{ kind: 'gap' }` when the block intersects [earlier end, later start) of a back-to-back pair (the gap equals the changeover recorded on the later-made booking, AD-8), else null. Touching a booking's start or end is allowed (no changeover is needed next to a block), and so is overlapping another block. A block never heats and creates no kind-2 start time: after a block ending 11:10 the next offer is 11:30, a cold start.
+- **One query per action for preview and command** (`db/queries/block.ts`): `getBlockCheck({ start, end }, now)` returns `{ date, past, conflict, impact, affectedFirstName }` over `getDayData` of the start's date, with the overlapped bookings' first names, the affected booking `affectedBooking({ end })` and `impactOn` with the block added. `getBlockDeletion(blockId, now)` returns `{ block, date, started, impact, affectedFirstName }` with one block of equal start and end removed, or null for an unknown block; it throws if the stored block is missing from its own day data (a broken invariant, never a wrong token). `getUpcomingBlocks(now)` (end > now, start order) feeds the list, `getAdminDayBlocks(from, to)` the day view. These admin queries select the reason; the guest queries still never do.
+- **Commands**: `createBlock({ start, end, reason, impactToken }, { now })` (`commands/create-block.ts`), one `BEGIN IMMEDIATE`: `invalid` (malformed instants or reason, end not after start, across midnight, a time off the 5-minute local step or with seconds: `isValidBlockRange` does not trust the form), then `past` (start ≤ now), `conflict`, `stale` (the token differs from the recomputed impact: a booking, a block or a pre-heat change since "Prüfen"), then the insert and `enqueueHeatChanges([affected.id])`. `deleteBlock({ blockId, impactToken }, { now })` (`commands/delete-block.ts`): `not_found`, `past`, `stale`, then the row is deleted and the affected booking enqueued. Neither ever removes a booking. A block saved while a delete-booking dialog is open makes that delete `stale` (its impact reads the blocks).
+- **Schema**: `src/lib/schemas/block.ts` (date, start, end as `HH:MM` on 5-minute steps, reason `cleaning | maintenance | private_use`). It imports nothing from the app, so `parseBlockForm(values, toInstant)` takes the converter from the caller. Error keys: `field_required`, `block_date_invalid`, `block_time_step`, `block_end_not_after_start`; the server adds `block_past` at the start and `block_time_missing`. A block lies on one local date (the end is at most 23:55). The actions convert through `toBlockInstants` (`block-view.ts`): a start or end that does not exist on that date (the spring clock change skips 02:00–02:59, e.g. 28 Mar 2027) is refused with `block_time_missing` at that field, detected as "the instant formatted back to local time differs from what was entered" (otherwise a skipped end would silently lengthen the block). A time the autumn change repeats takes the earlier one (summer time): 31 Oct 2027, 02:30 is `2027-10-31T00:30:00Z`.
+- **View models**: `src/lib/server/block-view.ts` (the list, the form, the save and delete dialogs, the refusal texts); the admin day view (`admin-day-view.ts`) replaces its booking `rows` with `entries`, the bookings and blocks merged in start order (`compareEntries`: a block before a booking with the same start). The pages' result-to-UI decisions live in `src/lib/blocks-outcome.ts` (`deleteStep`, `afterDeleteReload`, `checkStep`, `saveStep`, `dialogOutdated`, `withoutBlocksFlags`), unit-tested.
+- **`/admin/blocks`**: h1 "Blocks", the polite status, "Neuer Block", then one row per upcoming block ("Mo 11. Januar · 09:00–11:00 · Reinigung") with the destructive "Block löschen" (after hydration) and its impact dialog ("Block löschen?", the what line, the mini row or "Kein Effekt auf andere Buchungen."), or "Hat schon begonnen." for a running block; without blocks "Keine Blocks geplant.". Deleting needs JavaScript (the button appears after hydration and opens the dialog), as accepted in Story 3.3. The `?saved` / `?deleted` flag is announced on arrival and then removed from the address with `replaceState`, so a reload or a data reload does not show it again; the live region is emptied first, so a second identical status is announced again. The `delete` action posts `blockId` and `impactToken`: 303 to `/admin/blocks?deleted` ("Block gelöscht.", focus on the h1); `stale` and `past` `fail(409, { code, blockId })` (the dialog shows the new impact with the stale line, or "Hat schon begonnen." without a confirm); `not_found` `fail(410)` (the list reloads and the status says "Schon erledigt."); a lock timeout `fail(503, { code: 'failed' })`; a missing or malformed id is an admin 404.
+- **`/admin/blocks/new`**: Datum (today), Von and Bis (`step=300`), the reason as a segmented control (Reinigung preselected) and "Prüfen". The `check` action: invalid fields `fail(400, { errors, values })`, a past start `fail(409, { errors: { start: 'block_past' }, values })`, an overlap or gap `fail(409, { refusal, values })` (shown above the button, focused), else `{ values, dialog }`: "Block speichern?" with "Reinigung · Mo 11. Januar, 16:00–17:25", the mini row and the primary "Block speichern". The `save` action posts the values and the token: 303 to `/admin/blocks?saved` ("Gespeichert."); `stale` `fail(409, { code: 'stale', dialog, values })` with the new impact; a past start or a conflict since "Prüfen" closes the dialog and shows the error or refusal in the form; a lock timeout `fail(503, { code: 'failed', values })`. Saving needs JavaScript (the dialog); without it "Prüfen" only validates, as accepted in Story 3.3. The dialog posts the values "Prüfen" checked, not the live fields: a field changed while the check ran opens no dialog, one changed afterwards drops the dialog. Values are always kept; focus goes to the first error (`autofocus` without JavaScript).
+- **Day view**: the day's blocks are rows among the bookings in start order: the time range and "Block · Reinigung", not links (below 1024 px a plain row, in the table a row with the time as row header). A day with blocks and no bookings shows them and the empty line.
+- **`SegmentedControl`** is generic over `string | number` values now (block reasons are strings).
+- **Checked by hand** (no browser test layer yet, P3): dialog focus, Esc and scrim, the segmented control's arrow keys, 320 px and dark mode.
+
+### Drafted copy for operator review (Story 3.5)
+
+From EXPERIENCE.md and the epics (DE and EN unless marked): "Keine Blocks geplant." / "No blocks planned.", the overlap refusal (plural), the gap refusal, "Block löschen?" · "Block speichern?" · "Block löschen" · "Block speichern" (DE), the what line "Reinigung · Mo 11. Januar, 09:00–11:00", "Gespeichert." / "Saved.", "Schon erledigt." / "Already done.", the stale line, "Hat schon begonnen." and the failure line; the DE reasons Reinigung · Wartung · Privat and "Neuer Block" · "Prüfen". Everything else is a draft:
+
+| Key | DE | EN |
+| --- | --- | --- |
+| `admin_block_delete_title` / `admin_block_save_title` (only the EN text is drafted) | Block löschen? / Block speichern? | Delete block? / Save block? |
+| `admin_block_delete_button` / `admin_block_save_button` (only the EN text is drafted) | Block löschen / Block speichern | Delete block / Save block |
+| `admin_block_what` (EN of the what line) | {reason} · {date}, {time} | {reason} · {date}, {time} |
+| `admin_block_reason_*` (only the EN text is drafted) | Reinigung · Wartung · Privat | Cleaning · Maintenance · Private use |
+| `admin_blocks_new` / `admin_block_check` (only the EN text is drafted) | Neuer Block / Prüfen | New block / Check |
+| `admin_block_field_date` / `_start` / `_end` / `_reason` (form labels and legend) | Datum / Von / Bis / Grund | Date / From / To / Reason |
+| `admin_block_overlap` singular | Dieser Block überschneidet 1 Buchung: {list}. Blocks löschen keine Buchungen. | This block overlaps 1 booking: {list}. Blocks never remove bookings. |
+| `admin_block_overlap` plural (only the EN text is drafted, from the EXPERIENCE stub) | Dieser Block überschneidet {count} Buchungen: {list}. Blocks löschen keine Buchungen. | This block overlaps {count} bookings: {list}. Blocks never remove bookings. |
+| `admin_block_overlap_item` (one overlapped booking; "Mo 18:00" alone without a name) | {time} ({name}) | {time} ({name}) |
+| `block_date_invalid` | Bitte gib ein gültiges Datum an. | Please enter a valid date. |
+| `block_time_step` (also a malformed time) | Bitte wähl eine Zeit in 5-Minuten-Schritten, z. B. 09:05. | Please pick a time in 5-minute steps, e.g. 09:05. |
+| `block_end_not_after_start` | Das Ende muss nach dem Beginn liegen. | The end must be after the start. |
+| `block_time_missing` (a time the spring clock change skips) | Diese Uhrzeit gibt es an diesem Tag nicht (Zeitumstellung). | This time doesn't exist on this day (clock change). |
+| `block_past` (the past-start line at "Von") | Dieser Beginn ist schon vorbei. Wähl bitte eine spätere Zeit. | This start has already passed. Please pick a later time. |
+| `admin_blocks_title` (`<title>` and h1; the nav word) | Blocks | Blocks |
+| `admin_block_row` (list row) | {date} · {time} · {reason}, e.g. "Mo 11. Januar · 09:00–11:00 · Reinigung" | {date} · {time} · {reason}, e.g. "Mon 11 January · 09:00–11:00 · Cleaning" |
+| `admin_block_deleted` (status after a delete) | Block gelöscht. | Block deleted. |
+| `admin_day_block` (day-view block row) | Block · {reason} | Block · {reason} |
+
+The empty field message is the existing `field_required` ("Bitte ausfüllen."), also for a missing reason.
+
+## Admin works the call list (Story 3.6)
+
+The admin home's left column starts with "Anrufliste" (FR-13, FR-14, FR-21), above "Antworten". The list is derived on every request and never stored (AD-21): one entry per `deriveCallList(getCallFeed(now))` entry, the same derivation as the nav badge, so both always agree.
+
+- **Queries** (`db/queries/admin.ts`): `getCallFeed(now, db, { bookingId? })` takes an optional booking filter (the command's fresh read; the entry equals the full feed's), passed on to `getSendProblemRows(now, db, { bookingId? })`, so the command reads only that booking inside its transaction. `getCallContacts(ids)` reads id, name and mobile for the listed bookings only; the feed and the nav count stay contact-free.
+- **Command**: `markCalled({ bookingId, notice }, { now })` (`commands/mark-called.ts`), one `BEGIN IMMEDIATE`. Refusals, writing nothing, in order: `not_found` (unknown or deleted), `past` (start ≤ now), `conflict` (not on `deriveCallList` of its feed entry: already called, or the notice went back to the last-told one), `stale` (the token is not a notice, or not `noticeEquals` to the current notice; an empty token is stale unless the current notice is unknown too). Otherwise `last_told_notice = serializeNotice(token)` (skipped for an empty token) and `resolved_at = now` on the booking's unresolved rows that are `refused` or `expired` or listed in `sendProblems(entry, now).callRequired`: the overdue keybox row and an overdue urgent heat-change row (amended AD-21). The worker cancels such a pending heat-change row at claim, since its notice now equals the last-told one.
+- **View model**: `src/lib/server/call-view.ts`, `loadCalls(locale, now)` → heading, count, empty line and items: the `h3` "17:15 · Tom Brunner" ("(ohne Name)" once erased), the marker, the date line ("Heute, Di 12. Januar" / "Morgen, …" / the short date), the heat-change line (only when last told and current differ), the notice to give in the confirmation-badge text (`badgeText` at `now`), "zuletzt gesagt: …" (whenever last told is known), the reasons, "Code durchgeben: 4711" (with a keybox reason and a set code only; the current setting, `getKeyboxSettings`), the `tel:` link with the number as text, and the canonical notice token "Angerufen" posts.
+- **Action**: `called` on `/admin` (`src/lib/server/call-action.ts`): `{ called: true, bookingId, firstName }`; `fail(409, { code: 'already_done' })` for `conflict`, `not_found` and `past` (the entry is gone either way); `fail(409, { code: 'stale', bookingId })`; `fail(503, { code: 'failed', bookingId })` on a lock timeout; an admin 404 for a missing or malformed id. Every payload also carries `action: 'called'`: the home's `form` is shared with `replyDone`, and the page hands the call list only results with that discriminator (`isCallForm`, `src/lib/call-outcome.ts`) and the reply reminders only the others.
+- **UI** (`CallList.svelte`, `CallEntry.svelte`): the `h2` with its count badge, always shown ("0" and "Niemand muss angerufen werden." when empty); each entry a box with the marker (*Anruf nötig*: 1.5 px `--error` border and text; *optional*: `line-strong` border, muted), the `h3` (tabindex -1), the muted date line, `HeatChangeLine`, "NEUER HINWEIS" over the notice, the muted last told, the reasons, the code line, then the `tel:` link (phone icon, number, 44 px) and the secondary "Angerufen" (`aria-disabled` while it runs), wrapping on narrow screens. After called or already done: `invalidateAll`, focus to the next entry's `h3`, else the section `h2`, and the polite status "Tom angerufen. Anrufliste: {n}." / "Schon erledigt.". Stale: the data reloads, the entry shows the new notice and the stale line, focused; if the entry has left meanwhile, the already-done path runs (focus moves on, "Schon erledigt."). The stale and the failure line never show together (`entryLine`: the latest result wins, and any enhanced result replaces a native POST's line). Failure (503, an error result or a network error): the inline "Das hat nicht geklappt …" at the entry, focused; the entry stays. A redirect (an ended session) is applied. Without JavaScript the same lines come from `form`.
+- **Checked by hand** (no browser test layer yet, P3): focus after "Angerufen" and after a stale refusal, wrapping at 320 px, both themes.
+
+### Drafted copy for operator review (Story 3.6)
+
+From EXPERIENCE.md and the epics (DE and EN unless marked): "Anrufliste" / "Call list", the markers "Anruf nötig" / "Call needed" · "optional", "Neuer Hinweis" / "New notice", "zuletzt gesagt: …" / "last told: …", "Angerufen" / "Called", "Tom angerufen. Anrufliste: 0." / "Called Tom. Call list: 0.", "Niemand muss angerufen werden." / "Nobody needs a call.", "Schlüsselmail abgelehnt" · "Warnmail abgelehnt" (DE), the DE stale line "Der Hinweis hat sich inzwischen geändert. Gib bitte diesen neuen Hinweis durch.", "Schon erledigt." / "Already done." (the existing `admin_reply_already_done`) and the failure line. Everything else is a draft (epics item 34 and the entry's other lines):
+
+| Key | DE | EN |
+| --- | --- | --- |
+| `admin_call_stale` (only the EN text is drafted; it follows the EXPERIENCE microcopy table) | Der Hinweis hat sich inzwischen geändert. Gib bitte diesen neuen Hinweis durch. | The notice has changed since. Please give this new one. |
+| `admin_call_reason_keybox_refused` / `_warning_refused` (only the EN text is drafted) | Schlüsselmail abgelehnt / Warnmail abgelehnt | Keybox email refused / Warning email refused |
+| `admin_call_reason_keybox_expired` (the keybox email expired at the start) | Schlüsselmail ist nicht rausgegangen | Keybox email never went out |
+| `admin_call_reason_keybox_overdue` (still retrying, or held back because the code or the instructions are empty) | Schlüsselmail hängt seit über 15 Minuten | Keybox email stuck for over 15 minutes |
+| `admin_call_reason_warning_expired` (an urgent heat-change email expired) | Warnmail ist nicht rausgegangen | Warning email never went out |
+| `admin_call_reason_warning_overdue` (an urgent heat-change email still not sent 20 minutes before the earliest arrival) | Warnmail ist noch nicht raus, es wird knapp | Warning email not out yet, time is short |
+| `admin_call_code` (keybox entries: the current code to give) | Code durchgeben: {code} | Give the code: {code} |
+| `admin_call_date_today` / `admin_call_date_tomorrow` (the date line; other days show the short date alone; EN drafted) | Heute, {date} / Morgen, {date} | Today, {date} / Tomorrow, {date} |
+| `admin_call_heading` (the entry's `h3`) | {time} · {name} | {time} · {name} |
+| `admin_call_status_no_name` (status after "Angerufen" when the name is erased or blank) | Angerufen. Anrufliste: {count}. | Called. Call list: {count}. |
+
+## Admin changes the settings (Story 3.7)
+
+Einstellungen (`/admin/settings`) changes operating hours, changeover, booking horizon, pre-heat window, the keybox instructions DE / EN, the contact address and the admin password without the database or the CLI (FR-15, FR-20). No migration: the Story 1.3 `setting` row and its CHECKs. One card per group, each its own form with its own "Speichern"; Story 3.8 adds Saison and Schlüsselbox-Code to the same page.
+
+- **Schemas**: `src/lib/schemas/settings.ts`, `parseSettingsCard(card, values)` per card (pure Valibot, errors are message keys, the first problem per field): hours `open`/`close` `HH:MM` on 5-minute steps (`block_time_step`), close after open (`settings_hours_order` on "Bis"); a "Bis" of 00:00 is midnight at the end of the day (1440), and a stored close of 1440 is prefilled as 00:00, so it saves again; changeover 0–60 in steps of 5; horizon 1–60; pre-heat `min`/`max` 15–90 in steps of 5, min ≤ max (`settings_preheat_swapped` on `min`); instructions `de`/`en` trimmed, CRLF stored as LF, required, at most 4000 UTF-16 code units (what the textarea's `maxlength` counts); contact the booking form's `emailSchema` with its own key (`settings_contact_invalid`, without the example); password required plus `validateNewPassword` (`admin_password_too_short`/`_too_long`). `settingsValues(card, values)` keeps the posted strings; the password card keeps none.
+- **Command**: `changeSettings(input, { now })` (`commands/change-settings.ts`), one `BEGIN IMMEDIATE`. The input is one card (`hours | changeover | horizon | preheat | instructions | contact`); the command rechecks the ranges itself (`invalid`) and updates only that card's columns. Only `preheat` enqueues: a window equal to the current one writes nothing; otherwise it recomputes `getPreheatImpact` with the posted window, refuses `stale` when its token differs, writes the window, then `enqueueHeatChanges` over every future live booking (an urgent change is due now + 10 min; a booking whose keybox email has ended heat-change mail gets no row and lands on the call list). The other cards write no outbox row and touch no booking (a booking keeps its recorded `changeover_min`; bookings outside new hours stay valid and are flagged). A pre-heat save makes an open delete-booking or block dialog `stale` (their tokens hold the current notice).
+- **Pre-heat impact**: `getPreheatImpact({ minMin, maxMin }, now)` (`db/queries/impact.ts`): for each future (start > now) live booking, over its date's `getDayData` (read once per date), `impactOn` with the booking itself as `affected` and the new window, against `toldNotice` and `keyboxStateOf`. It returns `{ from, to, changed, token }`: `changed` holds the impacts with `class` ≠ `none`; the token is the JSON of `from`, `to` and each changed `impactToken`, so a change to a booking the window does not move never refuses the save.
+- **Password**: `changeAdminPassword({ hash, keepSessionId })` (`commands/admin-session.ts`) checks the argon2id prefix (`invalid`), refuses with `not_found` when the admin's own session is already gone (another admin changed the password first; nothing written), else replaces the hash and deletes every `admin_session` row except the admin's own. The route answers `not_found` like the guard answers an ended session: the cookie is cleared and a 303 goes to sign-in with "Bitte melde dich wieder an."; an `invalid` (a hash that is not argon2id) is a programming error and throws (500), naming neither hash nor password. The route hashes outside the transaction; the password never appears in `values`, logs or results. The other admins' next request finds no session and goes to sign-in with "Bitte melde dich wieder an." (the Story 3.1 guard).
+- **View model**: `src/lib/server/settings-view.ts`, `loadSettings(locale, now)`: the cards in order Betriebszeiten, Wechselzeit (note "Gilt nur für neue Buchungen."), Buchungshorizont, Vorheizzeit, Anleitung DE / EN, Kontaktadresse, Passwort (note "Alle anderen Admins werden abgemeldet."), the prefilled values (the password always empty), the labels and every error text. The hours card carries the home's "outside the times" flag (`buildHomeFlags` over `getFutureFlagCandidates`), derived on every load, so it stays until the flagged bookings start. `preheatDialog(impact, locale)` gives "Vorheizzeit ändern?", "30–40 → 40–50 Minuten · {n} Buchungen bekommen eine neue Ankunftszeit" (plural), "Speichern", "Abbrechen" and the token.
+- **Route**: `admin/(portal)/settings/`, actions `hours`, `changeover`, `horizon`, `preheatCheck`, `preheat`, `instructions`, `contact`, `password`. Every result carries `card`: `{ card, saved: true }`; `fail(400, { card, errors, values })`; `preheatCheck` with an unchanged window saves nothing and answers saved, otherwise `{ card, values, dialog }`; `preheat` stale is `fail(409, { card, code: 'stale', dialog })` with the new impact; a lock timeout `fail(503, { card, code: 'failed' })`. Should the command answer `invalid` for a form the schema passed, the 400 carries the schema's errors on a rerun, else the card's fallback field. Guest pages read the settings on every request (no cache), so the next guest request sees a save.
+- **UI**: `SettingsCard.svelte` (a `surface` block with a 1 px line, the section-label `h2`, the fields, the note, the hours flag with its links, the inline message, the secondary "Speichern" with `aria-disabled` while it runs). Paired fields (Von · Bis, Kürzeste · Längste Zeit) sit in two columns; textareas are at least 132 px and resize vertically. The cards are a CSS grid: one column with a 20 px gap on phones, two equal columns from 1024 px (`repeat(2, minmax(0, 1fr))`, `align-items: start`, 20 px gaps), capped at `--admin-max`; unlike CSS columns, a card never moves to the other column when a flag or an error appears. Errors set `aria-invalid`, focus the first error and keep the values; other cards keep what they show. "Gespeichert." is a `role="status"` line in that card; a failure is the inline "Das hat nicht geklappt …" in that card, focused. The pre-heat card opens `ImpactDialog` without a mini row (its `row` is optional now; without it the what line carries `{id}-consequence`); stale shows the new count with the stale line, focus on the title; after a save, focus returns to the card's "Speichern". The decisions live in `src/lib/settings-outcome.ts` (`cardStep`, `preheatSaveStep`, `cardOutcome`), unit-tested. Without JavaScript every card saves through a native POST (first error autofocused); the pre-heat window needs the dialog (as accepted in 3.3 and 3.5).
+- **Checked by hand** (no browser test layer yet, P3): focus after save, error and stale, two columns at 1024 px, 320 px, both themes.
+
+### Drafted copy for operator review (Story 3.7)
+
+From EXPERIENCE.md (DE and EN unless marked): the card headings, field labels and the two notes (DE; EN labels from the "English labels" line), "Gespeichert." / "Saved.", the flagged-bookings line (the existing `admin_flag_outside`), "Vorheizzeit ändern?" and the what line "30–40 → 40–50 Minuten · {n} Buchungen bekommen eine neue Ankunftszeit" (DE plural), "Speichern" and "Abbrechen", and the settings validation errors (pre-heat swapped and range, changeover range, horizon range, hours order, the empty field, the invalid contact address). Everything else is a draft:
+
+| Key | DE | EN |
+| --- | --- | --- |
+| `admin_settings_changeover_note` (only the EN text is drafted) | Gilt nur für neue Buchungen. | Only applies to new bookings. |
+| `admin_settings_password_note` (only the EN text is drafted) | Alle anderen Admins werden abgemeldet. | All other admins will be signed out. |
+| `admin_settings_preheat_title` (only the EN text is drafted) | Vorheizzeit ändern? | Change pre-heat window? |
+| `admin_settings_preheat_what` singular (DE and EN), EN plural | {from} → {to} Minuten · 1 Buchung bekommt eine neue Ankunftszeit | {from} → {to} minutes · 1 booking gets a new arrival time / {count} bookings get a new arrival time |
+| `admin_settings_save` (EN) | Speichern | Save |
+| `admin_settings_instructions_de` (EN of the label "Deutsch") | Deutsch | German |
+| `settings_instructions_too_long` (instructions over 4000 characters) | Der Text ist zu lang. Bitte höchstens 4000 Zeichen. | That text is too long. Please keep it to 4000 characters. |
+| `settings_contact_invalid` (the EXPERIENCE contact error; the booking form's `email_invalid` adds an example the operators don't need) | Diese E-Mail-Adresse stimmt so nicht. Bitte prüf sie. | That email address doesn't look right. Please check it. |
+| `block_time_step` (reused for an hours time off the 5-minute step or malformed) | Bitte wähl eine Zeit in 5-Minuten-Schritten, z. B. 09:05. | Please pick a time in 5-minute steps, e.g. 09:05. |
+
+The page title and hidden `h1` reuse the nav word `admin_nav_settings` (Einstellungen / Settings); the password errors reuse `admin_password_too_short` / `_too_long` from Story 3.1.
+
+## Admin manages seasons and rotates the keybox code (Story 3.8)
+
+Einstellungen gains two cards, Saison (first) and Schlüsselbox-Code (after Vorheizzeit), so the card order is Saison, Betriebszeiten, Wechselzeit, Buchungshorizont, Vorheizzeit, Schlüsselbox-Code, Anleitung DE / EN, Kontaktadresse, Passwort (FR-1, FR-11, FR-20). No migration. Both write through `changeSettings`; neither writes an outbox row or changes a booking (`season_id` included), and nothing is resent.
+
+- **Schemas** (`src/lib/schemas/settings.ts`): `season` posts `start`, `end` (real `yyyy-mm-dd` dates; the block form's `isCalendarDate`, since schemas may not import `#lib/time`; a malformed date is `block_date_invalid`), end after start (`settings_season_order` on `end`), and an optional hidden `id` (a positive integer of at most 9 digits; empty creates). `keybox` posts `code`, trimmed, required, at most 32 characters and without line breaks (`settings_keybox_invalid`; the input has `maxlength` 32). `settings_season_overlap` is an error key the route sets, never the schema.
+- **Command**: `changeSettings({ card: 'season', id, startDate, endDate })` reruns the schema (`invalid`), then inside the transaction reads `getSeasonRows`: an id with no row is `not_found`, a row that ended before today (Zurich) is `past` (ended rows are frozen: analytics and purge timing read them), an end before today is `past` with `field: 'end'`, a changed start on a row that started before today is `past` (the view renders that Beginn `readonly`), and dates overlapping any other row, inclusive, are `conflict` (a command check, no db constraint; a season may start the day after another ends). Then it updates the row in place or inserts the next one. `{ card: 'keybox', code }` writes the trimmed `keybox_code`; only later keybox claims snapshot it.
+- **Queries**: `getSeasonRows` (`queries/calendar.ts`, the rows with ids, earliest first). `getOldCodeBookings(now)` (`queries/admin.ts`): live bookings starting after `now` whose accepted keybox row has a trimmed, non-empty `snapshot_keybox_code` other than the trimmed current code, in start order; nothing while the code is unset. Codes come only from the snapshots.
+- **View model** (`settings-view.ts`): `seasonTarget(rows, today)` picks what the Saison card edits: the row containing today, else the earliest row starting after today (Beginn · Ende prefilled, hidden `id`, "Speichern"); else the latest ended row read-only ("Letzte Saison (vorbei)", dates with the year via `formatDateWithYear`) with empty fields and "Nächste Saison anlegen" (no `id`); with no row at all, the same without the read-only line. `buildSettingsFlags` splits the flag by `outsideReason`: the Saison card lists the bookings in no season, the Betriebszeiten card those outside the hours (both reuse `admin_flag_outside` and the home's link format via `flagLink`). `oldCodeGroups` groups the old-code bookings by code, ordered by first start: "{n} kommende Buchungen haben ihre Schlüsselmail noch mit dem alten Code {code} bekommen:" (plural) and one link per booking ("Di 12. Januar, 17:15 · Tom Brunner"), with the heading "Kommende Buchungen mit einem alten Code:" above two or more groups. The list shrinks as those bookings start.
+- **Route**: actions `season` and `keybox`, 3.7's result shapes. A season `conflict` is `fail(400, { card, errors: { start: 'settings_season_overlap' }, values })`; `past` with `field: 'end'` is `fail(400, { card, errors: { end: 'settings_season_end_past' }, values })`; `not_found`, any other `past`, a malformed hidden `id` and a lock timeout are `fail(503, { card, code: 'failed' })`.
+- **UI**: `SettingsCard.svelte` renders the read-only line, hidden fields, `type="date"` inputs (they shrink to fit two side by side at 320 px), the card's button label and the old-code groups. Focus and messages as in 3.7.
+- **Checked by hand** (no browser test layer yet, P3): focus after save and error, date inputs at 320 px, both themes.
+
+### Drafted copy for operator review (Story 3.8)
+
+From EXPERIENCE.md: the card headings and labels (Saison: Beginn · Ende / Season: Start · End; Schlüsselbox-Code: Code / Keybox code: Code), the DE note "Gilt für jede Schlüsselmail ab jetzt; verschickte Mails bleiben.", the old-code line in the plural (DE and EN) and "Das Ende muss nach dem Beginn liegen." / "The end must be after the start.". Everything else is a draft (epics list #35, plus the singular old-code line):
+
+| Key | DE | EN |
+| --- | --- | --- |
+| `admin_settings_season_create` (the button when no current or next season exists) | Nächste Saison anlegen | Add next season |
+| `admin_settings_season_last` (the read-only ended season) | Letzte Saison (vorbei) | Last season (ended) |
+| `admin_settings_season_range` (its dates, with the year) | {start} – {end} | {start} – {end} |
+| `settings_season_overlap` (dates overlapping another season, on Beginn) | Diese Daten überschneiden sich mit einer anderen Saison. | These dates overlap another season. |
+| `settings_season_end_past` (a season end before today, on Ende) | Das Ende darf nicht in der Vergangenheit liegen. | The end can't be in the past. |
+| `settings_keybox_invalid` (a code over 32 characters or with a line break) | Höchstens 32 Zeichen, ohne Zeilenumbruch. | At most 32 characters, no line breaks. |
+| `admin_settings_old_code_heading` (above two or more old-code groups) | Kommende Buchungen mit einem alten Code: | Upcoming bookings with an old code: |
+| `admin_settings_old_code` singular | 1 kommende Buchung hat ihre Schlüsselmail noch mit dem alten Code {code} bekommen: | 1 upcoming booking got its keybox email with the old code {code}: |
+| `admin_settings_keybox_note` (only the EN text is drafted) | Gilt für jede Schlüsselmail ab jetzt; verschickte Mails bleiben. | Applies to every keybox email from now on; emails already sent stay as they are. |
+
+A malformed season date reuses the block form's `block_date_invalid` (Bitte gib ein gültiges Datum an. / Please enter a valid date.).
 
 ## Scaffold decisions
 

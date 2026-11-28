@@ -50,4 +50,18 @@ describe('BookForm (server render)', () => {
 		// The typed values are kept.
 		expect(body).toContain('value="Lena"');
 	});
+
+	it('ties the purpose line, and an error before it, to a guest field (TextField aria-describedby)', () => {
+		const input = (body: string) => body.match(/<input[^>]*id="book-name"[^>]*>/)?.[0] ?? '';
+		const plain = render(BookForm, { props: { view: view(), failure: null } }).body;
+		expect(input(plain)).toContain('aria-describedby="book-name-purpose"');
+		expect(plain).toContain('id="book-name-purpose"');
+		expect(plain).not.toContain('id="book-name-error"');
+
+		const values = { name: '', email: 'lena@example.ch', mobile: '079 123 45 67', duration: '90', partySize: '3' };
+		const failed = render(BookForm, { props: { view: view(), failure: { errors: { name: 'field_required' }, values } } }).body;
+		expect(input(failed)).toContain('aria-describedby="book-name-error book-name-purpose"');
+		expect(failed).toContain('id="book-name-error"');
+		expect(failed).toContain('id="book-name-purpose"');
+	});
 });
