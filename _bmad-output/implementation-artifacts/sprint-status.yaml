@@ -29,7 +29,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 # - Retrospective appends its action items to action_items; the status view surfaces open ones
 generated: 11-09-2026 19:44
-last_updated: 11-28-2026 17:00
+last_updated: 11-28-2026 18:00
 project: sauna-booking
 project_key: NOKEY
 tracking_system: file-system
@@ -65,7 +65,7 @@ development_status:
   3-6-admin-works-the-call-list: done
   3-7-admin-changes-operating-hours-changeover-horizon-pre-heat-wi: done
   3-8-admin-manages-seasons-and-rotates-the-keybox-code: done
-  epic-3-retrospective: optional
+  epic-3-retrospective: done
 
   epic-4: backlog
   4-1-an-anonymous-analytics-record-is-kept-for-every-booking: backlog
@@ -137,7 +137,7 @@ action_items:
     action: "A8: Decide the message for a resubmit after an admin deleted the booking
       and align AD-3 or the code"
     owner: "Manuel"
-    status: open
+    status: done
     ref: "_bmad-output/implementation-artifacts/epic-1-retro-2026-11-12.md"
   - id: "epic-1-retro-item-9-a9-past-booking-wording-on-the-confirmat"
     epic: 1
@@ -157,7 +157,7 @@ action_items:
     action: "S1: Reconcile the architecture spine (view-model layer, clock, ids, /lang
       route, 303 conflict, collapse at >=, admin contact in AD-26)"
     owner: "Manuel"
-    status: open
+    status: in-progress
     ref: "_bmad-output/implementation-artifacts/epic-1-retro-2026-11-12.md"
   - id: "epic-1-retro-item-12-s2-reconcile-epics-md-merged-taken-rows"
     epic: 1
@@ -204,14 +204,14 @@ action_items:
     action: "B1: Make the heartbeat reflect whether mail can go out (last accepted
       send, or no heartbeat when every send failed transiently) and test it"
     owner: "dev"
-    status: open
+    status: done
     ref: "_bmad-output/implementation-artifacts/epic-2-retro-2026-11-15.md"
   - id: "epic-2-retro-item-19-b2-when-a-held-keybox-row-returns-to-pen"
     epic: 2
     action: "B2: When a held keybox row returns to pending, re-enqueue the heat-change
       rows its claim cancelled (or cancel them only once the keybox email is accepted)"
     owner: "dev"
-    status: open
+    status: done
     ref: "_bmad-output/implementation-artifacts/epic-2-retro-2026-11-15.md"
   - id: "epic-2-retro-item-20-b3-call-list-warning-overdue-rule-for-ur"
     epic: 2
@@ -219,14 +219,14 @@ action_items:
       near the start, urgency known before claim; clear a refused urgent entry once
       superseded"
     owner: "dev"
-    status: open
+    status: done
     ref: "_bmad-output/implementation-artifacts/epic-2-retro-2026-11-15.md"
   - id: "epic-2-retro-item-21-b4-lint-mail-and-route-boundaries-no-db"
     epic: 2
     action: "B4: Lint mail and route boundaries (no db/queries or view models in mail,
       no worker-only queries in routes); move badgeText into a shared copy module"
     owner: "dev"
-    status: open
+    status: in-progress
     ref: "_bmad-output/implementation-artifacts/epic-2-retro-2026-11-15.md"
   - id: "epic-2-retro-item-22-b5-move-the-outbox-policy-into-src-lib-d"
     epic: 2
@@ -264,3 +264,82 @@ action_items:
     owner: "build workflow"
     status: open
     ref: "_bmad-output/implementation-artifacts/epic-2-retro-2026-11-15.md"
+  - id: "epic-3-retro-item-27-c1-size-the-affected-booking-window-with"
+    epic: 3
+    action: "C1: Size the affected-booking window with the stored changeover (or the
+      larger of stored and current) and test lowering the changeover then deleting
+      a booking or block"
+    owner: "dev"
+    status: open
+    ref: "_bmad-output/implementation-artifacts/epic-3-retro-2026-11-28.md"
+  - id: "epic-3-retro-item-28-c2-clear-resolved_at-when-a-heat-change"
+    epic: 3
+    action: "C2: Clear resolved_at when a heat-change row is re-upserted with a new
+      change; test mark called followed by a second urgent change"
+    owner: "dev"
+    status: open
+    ref: "_bmad-output/implementation-artifacts/epic-3-retro-2026-11-28.md"
+  - id: "epic-3-retro-item-29-c3-refuse-a-start-before-today-for-a-new"
+    epic: 3
+    action: "C3: Refuse a start before today for a new or upcoming season and test
+      it"
+    owner: "dev"
+    status: open
+    ref: "_bmad-output/implementation-artifacts/epic-3-retro-2026-11-28.md"
+  - id: "epic-3-retro-item-30-c4-impact-consequence-for-a-retrying-key"
+    epic: 3
+    action: "C4: Impact consequence for a retrying keybox row is mail, not call; test
+      against the call list after an accepted retry"
+    owner: "dev"
+    status: open
+    ref: "_bmad-output/implementation-artifacts/epic-3-retro-2026-11-28.md"
+  - id: "epic-3-retro-item-31-c5-one-no-name-fallback-across-admin-vie"
+    epic: 3
+    action: "C5: One no-name fallback across admin views; fix the stale lint comment
+      in the portal layout"
+    owner: "dev"
+    status: open
+    ref: "_bmad-output/implementation-artifacts/epic-3-retro-2026-11-28.md"
+  - id: "epic-3-retro-item-32-c6-lint-admin-queries-and-admin-view-mod"
+    epic: 3
+    action: "C6: Lint admin queries and admin view models out of routes/(guest), together
+      with B4"
+    owner: "dev"
+    status: open
+    ref: "_bmad-output/implementation-artifacts/epic-3-retro-2026-11-28.md"
+  - id: "epic-3-retro-item-33-c7-move-season-started-and-overlap-rules"
+    epic: 3
+    action: "C7: Move season, started and overlap rules and the pre-heat token into
+      the domain; split admin-day-view.ts and queries/admin.ts; share client action-outcome
+      and dialog wiring; unify loader signatures"
+    owner: "dev"
+    status: open
+    ref: "_bmad-output/implementation-artifacts/epic-3-retro-2026-11-28.md"
+  - id: "epic-3-retro-item-34-s5-reconcile-spine-and-epics-with-epic-3"
+    epic: 3
+    action: "S5: Reconcile spine and epics with Epic 3 (AD-3 conflict, AD-20 blank
+      email, AD-21 warning_overdue, result codes, HTTP mapping, admin view-model layer)
+      in one pass with S1-S4"
+    owner: "Manuel"
+    status: open
+    ref: "_bmad-output/implementation-artifacts/epic-3-retro-2026-11-28.md"
+  - id: "epic-3-retro-item-35-p6-in-autonomous-runs-the-orchestrator-f"
+    epic: 3
+    action: "P6: In autonomous runs the orchestrator finishes each story (checks,
+      spec status, commit) instead of relying on the driver to wait"
+    owner: "build workflow"
+    status: open
+    ref: "_bmad-output/implementation-artifacts/epic-3-retro-2026-11-28.md"
+  - id: "epic-3-retro-item-36-p7-move-the-project-out-of-icloud-e-g-de"
+    epic: 3
+    action: "P7: Move the project out of iCloud (e.g. ~/dev/sauna-booking)"
+    owner: "Manuel"
+    status: open
+    ref: "_bmad-output/implementation-artifacts/epic-3-retro-2026-11-28.md"
+  - id: "epic-3-retro-item-37-p8-before-epic-4-run-one-pass-for-docume"
+    epic: 3
+    action: "P8: Before Epic 4 run one pass for documentation reconciliation (S1-S5),
+      shared test fixtures (A10), and add the browser test layer decided for P3"
+    owner: "Manuel"
+    status: open
+    ref: "_bmad-output/implementation-artifacts/epic-3-retro-2026-11-28.md"
