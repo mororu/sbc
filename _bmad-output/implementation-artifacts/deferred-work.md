@@ -99,3 +99,9 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-3-8-admin-manages-seasons-and-rotates-the-keybox-code.md`
   summary: The Saison card shows only the current (or next) season, so a later season row cannot be edited or a second future season created while one runs; consider a season list if operators plan more than one winter ahead.
   evidence: Story 3.8 review (blind hunter); AC scopes the card to "a current season, or a next season if none is current", so it is by design for now.
+- source_spec: `_bmad-output/implementation-artifacts/spec-3-7-admin-changes-the-settings.md`
+  summary: The pre-heat dialog count ("{n} Buchungen bekommen eine neue Ankunftszeit") also counts bookings whose told notice already differed before the change, so it overstates the effect of the change itself.
+  evidence: Epic 3 browser walkthrough (2026-11-28): 30–40 → 40–50 said 3 bookings, but only 2 got a new arrival time; the third was hot in both windows. By design per the README (class ≠ none against the told notice); needs a counting or wording decision.
+- source_spec: `_bmad-output/implementation-artifacts/spec-3-2-admin-sees-bookings-by-day.md`
+  summary: Small admin UI polish from the walkthrough: the booking detail shows the date twice (back link and eyebrow); the read-only Saison "Beginn" input looks editable; below ~400 px the admin nav scrolls with a visible scrollbar in dark mode and hides "Abmelden"; the password card keeps the typed value after a server error.
+  evidence: Epic 3 browser walkthrough (2026-11-28) on PR #14; all cosmetic, none blocks merge.

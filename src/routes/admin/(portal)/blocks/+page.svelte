@@ -13,13 +13,13 @@
 	- lock timeout, network error or a failed reload: the inline "Das hat nicht geklappt …", focused.
 	The decisions come from `#lib/blocks-outcome.ts` (`deleteStep`, `afterDeleteReload`). The status
 	flags `?saved` / `?deleted` are announced on arrival and then removed from the address
-	(`withoutBlocksFlags`, `replaceState`); a repeated status is announced again. Deleting needs
+	(`withoutBlocksFlags`, a shallow `goto`); a repeated status is announced again. Deleting needs
 	JavaScript (the dialog), as accepted in Story 3.3.
 -->
 <script lang="ts">
 	import { onMount, tick } from 'svelte';
 	import type { SubmitFunction } from '$app/forms';
-	import { afterNavigate, invalidateAll, replaceState } from '$app/navigation';
+	import { afterNavigate, goto, invalidateAll } from '$app/navigation';
 	import { page } from '$app/state';
 	import { afterDeleteReload, deleteStep, withoutBlocksFlags } from '#lib/blocks-outcome.ts';
 	import ImpactDialog from '#lib/components/ImpactDialog.svelte';
@@ -58,11 +58,14 @@
 
 	// On arrival (also after a save or a delete): announce the flag's status, then drop the flag
 	// from the address, so a reload or a bookmark does not show it again. The text stays.
-	afterNavigate(() => {
+	afterNavigate((nav) => {
+		// The shallow replace below fires afterNavigate again: skip it, so nothing is announced twice.
+		if (nav.shallow) return;
+		const clean = withoutBlocksFlags(new URL((page.shallow?.url ?? page.url).href));
+		if (!clean) return;
 		if (view.status) void announce(view.status);
-		const clean = withoutBlocksFlags(new URL(page.url.href));
 		// eslint-disable-next-line svelte/no-navigation-without-resolve -- the current page, without its flags
-		if (clean) replaceState(clean, page.state);
+		void goto(clean, { shallow: true, replace: true, state: page.state });
 	});
 
 	const focusHeading = () => document.querySelector<HTMLElement>('main h1')?.focus();

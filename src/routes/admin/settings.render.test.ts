@@ -11,7 +11,7 @@ import SettingsPage from './(portal)/settings/+page.svelte';
 import { buildSettingsView, type SettingsInputs } from '#lib/server/settings-view.ts';
 
 vi.mock('$app/state', () => ({ page: { data: {}, status: 200, url: new URL('http://localhost/admin/settings') }, navigating: { to: null } }));
-vi.mock('$app/navigation', () => ({ afterNavigate: () => {}, invalidateAll: async () => {}, replaceState: () => {} }));
+vi.mock('$app/navigation', () => ({ afterNavigate: () => {}, invalidateAll: async () => {}, replaceState: () => {}, goto: async () => {} }));
 
 const inputs: SettingsInputs = {
 	settings: { changeoverMin: 15, openMinute: 600, closeMinute: 1320, horizonDays: 14, preheatMinMin: 30, preheatMaxMin: 40 },
