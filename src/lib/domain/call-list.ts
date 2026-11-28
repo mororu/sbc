@@ -6,15 +6,9 @@
 // Pure: `now` is always a parameter.
 import { addMinutes, compareInstants, type Instant } from '#lib/time/index.ts';
 import { classifyHeatChange, type HeatChangeClass } from './heat-change.ts';
-import { isKeyboxPhase, keyboxDueAt } from './keybox.ts';
+import { isKeyboxPhase, keyboxOverdueAt } from './keybox.ts';
 import type { Notice } from './notice.ts';
-import {
-	KEYBOX_OVERDUE_BEFORE_START_MIN,
-	KEYBOX_OVERDUE_MIN,
-	WARNING_OVERDUE_MARGIN_MIN,
-	type OutboxKind,
-	type OutboxState
-} from './outbox.ts';
+import { WARNING_OVERDUE_MARGIN_MIN, type OutboxKind, type OutboxState } from './outbox.ts';
 
 /** One outbox row of a booking, as the send-problem core reads it. */
 export type SendProblemRow = {
@@ -55,19 +49,6 @@ export type SendProblems = {
 const NOT_SENT_YET: readonly OutboxState[] = ['pending', 'in_flight', 'transient_failure'];
 
 const latest = (rows: SendProblemRow[]) => rows.reduce<SendProblemRow | null>((a, r) => (a && a.id > r.id ? a : r), null);
-const later = (a: Instant, b: Instant) => (compareInstants(a, b) >= 0 ? a : b);
-const earlier = (a: Instant, b: Instant) => (compareInstants(a, b) <= 0 ? a : b);
-
-/**
- * When an open keybox row becomes overdue: 15 minutes after its original due time,
- * `keyboxDueAt(start, createdAt)` (a retry moves `due_at`, so it is never read), but no later than
- * 5 minutes before the start and never before the due time. The clamp keeps a booking made shortly
- * before its start visible: rows expire only at the start, and the feed drops the booking then.
- */
-export function keyboxOverdueAt(start: Instant, createdAt: Instant): Instant {
-	const due = keyboxDueAt(start, createdAt);
-	return later(due, earlier(addMinutes(due, KEYBOX_OVERDUE_MIN), addMinutes(start, -KEYBOX_OVERDUE_BEFORE_START_MIN)));
-}
 
 /**
  * When an urgent heat-change row still not sent becomes overdue: 20 minutes before the earliest

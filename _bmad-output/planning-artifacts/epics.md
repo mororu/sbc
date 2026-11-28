@@ -1689,6 +1689,39 @@ So that guests can book the right days and every keybox email carries the code t
 
 **Covers:** FR-20, FR-1, FR-11, UX-DR34, UX-DR41, UX-DR55, UX-DR57, UX-DR61, UX-DR66, AD-4, AD-23, AD-25
 
+### Story 3.9: Epic 3 hardening (retro C1–C5)
+
+As an operator,
+I want every booking a deletion or block can affect to be found, every second urgent change to reach the call list, seasons never to start in the past, and the impact preview and names to tell the truth,
+So that no guest is left uninformed and I am never misled.
+
+Added after the Epic 3 retrospective (2026-11-28, findings D1–D5, action items C1–C5). Spec: `_bmad-output/implementation-artifacts/spec-3-9-epic-3-hardening.md`.
+
+**Acceptance Criteria:**
+
+**Given** booking A made with changeover 60, booking B back to back after it (hot), and the changeover since lowered to 15
+**When** the admin deletes A, or deletes a block that a later booking was hot against once the block is gone
+**Then** `affectedBooking` sizes its window with the largest changeover that can apply (the current one or any live booking's stored one) plus the pre-heat maximum, B is affected and its heat-change row is upserted; the first live booking after the end still shields the rest, and a booking beyond that window is not affected (C1)
+
+**Given** an urgent change inside the warning window that the admin marked "Angerufen"
+**When** a second urgent change re-upserts the same open heat-change row before its claim
+**Then** the row's `resolved_at` is cleared together with its state, due time, reason and urgency, and the call list shows `warning_overdue` again (C2)
+
+**Given** a new season, or a season whose start is today or later
+**When** the admin saves it with a start before today
+**Then** the command refuses with `past` and `field: 'start'`, nothing is written, and the card shows "Der Beginn darf nicht in der Vergangenheit liegen." / "The start can't be in the past." on the start field; a start today is saved, and the running-season rule is unchanged (C3)
+
+**Given** an affected booking whose keybox row is `transient_failure`
+**When** the impact is computed before `keyboxOverdueAt(start, createdAt)`
+**Then** its consequence is `mail`: the retry carries the new notice, and after the accepted retry no call entry appears
+**And** from the overdue time on it is `call`, matching the call list's `keybox_overdue` entry; `in_flight`, `accepted`, `refused` and `expired` stay `call`, and `endsHeatChangeMail` is unchanged (C4)
+
+**Given** a stored name that is null or blank
+**When** the day rows, the booking detail, the admin home, the call list or the reply reminders render it
+**Then** one helper shows the trimmed name or "(ohne Name)" / "(no name)" everywhere, and the stale "later stories add the remaining routes" comment in the portal layout is fixed (C5)
+
+**Covers:** FR-12, FR-13, FR-14, FR-16, FR-17, FR-18, FR-20, FR-21, FR-31; AD-6, AD-8, AD-21, AD-25; retro C1–C5
+
 ## Epic 4: Guest data is protected and the season is recorded
 
 From the first booking an anonymous analytics record is kept for every booking and every passed day, and every guest's name, email and mobile number are deleted automatically 30 days after their season ends. Both are idempotent worker jobs (AD-5) that catch up after downtime.

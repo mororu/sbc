@@ -5,7 +5,6 @@ import { addMinutes, type Instant } from '#lib/time/index.ts';
 import {
 	callList,
 	deriveCallList,
-	keyboxOverdueAt,
 	keyboxPhaseHeatChange,
 	sendProblems,
 	warningOverdueAt,
@@ -13,6 +12,7 @@ import {
 	type SendProblemEntry,
 	type SendProblemRow
 } from './call-list.ts';
+import { keyboxOverdueAt } from './keybox.ts';
 import type { Notice } from './notice.ts';
 
 const START: Instant = '2027-01-12T17:00:00Z';

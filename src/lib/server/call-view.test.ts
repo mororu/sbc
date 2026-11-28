@@ -191,6 +191,12 @@ describe('loadCalls', () => {
 		expect(loadCalls('de', NOW, db).items[0]).toMatchObject({ heading: '17:15 · (ohne Name)', firstName: null, tel: null });
 	});
 
+	it('heads a blank stored name "(ohne Name)", like the day rows and the home (retro D5)', () => {
+		const id = tom();
+		sqlite.prepare("update booking set name = '  ' where id = ?").run(id);
+		expect(loadCalls('de', NOW, db).items[0]).toMatchObject({ heading: '17:15 · (ohne Name)', firstName: null });
+	});
+
 	it('renders the English copy', () => {
 		tom();
 		expect(loadCalls('en', NOW, db)).toMatchObject({

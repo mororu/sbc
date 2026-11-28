@@ -176,6 +176,7 @@ const ERROR_TEXT: Record<SettingsErrorKey, (locale: Locale) => string> = {
 	settings_season_order: (locale) => m.settings_season_order({}, { locale }),
 	settings_season_overlap: (locale) => m.settings_season_overlap({}, { locale }),
 	settings_season_end_past: (locale) => m.settings_season_end_past({}, { locale }),
+	settings_season_start_past: (locale) => m.settings_season_start_past({}, { locale }),
 	settings_keybox_invalid: (locale) => m.settings_keybox_invalid({}, { locale }),
 	settings_hours_order: (locale) => m.settings_hours_order({}, { locale }),
 	settings_changeover_range: (locale) => m.settings_changeover_range({}, { locale }),

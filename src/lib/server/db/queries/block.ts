@@ -60,11 +60,12 @@ function firstNames(ids: number[], db: Db): Map<number, string | null> {
 	return new Map(rows.map((r) => [r.id, firstName(r.name)]));
 }
 
-/** `impactOn` for a block change ending at `end`, over the bookings and the blocks after the change. */
+/** `impactOn` for a block change ending at `end`, over the bookings and the blocks after the change, judged at `now`. */
 function blockImpact(
 	end: Instant,
 	day: DayData,
 	blocksAfter: Block[],
+	now: Instant,
 	db: Db
 ): { impact: Impact; affected: Booking | null } {
 	const affected = affectedBooking({ end }, day.bookings, day.settings);
@@ -74,7 +75,8 @@ function blockImpact(
 		blocks: blocksAfter,
 		preheat: preheatOf(day.settings),
 		told: affected ? toldNotice(affected.id, db) : null,
-		keyboxState: affected ? keyboxStateOf(affected.id, db) : null
+		keyboxState: affected ? keyboxStateOf(affected.id, db) : null,
+		now
 	});
 	return { impact, affected };
 }
@@ -96,7 +98,7 @@ export function getBlockCheck(candidate: { start: Instant; end: Instant }, now: 
 	} else if (found) {
 		conflict = found;
 	}
-	const { impact, affected } = blockImpact(candidate.end, day, [...day.blocks, candidate], db);
+	const { impact, affected } = blockImpact(candidate.end, day, [...day.blocks, candidate], now, db);
 	return {
 		date,
 		past: compareInstants(candidate.start, now) <= 0,
@@ -131,7 +133,7 @@ export function getBlockDeletion(blockId: number, now: Instant, db: Db = getDb()
 	// invariant, and an impact with the block still in it would validate the wrong token.
 	if (index < 0) throw new Error(`Block ${blockId} is missing from its own day data`);
 	const after = day.blocks.filter((_, i) => i !== index);
-	const { impact, affected } = blockImpact(row.end, day, after, db);
+	const { impact, affected } = blockImpact(row.end, day, after, now, db);
 	return {
 		block: row,
 		date,

@@ -7,11 +7,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type Database from 'better-sqlite3';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { deriveCallList, serializeNotice, type Notice } from '#lib/domain/index.ts';
+import { classifyHeatChange, deriveCallList, serializeNotice, type Notice } from '#lib/domain/index.ts';
 import { createDb, openDatabase, type Db } from '../db/index.ts';
 import { applyMigrations, MIGRATIONS_FOLDER } from '../db/migrate.ts';
 import { getCallFeed } from '../db/queries/index.ts';
 import { isLockTimeout } from './create-booking.ts';
+import { enqueueHeatChanges } from './heat-change.ts';
 import { markCalled } from './mark-called.ts';
 import { claimDueRow } from './outbox.ts';
 
@@ -142,6 +143,33 @@ describe('markCalled', () => {
 		expect(resolvedAt(keybox)).toBeNull();
 		expect(lastTold(id)).toBe(serializeNotice(current));
 		expect(calls()).toEqual([]);
+	});
+
+	it('lists a second urgent change before the claim again: the re-upsert clears resolved_at (retro D2)', () => {
+		const id = insertBooking({ start: '2027-01-12T11:00:00Z', createdAt: '2027-01-12T10:00:00Z' });
+		insertOutbox(id, 'keybox', 'pending', { dueAt: '2027-01-12T10:00:00Z' });
+		const warning = insertOutbox(id, 'heat_change', 'pending', { urgent: true, dueAt: '2027-01-12T10:10:00Z' });
+		const current: Notice = { heat: 'cold', earliest: '2027-01-12T10:20:00Z', latest: '2027-01-12T10:30:00Z' };
+		expect(getCallFeed(NOW, db).get(id)?.current).toEqual(current);
+		expect(markCalled({ bookingId: id, notice: serializeNotice(current) }, { now: NOW, db })).toEqual({ ok: true });
+		expect(resolvedAt(warning)).toBe(NOW);
+		// The notice shown on the call list is now the last told one.
+		expect(lastTold(id)).toBe(serializeNotice(current));
+		expect(calls()).toEqual([]);
+		// A block until 10:25 moves the earliest arrival later: urgent against the notice just called.
+		const later = '2027-01-12T10:07:00Z';
+		sqlite.prepare("insert into block (start_at, end_at, reason) values ('2027-01-12T09:30:00Z', '2027-01-12T10:25:00Z', 'cleaning')").run();
+		const second = getCallFeed(later, db).get(id)?.current;
+		expect(second).toEqual({ heat: 'cold', earliest: '2027-01-12T10:25:00Z', latest: '2027-01-12T10:30:00Z' });
+		expect(classifyHeatChange(current, second as Notice)).toBe('urgent');
+		expect(sqlite.transaction(() => enqueueHeatChanges([id], { now: later, db }))()).toEqual([{ bookingId: id, action: 'upserted' }]);
+		expect(sqlite.prepare('select id, state, resolved_at, snapshot_urgent from outbox where id = ?').get(warning)).toEqual({
+			id: warning,
+			state: 'pending',
+			resolved_at: null,
+			snapshot_urgent: 1
+		});
+		expect(calls(later)).toMatchObject([{ bookingId: id, marker: 'call_required', reasons: ['warning_overdue'] }]);
 	});
 
 	it('lets the worker drop the resolved urgent heat-change row at claim, never sending it (Warning overdue, worker)', () => {

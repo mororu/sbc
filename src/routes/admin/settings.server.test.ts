@@ -276,6 +276,28 @@ describe('season and keybox (Story 3.8)', () => {
 		expect(seasons()).toEqual([{ id: 1, start_date: '2027-01-09', end_date: '2027-04-30' }]);
 	});
 
+	it('a new season starting before today is 400 settings_season_start_past on start; today is saved (retro D3)', async () => {
+		clock.now = '2027-05-10T08:00:00Z';
+		expect(await post('season', { start: '2027-05-09', end: '2027-09-30' })).toEqual({
+			failure: {
+				status: 400,
+				data: { card: 'season', errors: { start: 'settings_season_start_past' }, values: { start: '2027-05-09', end: '2027-09-30', id: '' } }
+			}
+		});
+		expect(seasons()).toHaveLength(1);
+		expect(await post('season', { start: '2027-05-10', end: '2027-09-30' })).toEqual({ data: { card: 'season', saved: true } });
+		expect(await post('season', { start: '2027-05-09', end: '2027-09-30', id: '2' })).toEqual({
+			failure: {
+				status: 400,
+				data: { card: 'season', errors: { start: 'settings_season_start_past' }, values: { start: '2027-05-09', end: '2027-09-30', id: '2' } }
+			}
+		});
+		expect(seasons()).toEqual([
+			{ id: 1, start_date: '2027-01-09', end_date: '2027-04-30' },
+			{ id: 2, start_date: '2027-05-10', end_date: '2027-09-30' }
+		]);
+	});
+
 	it('a code over 32 characters is 400 settings_keybox_invalid', async () => {
 		const long = 'A'.repeat(33);
 		expect(await post('keybox', { code: long })).toEqual({

@@ -15,6 +15,7 @@ import {
 import { m } from '#lib/paraglide/messages.js';
 import { addDays, formatDateShort, formatTime, localDate, today, type Instant, type Locale } from '#lib/time/index.ts';
 import { telHref } from './admin-day-view.ts';
+import { displayName } from './display-name.ts';
 import {
 	firstName,
 	getCallContacts,
@@ -105,7 +106,7 @@ export type CallItemInput = {
 export function buildCallItem({ entry, feed, contact, keyboxCode }: CallItemInput, now: Instant, locale: Locale): CallItemView {
 	const { start } = entry;
 	const { lastTold, current } = feed;
-	const name = contact?.name?.trim() || m.admin_no_name({}, { locale });
+	const name = displayName(contact?.name, locale);
 	const mobile = contact?.mobile?.trim() || null;
 	const urgent = entry.marker === 'call_required';
 	const toldText = lastTold ? noticeText(lastTold, start, now, locale) : null;

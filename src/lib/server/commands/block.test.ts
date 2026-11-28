@@ -157,11 +157,25 @@ describe('createBlock: Mail', () => {
 });
 
 describe('createBlock: Call', () => {
-	it.each(['accepted', 'in_flight', 'transient_failure'])('enqueues nothing once the keybox row is %s', (state) => {
+	it.each(['accepted', 'in_flight'])('enqueues nothing once the keybox row is %s', (state) => {
 		const lena = mailBooking(state);
 		expect(getBlockCheck({ start: at('16:00'), end: at('17:25') }, NOW, db).impact).toMatchObject({ class: 'urgent', consequence: 'call' });
 		expect(save(at('16:00'), at('17:25'))).toMatchObject({ ok: true });
 		expect(heatRows(lena)).toEqual([]);
+	});
+
+	it('is a mail while the keybox email is retrying, and enqueues nothing: the retry carries the notice (retro D4)', () => {
+		// Lena's keybox row is due Sun 10 Jan 18:00 Zurich and overdue from 18:15.
+		const retrying = '2027-01-10T17:10:00Z';
+		const lena = mailBooking('transient_failure');
+		expect(getBlockCheck({ start: at('16:00'), end: at('17:25') }, retrying, db).impact).toMatchObject({ class: 'urgent', consequence: 'mail' });
+		expect(save(at('16:00'), at('17:25'), { now: retrying })).toMatchObject({ ok: true });
+		expect(heatRows(lena)).toEqual([]);
+	});
+
+	it('is a call once the retrying keybox email is overdue (C4 overdue)', () => {
+		mailBooking('transient_failure');
+		expect(getBlockCheck({ start: at('16:00'), end: at('17:25') }, NOW, db).impact).toMatchObject({ class: 'urgent', consequence: 'call' });
 	});
 });
 
@@ -271,6 +285,25 @@ describe('deleteBlock: good news', () => {
 		insertBlock(at('17:00'), at('17:15'), 'maintenance');
 		insertBooking(at('17:15'), 'Ben', { lastTold: cold('17:15', null), keybox: 'pending' });
 		expect(getBlockDeletion(first, NOW, db)?.impact.consequence).toBe('none');
+	});
+});
+
+describe('deleteBlock: after the changeover was lowered (retro D1)', () => {
+	it('finds the booking behind a block that is hot without it, against the stored changeover 60', () => {
+		// Anna 16:00–17:00 and Tom 18:00, both made with changeover 60 (now 15); block 17:00–17:04.
+		// The old window (17:04 + 15 + 40 = 17:59) missed Tom.
+		const anna = insertBooking(at('16:00'), 'Anna');
+		const tom = insertBooking(at('18:00'), 'Tom', { lastTold: cold('17:20', '17:30'), keybox: 'pending', createdAt: '2027-01-08T10:00:00Z' });
+		sqlite.prepare('update booking set changeover_min = 60 where id in (?, ?)').run(anna, tom);
+		const id = insertBlock(at('17:00'), at('17:04'));
+		expect(getBlockDeletion(id, NOW, db)?.impact).toMatchObject({
+			affected: { id: tom },
+			current: { heat: 'hot' },
+			class: 'good_news',
+			consequence: 'mail'
+		});
+		expect(remove(id)).toEqual({ ok: true, date: DAY });
+		expect(heatRows(tom)).toEqual([expect.objectContaining({ state: 'pending', due_at: '2027-01-11T07:10:00Z', snapshot_urgent: 0 })]);
 	});
 });
 

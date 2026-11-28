@@ -12,6 +12,7 @@ import {
 	type ReplyReminderRow
 } from '#lib/server/db/queries/index.ts';
 import { addMinutes, formatDateShort, formatTime, localDate, type LocalDate, type Locale } from '#lib/time/index.ts';
+import { displayName } from './display-name.ts';
 
 type Db = Parameters<typeof getReplyReminders>[1];
 
@@ -62,7 +63,7 @@ export function replyMessage(reminder: ReplyReminderRow): { subject: string; bod
 export function buildReplyReminder(reminder: ReplyReminderRow, locale: Locale): ReplyReminderView {
 	const { subject, body } = replyMessage(reminder);
 	const end = addMinutes(reminder.start, reminder.durationMin);
-	const name = reminder.name?.trim() || m.admin_no_name({}, { locale });
+	const name = displayName(reminder.name, locale);
 	return {
 		id: reminder.id,
 		name,

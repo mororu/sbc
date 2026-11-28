@@ -54,6 +54,7 @@ export type SettingsErrorKey =
 	| 'settings_season_order'
 	| 'settings_season_overlap'
 	| 'settings_season_end_past'
+	| 'settings_season_start_past'
 	| 'settings_keybox_invalid'
 	| 'settings_hours_order'
 	| 'settings_changeover_range'
@@ -72,6 +73,7 @@ export const SETTINGS_ERROR_KEYS: readonly SettingsErrorKey[] = [
 	'settings_season_order',
 	'settings_season_overlap',
 	'settings_season_end_past',
+	'settings_season_start_past',
 	'settings_keybox_invalid',
 	'settings_hours_order',
 	'settings_changeover_range',
