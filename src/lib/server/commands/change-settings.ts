@@ -11,8 +11,9 @@
 // - season (Story 3.8, AD-25): edits a season row in place (`id`) or adds the next one (`id` null).
 //   A missing row is `not_found`; a row that ended before today (Zurich) is frozen (`past`); an end
 //   before today is `past` with `field: 'end'`; on a row that started before today the start cannot
-//   change (`past`); dates overlapping any other row (inclusive) are `conflict` (a command check, no
-//   db constraint).
+//   change (`past`); for a new row, or one starting today or later, a start before today is `past`
+//   with `field: 'start'`; dates overlapping any other row (inclusive) are `conflict` (a command
+//   check, no db constraint).
 // - keybox (Story 3.8): writes the trimmed code; only later claims snapshot it, nothing is resent.
 // Neither season nor keybox touches a booking (`season_id` included) or writes an outbox row.
 // Never throws for an expected outcome.
@@ -40,8 +41,8 @@ export type ChangeSettingsResult =
 	| {
 			ok: false;
 			code: 'invalid' | 'stale' | 'conflict' | 'not_found' | 'past';
-			/** With `past` from the season card: the posted end lies before today (a field error, not a failure). */
-			field?: 'end';
+			/** With `past` from the season card: the posted end or start lies before today (a field error, not a failure). */
+			field?: 'end' | 'start';
 	  };
 
 const isInt = (n: unknown): n is number => typeof n === 'number' && Number.isInteger(n);
@@ -134,7 +135,12 @@ function saveSeason(value: { id: number | null; startDate: LocalDate; endDate: L
 	// No season may end in the past: that would rewrite days that have been.
 	if (compareDates(value.endDate, day) < 0) return { ok: false, code: 'past', field: 'end' };
 	// A running season's start has passed: it stays.
-	if (row && compareDates(row.startDate, day) < 0 && row.startDate !== value.startDate) return { ok: false, code: 'past' };
+	if (row && compareDates(row.startDate, day) < 0) {
+		if (row.startDate !== value.startDate) return { ok: false, code: 'past' };
+	} else if (compareDates(value.startDate, day) < 0) {
+		// A new or upcoming season may not start in the past either (retro D3).
+		return { ok: false, code: 'past', field: 'start' };
+	}
 	const overlaps = rows.some(
 		(r) => r.id !== value.id && compareDates(r.startDate, value.endDate) <= 0 && compareDates(value.startDate, r.endDate) <= 0
 	);

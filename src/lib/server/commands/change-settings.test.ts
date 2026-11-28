@@ -402,6 +402,51 @@ describe('Season: past dates and edges (Story 3.8 review)', () => {
 		expect(JSON.stringify(seasonRows())).toBe(before);
 	});
 
+	describe('a start before today (retro D3)', () => {
+		// 10 May 2027: row 1 (9 Jan – 30 Apr) has ended; nothing overlaps from May on.
+		const MAY = '2027-05-10T08:00:00Z';
+
+		it('refuses a new season starting yesterday (`past`, field start); nothing written', () => {
+			const before = JSON.stringify(seasonRows());
+			expect(change({ card: 'season', id: null, startDate: '2027-05-09', endDate: '2027-09-30' }, MAY)).toEqual({
+				ok: false,
+				code: 'past',
+				field: 'start'
+			});
+			expect(JSON.stringify(seasonRows())).toBe(before);
+		});
+
+		it('refuses moving the upcoming season (in 10 days) to start yesterday (`past`, field start)', () => {
+			expect(change({ card: 'season', id: null, startDate: '2027-05-20', endDate: '2027-09-30' }, MAY)).toEqual({ ok: true });
+			const before = JSON.stringify(seasonRows());
+			expect(change({ card: 'season', id: 2, startDate: '2027-05-09', endDate: '2027-09-30' }, MAY)).toEqual({
+				ok: false,
+				code: 'past',
+				field: 'start'
+			});
+			expect(JSON.stringify(seasonRows())).toBe(before);
+		});
+
+		it('takes today as the Zurich date: at 23:30Z on 9 May (10 May in Zurich) a start on 9 May is `past`', () => {
+			const night = '2027-05-09T23:30:00Z';
+			expect(change({ card: 'season', id: null, startDate: '2027-05-09', endDate: '2027-09-30' }, night)).toEqual({
+				ok: false,
+				code: 'past',
+				field: 'start'
+			});
+			expect(change({ card: 'season', id: null, startDate: '2027-05-10', endDate: '2027-09-30' }, night)).toEqual({ ok: true });
+		});
+
+		it('saves a start today, for a new season and for the upcoming one', () => {
+			expect(change({ card: 'season', id: null, startDate: '2027-05-10', endDate: '2027-09-30' }, MAY)).toEqual({ ok: true });
+			expect(change({ card: 'season', id: 2, startDate: '2027-05-10', endDate: '2027-10-31' }, MAY)).toEqual({ ok: true });
+			expect(seasonRows()).toEqual([
+				{ id: 1, start_date: '2027-01-09', end_date: '2027-04-30' },
+				{ id: 2, start_date: '2027-05-10', end_date: '2027-10-31' }
+			]);
+		});
+	});
+
 	it('edits the next row (target case 2: starting after today), start included', () => {
 		expect(change({ card: 'season', id: null, startDate: '2027-12-20', endDate: '2028-04-30' })).toEqual({ ok: true });
 		expect(change({ card: 'season', id: 2, startDate: '2027-12-27', endDate: '2028-04-15' })).toEqual({ ok: true });

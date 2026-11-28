@@ -5,10 +5,12 @@
 // For each booking it recomputes the current notice and compares it with what the guest has been, or
 // is about to be, told (`toldNotice`): the snapshot of an in-flight heat-change row, else the last-told notice.
 // A change worth an email upserts the booking's one open heat-change row, due after the settle
-// delay, with its urgency; a repeat change resets the due time and the urgency. Once the keybox row
-// is in flight, retrying or finished, no heat-change mail goes out: open heat-change rows are
-// cancelled instead. A change that only widens the arrival range writes nothing; an open row is
-// left for the claim to recheck.
+// delay, with its urgency; a repeat change resets the due time and the urgency and clears
+// `resolved_at`. Once the keybox row is in flight, retrying or finished, no heat-change mail goes
+// out: open heat-change rows are cancelled instead. A retrying keybox email carries the new notice
+// itself until it is overdue; from then on the call list asks for a call (`keybox_overdue`). A
+// change that only widens the arrival range writes nothing; an open row is left for the claim to
+// recheck.
 import { and, eq, inArray } from 'drizzle-orm';
 import { classifyHeatChange, endsHeatChangeMail, parseNotice, SETTLE_DELAY_MIN, type Notice } from '#lib/domain/index.ts';
 import { addMinutes, compareInstants, type Instant } from '#lib/time/index.ts';
@@ -68,12 +70,13 @@ function enqueueOne(bookingId: number, now: Instant, db: Db): HeatChangeAction {
 	if (classification === 'none') return 'none';
 
 	// Urgency is known from the upsert on, so the call list sees an urgent warning that never goes
-	// out (Story 2.5); the claim re-freezes it against the last-told notice.
+	// out (Story 2.5); the claim re-freezes it against the last-told notice. A re-upsert is a new
+	// change: it clears a `resolved_at` set by "Angerufen" for the change before (retro D2).
 	const dueAt = addMinutes(now, SETTLE_DELAY_MIN);
 	const snapshotUrgent = classification === 'urgent';
 	const updated = db
 		.update(outbox)
-		.set({ state: 'pending', dueAt, reason: null, snapshotUrgent })
+		.set({ state: 'pending', dueAt, reason: null, snapshotUrgent, resolvedAt: null })
 		.where(openHeatChangesOf(bookingId))
 		.run();
 	if (updated.changes === 0) {

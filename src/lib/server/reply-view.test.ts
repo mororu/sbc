@@ -80,6 +80,11 @@ describe('buildReplyReminder', () => {
 		expect(decode(view.href).body.startsWith('Hallo,\r\n')).toBe(true);
 		expect(decode(buildReplyReminder(reminder({ name, locale: 'en' }), 'de').href).body.startsWith('Hello,\r\n')).toBe(true);
 	});
+
+	it('heads a blank stored name "  " like the day rows, the home and the calls (retro D5)', () => {
+		expect(buildReplyReminder(reminder({ name: '  ' }), 'de').name).toBe('(ohne Name)');
+		expect(buildReplyReminder(reminder({ name: '  ' }), 'en').name).toBe('(no name)');
+	});
 });
 
 describe('buildReplies', () => {

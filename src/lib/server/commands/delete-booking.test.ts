@@ -15,7 +15,7 @@ import { getAdminBookings, getCallFeed, getDayData, getDeletionImpact, getFuture
 import { randomId } from '../ids.ts';
 import { createBooking, type CreateBookingInput } from './create-booking.ts';
 import { deleteBooking } from './delete-booking.ts';
-import { claimDueRow } from './outbox.ts';
+import { claimDueRow, recordSendOutcome } from './outbox.ts';
 
 const DAY = '2027-01-12';
 const BOOK_NOW = '2027-01-07T10:00:00Z';
@@ -150,12 +150,58 @@ describe('deleteBooking: open and in-flight heat-change rows of the affected boo
 });
 
 describe('deleteBooking: Call', () => {
-	it.each(['accepted', 'in_flight', 'transient_failure'])('enqueues nothing for Tom once his keybox row is %s', (state) => {
+	it.each(['accepted', 'in_flight'])('enqueues nothing for Tom once his keybox row is %s', (state) => {
 		const { anna, tom } = annaAndTom();
 		setKeybox(tom, state);
 		expect(getDeletionImpact(anna, NOW, db)?.impact).toMatchObject({ class: 'urgent', consequence: 'call' });
 		expect(del(anna)).toEqual({ ok: true, date: DAY });
 		expect(heatRows(tom)).toEqual([]);
+	});
+
+	describe('Tom’s keybox email retrying (retro D4, C4)', () => {
+		/** Mon 11 Jan, 17:20 Zurich: Tom's keybox row was due at 17:15 and is overdue from 17:30. */
+		const RETRYING = '2027-01-11T16:20:00Z';
+		const OVERDUE = '2027-01-11T16:30:00Z';
+		const calls = (now: string) => deriveCallList(getCallFeed(now, db), now);
+		const retrying = (dueAt: string) => {
+			const { anna, tom } = annaAndTom();
+			sqlite
+				.prepare("update setting set keybox_code = '4711', keybox_instructions_de = 'Box links.', keybox_instructions_en = 'Box left.' where id = 1")
+				.run();
+			sqlite.exec("update outbox set state = 'accepted' where kind = 'confirmation'");
+			sqlite.prepare("update outbox set state = 'transient_failure', due_at = ? where kind = 'keybox' and booking_id = ?").run(dueAt, tom);
+			return { anna, tom };
+		};
+
+		it('is a mail before the overdue time; the accepted retry tells the new notice and nothing is left to call', () => {
+			const { anna, tom } = retrying(RETRYING);
+			const impact = getDeletionImpact(anna, RETRYING, db)?.impact;
+			expect(impact).toMatchObject({ class: 'urgent', consequence: 'mail' });
+			const TOM_COLD: Notice = { heat: 'cold', earliest: at('16:35'), latest: at('16:45') };
+			expect(impact?.current).toEqual(TOM_COLD);
+			expect(del(anna, tokenFor(anna, RETRYING), RETRYING)).toEqual({ ok: true, date: DAY });
+			// No heat-change row: the keybox retry carries the new notice. Nothing to call meanwhile.
+			expect(heatRows(tom)).toEqual([]);
+			expect(calls(RETRYING).map((c) => c.bookingId)).not.toContain(tom);
+			const retry = '2027-01-11T16:21:00Z';
+			const claim = claimDueRow({ now: retry, db });
+			expect(claim).toMatchObject({ ok: true, row: { bookingId: tom, kind: 'keybox' } });
+			if (!claim.ok) throw new Error('no claim');
+			expect(recordSendOutcome(claim.row.id, 'accepted', null, { now: retry, db })).toMatchObject({ ok: true, code: 'accepted' });
+			expect(JSON.parse(String(bookingRow(tom).last_told_notice))).toEqual(TOM_COLD);
+			expect(calls(retry).map((c) => c.bookingId)).not.toContain(tom);
+		});
+
+		it('is a call from the overdue time on, when the call list shows keybox_overdue (C4 overdue)', () => {
+			const { anna, tom } = retrying(OVERDUE);
+			expect(getDeletionImpact(anna, '2027-01-11T16:29:00Z', db)?.impact.consequence).toBe('mail');
+			const tomEntry = (now: string) => calls(now).find((c) => c.bookingId === tom);
+			expect(tomEntry(OVERDUE)).toMatchObject({ marker: 'call_required', reasons: ['keybox_overdue'] });
+			expect(getDeletionImpact(anna, OVERDUE, db)?.impact).toMatchObject({ class: 'urgent', consequence: 'call' });
+			expect(del(anna, tokenFor(anna, OVERDUE), OVERDUE)).toEqual({ ok: true, date: DAY });
+			expect(heatRows(tom)).toEqual([]);
+			expect(tomEntry(OVERDUE)).toMatchObject({ marker: 'call_required', reasons: ['keybox_overdue'] });
+		});
 	});
 
 	it('is good news for a cold-told booking the deletion makes hot', () => {
@@ -170,6 +216,50 @@ describe('deleteBooking: Call', () => {
 		expect(getDeletionImpact(anna, NOW, db)?.impact).toMatchObject({ current: HOT, class: 'good_news', consequence: 'call' });
 		expect(del(anna)).toEqual({ ok: true, date: DAY });
 		expect(heatRows(tom)).toEqual([]);
+	});
+});
+
+describe('deleteBooking: after the changeover was lowered (retro D1)', () => {
+	// Anna 16:00–17:00 and Tom 18:00 back to back, both made with changeover 60; then lowered to 15.
+	// The old window (17:00 + 15 + 40 = 17:55) missed Tom.
+	const setChangeover = (min: number) => sqlite.prepare('update setting set changeover_min = ? where id = 1').run(min);
+	const annaAndTomAt60 = (tomStart = at('18:00')) => {
+		setChangeover(60);
+		const anna = book(at('16:00'), { name: 'Anna Meier' });
+		const tom = book(tomStart, { name: 'Tom Brunner' });
+		setChangeover(15);
+		return { anna, tom };
+	};
+
+	it('finds Tom, now cold: urgent, and upserts his heat-change row', () => {
+		const { anna, tom } = annaAndTomAt60();
+		expect(bookingRow(tom)).toMatchObject({ changeover_min: 60, last_told_notice: HOT_JSON });
+		expect(getDeletionImpact(anna, NOW, db)?.impact).toMatchObject({
+			affected: { id: tom },
+			class: 'urgent',
+			consequence: 'mail',
+			current: { heat: 'cold' }
+		});
+		expect(del(anna)).toEqual({ ok: true, date: DAY });
+		expect(heatRows(tom)).toEqual([expect.objectContaining({ state: 'pending', due_at: '2027-01-12T09:10:00Z', snapshot_urgent: 1 })]);
+	});
+
+	it('lets a booking between Anna and Tom shield Tom', () => {
+		const { anna, tom } = annaAndTomAt60();
+		const ben = insertBooking(at('17:15'), 'Ben', HOT_JSON);
+		expect(getDeletionImpact(anna, NOW, db)?.impact.affected?.id).toBe(ben);
+		del(anna);
+		expect(heatRows(tom)).toEqual([]);
+	});
+
+	it('finds nothing beyond 60 + 40 minutes after the end', () => {
+		setChangeover(60);
+		const anna = book(at('16:00'));
+		const later = insertBooking(at('18:45'), 'Ben', HOT_JSON);
+		setChangeover(15);
+		expect(getDeletionImpact(anna, NOW, db)?.impact).toMatchObject({ affected: null, consequence: 'none' });
+		expect(del(anna)).toEqual({ ok: true, date: DAY });
+		expect(heatRows(later)).toEqual([]);
 	});
 });
 

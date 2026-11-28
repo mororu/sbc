@@ -364,5 +364,7 @@ describe('loadSettings: season dates (Story 3.8 review)', () => {
 		expect(view.errors.settings_season_end_past).toBe('Das Ende darf nicht in der Vergangenheit liegen.');
 		expect(view.errors.settings_keybox_invalid).toBe('Höchstens 32 Zeichen, ohne Zeilenumbruch.');
 		expect(loadSettings('en', NOW, db).errors.settings_season_end_past).toBe("The end can't be in the past.");
+		expect(view.errors.settings_season_start_past).toBe('Der Beginn darf nicht in der Vergangenheit liegen.');
+		expect(loadSettings('en', NOW, db).errors.settings_season_start_past).toBe("The start can't be in the past.");
 	});
 });

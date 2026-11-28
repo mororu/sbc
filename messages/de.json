@@ -514,6 +514,7 @@
 	"settings_season_order": "Das Ende muss nach dem Beginn liegen.",
 	"settings_season_overlap": "Diese Daten überschneiden sich mit einer anderen Saison.",
 	"settings_season_end_past": "Das Ende darf nicht in der Vergangenheit liegen.",
+	"settings_season_start_past": "Der Beginn darf nicht in der Vergangenheit liegen.",
 	"settings_keybox_invalid": "Höchstens 32 Zeichen, ohne Zeilenumbruch.",
 	"settings_hours_order": "„Bis“ muss nach „Von“ liegen.",
 	"settings_changeover_range": "Bitte eine Zahl von 0 bis 60, in 5er-Schritten.",

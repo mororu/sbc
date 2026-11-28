@@ -297,6 +297,13 @@ describe('buildAdminBookingView', () => {
 		expect(buildAdminRow(booking({ email: '', mobile: '' }), context())).toMatchObject({ email: null, mobile: null });
 	});
 
+	it('shows "(ohne Name)" for a blank stored name in the day row and the detail, and trims a name (retro D5)', () => {
+		expect(buildAdminRow(booking({ name: '  ' }), context()).name).toBe('(ohne Name)');
+		expect(buildAdminRow(booking({ name: '  ' }), context({ locale: 'en' })).name).toBe('(no name)');
+		expect(buildAdminRow(booking({ name: ' Tom Brunner ' }), context()).name).toBe('Tom Brunner');
+		expect(buildAdminBookingView(booking({ name: '  ' }), context()).details[0]).toEqual({ term: 'Name', value: '(ohne Name)', href: null });
+	});
+
 	it('shows a dash for erased contact data, without a link', () => {
 		const v = buildAdminBookingView(booking({ name: null, email: null, mobile: null }), context());
 		expect(v.details.slice(0, 3)).toEqual([

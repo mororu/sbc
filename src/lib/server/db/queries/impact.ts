@@ -56,7 +56,8 @@ export function getDeletionImpact(bookingId: number, now: Instant, db: Db = getD
 		blocks,
 		preheat: { minMin: settings.preheatMinMin, maxMin: settings.preheatMaxMin },
 		told: affected ? toldNotice(affected.id, db) : null,
-		keyboxState: affected ? keyboxStateOf(affected.id, db) : null
+		keyboxState: affected ? keyboxStateOf(affected.id, db) : null,
+		now
 	});
 	let affectedFirstName: string | null = null;
 	if (affected) {
@@ -134,7 +135,8 @@ export function getPreheatImpact(to: Preheat, now: Instant, db: Db = getDb()): P
 			blocks: day.blocks,
 			preheat: to,
 			told: toldNotice(id, db),
-			keyboxState: keyboxStateOf(id, db)
+			keyboxState: keyboxStateOf(id, db),
+			now
 		});
 		if (impact.class !== 'none') changed.push(impact);
 	}

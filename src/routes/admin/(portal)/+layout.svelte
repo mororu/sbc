@@ -36,7 +36,7 @@
 		<ul>
 			{#each ADMIN_TABS as tab (tab)}
 				<li>
-					<!-- eslint-disable svelte/no-navigation-without-resolve -- root-relative admin hrefs (admin-nav.ts); later stories add the remaining routes -->
+					<!-- eslint-disable svelte/no-navigation-without-resolve -- root-relative admin hrefs (admin-nav.ts); Auswertung (Epic 6) has no route yet -->
 					<a class="tab" href={ADMIN_TAB_HREF[tab]} aria-current={active === tab ? 'page' : undefined}>
 						{labels[tab]()}
 						{#if tab === 'home'}

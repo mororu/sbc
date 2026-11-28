@@ -3,16 +3,20 @@
 // uses it now; creating or deleting a block (3.5) and a pre-heat change (3.7) reuse it.
 // Pure: every input is a parameter. The caller finds the affected booking (`affectedBooking`) and
 // passes the live bookings and blocks as they will be *after* the change.
+import type { Instant } from '#lib/time/index.ts';
 import { classifyHeatChange, type HeatChangeClass } from './heat-change.ts';
 import type { Block, Booking } from './heat.ts';
-import { endsHeatChangeMail } from './keybox.ts';
+import { endsHeatChangeMail, keyboxRetryCarriesNotice } from './keybox.ts';
 import { bookingNotice, serializeNotice, type Notice, type Preheat } from './notice.ts';
 import type { OutboxState } from './outbox.ts';
 
 /**
  * - `none`: no affected booking, nothing told yet, or nothing worth telling changed.
- * - `mail`: the heat-change email goes out (the keybox email has not ended heat-change mail).
- * - `call`: the keybox email is in flight, retrying or done; the change goes to the call list.
+ * - `mail`: the guest gets an email: the heat-change email (the keybox email has not ended
+ *   heat-change mail), or a retrying keybox email, which carries the new notice until it is
+ *   overdue (`keyboxRetryCarriesNotice`, retro D4).
+ * - `call`: the keybox email is in flight or done, or retrying past its overdue time (the call
+ *   list then shows `keybox_overdue`); the change goes to the call list.
  */
 export type ImpactConsequence = 'none' | 'mail' | 'call';
 
@@ -39,6 +43,8 @@ export type ImpactInput = {
 	told: Notice | null;
 	/** The affected booking's keybox row state, or null when it has none. */
 	keyboxState: OutboxState | null;
+	/** The instant to judge: a retrying keybox email carries the new notice only until it is overdue. */
+	now: Instant;
 };
 
 export function impactOn(input: ImpactInput): Impact {
@@ -48,7 +54,9 @@ export function impactOn(input: ImpactInput): Impact {
 	const heatClass = told ? classifyHeatChange(told, current) : 'none';
 	let consequence: ImpactConsequence = 'none';
 	if (told && heatClass !== 'none') {
-		consequence = input.keyboxState !== null && endsHeatChangeMail(input.keyboxState) ? 'call' : 'mail';
+		const state = input.keyboxState;
+		const mailed = state === null || !endsHeatChangeMail(state) || keyboxRetryCarriesNotice(state, affected, input.now);
+		consequence = mailed ? 'mail' : 'call';
 	}
 	return { affected, told, current, class: heatClass, consequence };
 }

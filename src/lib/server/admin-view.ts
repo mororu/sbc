@@ -31,6 +31,7 @@ import {
 	type AdminBooking,
 	type FlagCandidate
 } from './db/queries/index.ts';
+import { displayName } from './display-name.ts';
 
 /** The two nav badges (UX-DR53): never summed, 0 when empty. */
 export type NavCounts = { calls: number; replies: number };
@@ -100,7 +101,7 @@ export function flagLink(b: { id: number; start: Instant; name: string | null },
 	return {
 		href: adminBookingHref(b.id),
 		text: m.admin_flag_link(
-			{ date: formatDateShort(localDate(b.start), locale), time: formatTime(b.start), name: b.name ?? m.admin_no_name({}, { locale }) },
+			{ date: formatDateShort(localDate(b.start), locale), time: formatTime(b.start), name: displayName(b.name, locale) },
 			{ locale }
 		)
 	};

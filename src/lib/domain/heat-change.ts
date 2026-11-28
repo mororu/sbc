@@ -49,18 +49,26 @@ export function classifyHeatChange(lastTold: Notice, current: Notice): HeatChang
 /**
  * The booking whose notice a booking or block ending at `item.end` can change: the first live
  * booking (by start, never the item itself) starting at or after the end and no later than the end
- * plus the current changeover plus the longer pre-heat end. A later booking is shielded by that
- * one: the item is no longer the last thing before it. Whether the notice really changed (e.g. a
- * block in between) is left to the helper's recheck. Null when there is none.
+ * plus the largest changeover that can apply plus the longer pre-heat end. A later booking is
+ * shielded by that one: the item is no longer the last thing before it. Whether the notice really
+ * changed (e.g. a block in between) is left to the helper's recheck. Null when there is none.
+ *
+ * The largest changeover is the current one or any live booking's stored one, whichever is larger:
+ * hotness uses the changeover stored on the later-made booking of a pair (AD-8), which may be
+ * neither the candidate's nor the current one, and the admin may have lowered the current one since
+ * (retro D1). A wider window is harmless: only the first booking after the end can be affected,
+ * and `impactOn` returns `none` when its notice did not change.
  */
 export function affectedBooking(
 	item: { end: Instant; bookingId?: number },
 	bookings: Booking[],
 	settings: Pick<Settings, 'changeoverMin' | 'preheatMaxMin'>
 ): Booking | null {
-	const windowEnd = addMinutes(item.end, settings.changeoverMin + settings.preheatMaxMin);
+	const liveBookings = live(bookings);
+	const changeoverMin = liveBookings.reduce((max, b) => Math.max(max, b.changeoverMin), settings.changeoverMin);
+	const windowEnd = addMinutes(item.end, changeoverMin + settings.preheatMaxMin);
 	let first: Booking | null = null;
-	for (const booking of live(bookings)) {
+	for (const booking of liveBookings) {
 		if (item.bookingId !== undefined && booking.id === item.bookingId) continue;
 		if (compareInstants(booking.start, item.end) < 0 || compareInstants(booking.start, windowEnd) > 0) continue;
 		if (!first || compareInstants(booking.start, first.start) < 0) first = booking;

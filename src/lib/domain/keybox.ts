@@ -2,7 +2,7 @@
 // start. The confirmation names that time; the keybox outbox row is due at it (Story 2.2).
 // Pure: every input, including the instant to judge, is a parameter.
 import { addMinutes, compareInstants, type Instant, type Locale } from '#lib/time/index.ts';
-import type { OutboxState } from './outbox.ts';
+import { KEYBOX_OVERDUE_BEFORE_START_MIN, KEYBOX_OVERDUE_MIN, type OutboxState } from './outbox.ts';
 
 /** How long before the start the keybox code goes out: 24 hours of real time. */
 export const KEYBOX_LEAD_MIN = 24 * 60;
@@ -24,6 +24,20 @@ export function isPastKeyboxCutoff(start: Instant, at: Instant): boolean {
 export function keyboxDueAt(start: Instant, now: Instant): Instant {
 	const cutoff = keyboxCutoff(start);
 	return compareInstants(now, cutoff) > 0 ? now : cutoff;
+}
+
+const later = (a: Instant, b: Instant) => (compareInstants(a, b) >= 0 ? a : b);
+const earlier = (a: Instant, b: Instant) => (compareInstants(a, b) <= 0 ? a : b);
+
+/**
+ * When an open keybox row becomes overdue: 15 minutes after its original due time,
+ * `keyboxDueAt(start, createdAt)` (a retry moves `due_at`, so it is never read), but no later than
+ * 5 minutes before the start and never before the due time. The clamp keeps a booking made shortly
+ * before its start visible: rows expire only at the start, and the feed drops the booking then.
+ */
+export function keyboxOverdueAt(start: Instant, createdAt: Instant): Instant {
+	const due = keyboxDueAt(start, createdAt);
+	return later(due, earlier(addMinutes(due, KEYBOX_OVERDUE_MIN), addMinutes(start, -KEYBOX_OVERDUE_BEFORE_START_MIN)));
 }
 
 /** The keybox settings: the code and the instructions per locale. Blank counts as unset. */
@@ -68,4 +82,14 @@ export function isKeyboxPhase(state: OutboxState): boolean {
  */
 export function endsHeatChangeMail(state: OutboxState): boolean {
 	return state === 'in_flight' || state === 'transient_failure' || isKeyboxPhase(state);
+}
+
+/**
+ * True while a keybox email in `state` will still carry the booking's current notice to the guest:
+ * a retrying row (`transient_failure`) re-freezes the current notice at each claim, and an accepted
+ * retry writes it as last told. Only until the row is overdue (`keyboxOverdueAt`): from then on the
+ * call list asks for a call (`keybox_overdue`), so a change is phoned, not mailed (Story 3.9, C4).
+ */
+export function keyboxRetryCarriesNotice(state: OutboxState, booking: { start: Instant; createdAt: Instant }, now: Instant): boolean {
+	return state === 'transient_failure' && compareInstants(now, keyboxOverdueAt(booking.start, booking.createdAt)) < 0;
 }

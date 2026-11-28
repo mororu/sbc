@@ -514,6 +514,7 @@
 	"settings_season_order": "The end must be after the start.",
 	"settings_season_overlap": "These dates overlap another season.",
 	"settings_season_end_past": "The end can't be in the past.",
+	"settings_season_start_past": "The start can't be in the past.",
 	"settings_keybox_invalid": "At most 32 characters, no line breaks.",
 	"settings_hours_order": "\"To\" must be after \"From\".",
 	"settings_changeover_range": "Please enter 0 to 60, in steps of 5.",

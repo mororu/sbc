@@ -62,6 +62,7 @@ import { reasonText, timeRange } from './block-view.ts';
 import { buildImpactRow, type ImpactRowView } from './impact-view.ts';
 import { loadReplies, type RepliesView } from './reply-view.ts';
 import { badgeText } from './notice-text.ts';
+import { displayName } from './display-name.ts';
 
 type Db = Parameters<typeof getSettings>[0];
 
@@ -160,7 +161,7 @@ export function buildAdminRow(booking: AdminBooking, context: AdminRowContext): 
 		href: adminBookingHref(booking.id),
 		time: `${formatTime(booking.start)}–${formatTime(end)}`,
 		datetime: booking.start,
-		name: booking.name ?? m.admin_no_name({}, { locale }),
+		name: displayName(booking.name, locale),
 		party: m.booked_people({ count: booking.partySize }, { locale }),
 		partySize: booking.partySize,
 		email: blankToNull(booking.email),

@@ -81,6 +81,11 @@ describe('buildNextBookings', () => {
 		expect(next.groups[1]).toEqual({ label: 'Morgen · Mi 13. Januar', rows: [], empty: 'Keine Buchungen an diesem Tag.' });
 	});
 
+	it('heads a blank stored name "(ohne Name)", like the calls and replies (retro D5)', () => {
+		const next = buildNextBookings([booking({ name: '  ' })], context());
+		expect(next.groups[0].rows[0].name).toBe('(ohne Name)');
+	});
+
 	it('uses the English labels', () => {
 		const next = buildNextBookings([], context({ locale: 'en' }));
 		expect(next.heading).toBe('Next bookings');
@@ -132,6 +137,10 @@ describe('buildHomeFlags', () => {
 		expect(buildHomeFlags([candidate(3, '2027-01-13T16:00:00Z', { refused: true })], context())[0].text).toBe(
 			'1 Buchung hat eine abgelehnte Mail.'
 		);
+		// A blank stored name is "(ohne Name)" too (retro D5).
+		expect(buildHomeFlags([candidate(3, '2027-01-13T16:00:00Z', { refused: true, name: '  ' })], context())[0].links).toEqual([
+			{ href: '/admin/booking/3', text: 'Mi 13. Januar, 17:00 · (ohne Name)' }
+		]);
 	});
 
 	it('flags nothing for a booking that has started, or when nothing applies', () => {

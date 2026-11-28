@@ -117,4 +117,48 @@ describe('affectedBooking', () => {
 		expect(affectedBooking({ end }, [b], { changeoverMin: 30, preheatMaxMin: 40 })).toBe(b);
 		expect(affectedBooking({ end }, [b], { changeoverMin: 15, preheatMaxMin: 40 })).toBeNull();
 	});
+
+	describe('after the changeover was lowered (retro D1)', () => {
+		// A 10:00–12:00 made with changeover 60; the current changeover is 15 (old window ends 12:55).
+		const lowered = { changeoverMin: 15, preheatMaxMin: 40 };
+		const madeWith60 = (from: string, to: string) => booking(from, to, { changeoverMin: 60 });
+
+		it('widens the window with the largest stored changeover', () => {
+			const a = madeWith60('10:00', '12:00');
+			const b = madeWith60('13:00', '14:00');
+			expect(affectedBooking({ end: at('12:00'), bookingId: a.id }, [a, b], lowered)).toBe(b);
+		});
+
+		it('takes a stored changeover from a booking other than the item or the candidate', () => {
+			const a = booking('10:00', '12:00');
+			const b = booking('13:00', '14:00');
+			const other = madeWith60('16:00', '17:00');
+			expect(affectedBooking({ end: at('12:00'), bookingId: a.id }, [a, b, other], lowered)).toBe(b);
+		});
+
+		it('ignores the stored changeover of a deleted booking', () => {
+			const a = booking('10:00', '12:00');
+			const b = booking('13:00', '14:00');
+			const deleted = { ...madeWith60('16:00', '17:00'), deletedAt: '2027-01-10T10:00:00Z' };
+			expect(affectedBooking({ end: at('12:00'), bookingId: a.id }, [a, b, deleted], lowered)).toBeNull();
+		});
+
+		it('still lets the first booking after the end shield the rest', () => {
+			const a = madeWith60('10:00', '12:00');
+			const between = booking('12:15', '12:45');
+			const b = madeWith60('13:00', '14:00');
+			expect(affectedBooking({ end: at('12:00'), bookingId: a.id }, [a, b, between], lowered)).toBe(between);
+		});
+
+		it('finds nothing beyond the largest changeover plus the pre-heat max', () => {
+			const a = madeWith60('10:00', '12:00');
+			const b = madeWith60('13:45', '14:45');
+			expect(affectedBooking({ end: at('12:00'), bookingId: a.id }, [a, b], lowered)).toBeNull();
+		});
+
+		it('keeps the current changeover when it is the larger one', () => {
+			const b = booking('18:10', '19:10');
+			expect(affectedBooking({ end: at('17:00') }, [b], { changeoverMin: 30, preheatMaxMin: 40 })).toBe(b);
+		});
+	});
 });

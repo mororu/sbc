@@ -15,9 +15,11 @@
 // Story 3.8 adds `season` and `keybox`, plain cards through `changeSettings`: a season `conflict`
 // (dates overlapping another season) is `fail(400, { card, errors: { start: 'settings_season_overlap' },
 // values })`; an end before today (`past` with `field: 'end'`) is `fail(400, { card, errors: { end:
-// 'settings_season_end_past' }, values })`; `not_found` (the row is gone), any other `past` (the row
-// has ended, or its start passed and was changed) and a malformed hidden `id` are the in-card
-// failure, `fail(503, { card, code: 'failed' })`, like a lock timeout.
+// 'settings_season_end_past' }, values })`; a start before today on a new or upcoming season
+// (`past` with `field: 'start'`) is the same on `start` with 'settings_season_start_past';
+// `not_found` (the row is gone), any other `past` (the row has ended, or its start passed and was
+// changed) and a malformed hidden `id` are the in-card failure, `fail(503, { card, code: 'failed' })`,
+// like a lock timeout.
 import { fail, redirect } from '@sveltejs/kit';
 import { getLocale } from '#lib/paraglide/runtime.js';
 import {
@@ -103,9 +105,9 @@ function plainCard<C extends Exclude<SettingsCard, 'password' | 'preheat'>>(
 }
 
 /**
- * Saved; a season overlap (`conflict`) as the field error on `start`; `not_found`/`past` as the in-card
- * failure; or the 400 for a command `invalid`: the schema's errors when a rerun finds any, else the
- * card's fallback field.
+ * Saved; a season overlap (`conflict`) or a start in the past as the field error on `start`, an end
+ * in the past on `end`; other `not_found`/`past` as the in-card failure; or the 400 for a command
+ * `invalid`: the schema's errors when a rerun finds any, else the card's fallback field.
  */
 function answer(card: Exclude<SettingsCard, 'password'>, result: ChangeSettingsResult, data: Record<string, unknown>) {
 	if (result.ok) return { card, saved: true } satisfies SettingsResult;
@@ -115,6 +117,9 @@ function answer(card: Exclude<SettingsCard, 'password'>, result: ChangeSettingsR
 	}
 	if (card === 'season' && result.code === 'past' && result.field === 'end') {
 		return fail(400, { card, errors: { end: 'settings_season_end_past' }, values } satisfies SettingsResult);
+	}
+	if (card === 'season' && result.code === 'past' && result.field === 'start') {
+		return fail(400, { card, errors: { start: 'settings_season_start_past' }, values } satisfies SettingsResult);
 	}
 	if (result.code === 'conflict' || result.code === 'not_found' || result.code === 'past') {
 		return fail(503, { card, code: 'failed' } satisfies SettingsResult);
