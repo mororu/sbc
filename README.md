@@ -783,6 +783,15 @@ From EXPERIENCE.md: the card headings and labels (Saison: Beginn · Ende / Seaso
 
 A malformed season date reuses the block form's `block_date_invalid` (Bitte gib ein gültiges Datum an. / Please enter a valid date.).
 
+## Analytics records (Story 4.1)
+
+On every tick, after the outbox drain, the worker runs `snapshotAnalytics` (`src/lib/server/commands/snapshot-analytics.ts`, FR-30, AD-12). It inserts whatever is missing in one transaction, so it catches up after downtime, and a second run writes nothing. Records are never changed or purged.
+
+- **`analytics_booking`** (migration `0010_analytics.sql`): one row per live booking whose start has passed: `season_id`, Zurich `date`, `hhmm`, ISO `weekday` (1 = Monday) and `iso_week`, duration, party size, heat state at the start, recorded changeover, `start_kind` (`bookingStartKind`: 1 full or half hour, 2 right after another booking, 3 otherwise) and `guest_key`. A booking deleted before its start never gets one.
+- **`analytics_day`**: one row per passed season day: operating hours, `blocks` (JSON `[{ start, end, reason }]`) and `unbooked` (JSON `[{ start, heat }]`, `unbookedStartTimes`: kind-1 and kind-2 times nobody booked). Times are Zurich clock times; a block is clipped to the day ("00:00" to "24:00"). After downtime the settings current at snapshot time apply (accepted limitation).
+- **Guest key** (AD-22, `src/lib/server/guest-key.ts`): HMAC-SHA256 of the trimmed, lowercased email with `GUEST_KEY_SECRET`. The secret must never change. The key is null only when the email was already erased at snapshot time.
+- **Failures**: the job runs also when the drain failed. An error is logged as `[worker] analytics failed: <code>` and does not hold back the heartbeat, which is about mail. A successful run logs counts only.
+
 ## Scaffold decisions
 
 1. **Instants are UTC ISO 8601 text** with seconds and `Z`, e.g. `2027-01-12T17:00:00Z`, everywhere, including the notice JSON. It is readable in the database and in logs, sorts correctly as text, and round-trips through Temporal without loss. Wall-clock dates in URLs stay `yyyy-mm-dd`, times `hhmm`.

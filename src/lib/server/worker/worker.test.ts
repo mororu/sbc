@@ -26,6 +26,8 @@ let sqlite: ReturnType<typeof openDatabase>;
 let db: Db;
 let mailer: Mailer;
 let lines: string[];
+/** The scheduled jobs' log lines (Epic 4), kept apart from the mail lines. */
+let jobLines: string[];
 
 beforeEach(() => {
 	dir = mkdtempSync(join(tmpdir(), 'sauna-worker-'));
@@ -41,6 +43,7 @@ beforeEach(() => {
 		devNow: null
 	});
 	lines = [];
+	jobLines = [];
 });
 
 afterEach(() => {
@@ -75,7 +78,8 @@ const until = async (done: () => boolean) => {
 /** The confirmation rows; each booking's keybox row is not due yet at `NOW`. */
 const states = () =>
 	sqlite.prepare("select id, state from outbox where kind = 'confirmation' order by id").all() as { id: number; state: string }[];
-const deps = () => ({ db, mailer, now: () => NOW, log: (line: string) => lines.push(line) });
+const log = (line: string) => (/^\[worker\] (analytics|purge)/.test(line) ? jobLines : lines).push(line);
+const deps = () => ({ db, mailer, now: () => NOW, log, guestKeySecret: 'test-secret' });
 
 describe('tick', () => {
 	it('sends a due confirmation to the sink, records accepted and the heartbeat, and logs no contact data', async () => {
@@ -89,6 +93,23 @@ describe('tick', () => {
 		const log = lines.join('\n');
 		for (const secret of ['Lena', 'lena@example.ch', '+41791234567', '791234567']) expect(log).not.toContain(secret);
 		expect(sqlite.prepare('select last_told_notice = notice_at_booking as same from booking').get()).toEqual({ same: 1 });
+	});
+
+	it('runs the analytics snapshot, logs counts only, and nothing on the next tick (Story 4.1)', async () => {
+		book();
+		const after = '2027-01-12T17:00:00Z';
+		await tick({ ...deps(), now: () => after });
+		// 9 to 11 January have passed; the booking has just started.
+		expect(jobLines).toEqual(['[worker] analytics bookings=1 days=3']);
+		await tick({ ...deps(), now: () => after });
+		expect(jobLines).toHaveLength(1);
+	});
+
+	it('records the heartbeat when the snapshot fails (Story 4.1)', async () => {
+		sqlite.exec('drop table analytics_day');
+		await tick(deps());
+		expect(jobLines).toEqual(['[worker] analytics failed: SQLITE_ERROR']);
+		expect(sqlite.prepare('select beat_at from worker_heartbeat').get()).toEqual({ beat_at: NOW });
 	});
 
 	it('drains every due row in one tick', async () => {
@@ -163,6 +184,8 @@ describe('tick', () => {
 		sqlite.exec('drop table outbox');
 		await tick(deps());
 		expect(sqlite.prepare('select * from worker_heartbeat').all()).toEqual([]);
+		// The snapshot does not need the outbox: 9 January is still recorded.
+		expect(jobLines).toEqual(['[worker] analytics bookings=0 days=1']);
 		// The held list is still checked, and fails the same way here.
 		expect(lines).toEqual(['[worker] tick failed: SQLITE_ERROR', '[worker] held check failed: SQLITE_ERROR']);
 	});

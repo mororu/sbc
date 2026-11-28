@@ -2,8 +2,12 @@
 // hooks.server.ts `init`, behind a `globalThis` guard because dev HMR re-evaluates this module and a
 // module-level flag would reset. Each tick releases stale claims, claims due rows until none is left
 // (so the first tick after downtime catches up), sends each one outside any transaction and records
-// the outcome, then records the heartbeat. The next tick is scheduled only after the current one
-// has finished.
+// the outcome, then runs the scheduled jobs, then records the heartbeat. The next tick is scheduled
+// only after the current one has finished.
+// The scheduled jobs (AD-5, AD-12) run whether or not the drain succeeded, each catching and logging
+// its own error, and a failed job does not hold back the heartbeat (which is about mail):
+// - the analytics snapshot (Story 4.1).
+// Both are idempotent and log counts only.
 // The heartbeat row says two things (`workerHealth`, Story 2.5):
 // - `beat_at` is the last tick whose drain did not throw, so an old one flags a worker that has
 //   stopped or cannot reach its database. It does not say that mail goes out: a transient SMTP
@@ -25,6 +29,7 @@ import {
 	recordSendOutcome,
 	releaseHeldKeybox,
 	releaseStaleClaims,
+	snapshotAnalytics,
 	type ClaimedRow
 } from '#lib/server/commands/index.ts';
 import { getHeldKeyboxRows, getSendData } from '#lib/server/db/queries/index.ts';
@@ -54,9 +59,11 @@ export type WorkerDeps = {
 	mailer?: Mailer;
 	now?: () => Instant;
 	log?: (line: string) => void;
+	/** The analytics guest-key secret; the env's by default. */
+	guestKeySecret?: string;
 };
 
-type Context = { db: Db | undefined; mailer: Mailer; now: () => Instant; log: (line: string) => void };
+type Context = { guestKeySecret: string | undefined; db: Db | undefined; mailer: Mailer; now: () => Instant; log: (line: string) => void };
 
 const WORKER = Symbol.for('sauna-booking.worker');
 const HELD = Symbol.for('sauna-booking.worker.held');
@@ -67,6 +74,7 @@ const defaultLog = (line: string) => console.log(line);
 
 function context(deps: WorkerDeps): Context {
 	return {
+		guestKeySecret: deps.guestKeySecret,
 		db: deps.db,
 		// Throws a coded error (SMTP_CONFIG) when production has no SMTP settings.
 		mailer: deps.mailer ?? createMailer(getEnv()),
@@ -197,9 +205,21 @@ export async function sendClaimedRow(row: ClaimedRow, deps: WorkerDeps = {}): Pr
 	ctx.log(`${prefix} ${recorded.code} smtp=${result.smtpCode ?? '-'}${due}`);
 }
 
+/** The scheduled jobs, each with its own error handling. */
+function runJobs(ctx: Context, at: Instant): void {
+	try {
+		const written = snapshotAnalytics({ now: at, db: ctx.db, guestKeySecret: ctx.guestKeySecret });
+		if (written.bookings > 0 || written.days > 0) {
+			ctx.log(`[worker] analytics bookings=${written.bookings} days=${written.days}`);
+		}
+	} catch (error) {
+		ctx.log(`[worker] analytics failed: ${errorCode(error)}`);
+	}
+}
+
 /**
- * One tick: release stale claims, drain every due row, log the newly held keybox rows (also when the
- * drain failed), then record the heartbeat if the drain succeeded. One instant for the release, the
+ * One tick: release stale claims, drain every due row, log the newly held keybox rows and run the
+ * scheduled jobs (both also when the drain failed), then record the heartbeat if the drain succeeded. One instant for the release, the
  * claims and the held list. Never throws.
  */
 export async function tick(deps: WorkerDeps = {}): Promise<void> {
@@ -232,6 +252,7 @@ export async function tick(deps: WorkerDeps = {}): Promise<void> {
 	} catch (error) {
 		ctx.log(`[worker] held check failed: ${errorCode(error)}`);
 	}
+	runJobs(ctx, at);
 	if (!drained) return;
 	try {
 		recordHeartbeat({ now: ctx.now(), db: ctx.db });

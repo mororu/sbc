@@ -235,3 +235,79 @@ export const adminSession = sqliteTable(
 	},
 	(t) => [check('admin_session_instants', sql`${isInstant(t.createdAt)} AND ${isInstant(t.expiresAt)}`)]
 );
+
+const HEAT_STATES = ['hot', 'cold'] as const;
+const TIME_GLOB = '[0-2][0-9]:[0-5][0-9]';
+
+/** One block on an analytics day: Zurich clock times, clipped to the day ("00:00" to "24:00"). */
+export type AnalyticsBlock = { start: string; end: string; reason: (typeof BLOCK_REASONS)[number] };
+/** One kind-1 or kind-2 start time that passed unbooked: Zurich clock time and heat state. */
+export type AnalyticsUnbooked = { start: string; heat: (typeof HEAT_STATES)[number] };
+
+/**
+ * One anonymous record per booking that took place (FR-30, AD-12; Story 4.1), written once by
+ * `snapshotAnalytics` and never changed or purged. Local columns are Europe/Zurich wall clock.
+ * Holds no name, email or mobile.
+ */
+export const analyticsBooking = sqliteTable(
+	'analytics_booking',
+	{
+		id: integer().primaryKey(),
+		bookingId: integer()
+			.notNull()
+			.references(() => booking.id),
+		seasonId: integer()
+			.notNull()
+			.references(() => season.id),
+		date: text().notNull(),
+		/** "18:00" */
+		hhmm: text().notNull(),
+		/** ISO: 1 Monday to 7 Sunday. */
+		weekday: integer().notNull(),
+		isoWeek: integer().notNull(),
+		durationMin: integer().notNull(),
+		partySize: integer().notNull(),
+		/** The heat state at the start. */
+		heat: text({ enum: HEAT_STATES }).notNull(),
+		changeoverMin: integer().notNull(),
+		/** 1 full or half hour, 2 right after another booking, 3 otherwise (`bookingStartKind`). */
+		startKind: integer().notNull(),
+		/** Keyed hash of the email (AD-22). Null only when the email was already erased at snapshot time. */
+		guestKey: text()
+	},
+	(t) => [
+		uniqueIndex('analytics_booking_booking_id').on(t.bookingId),
+		index('analytics_booking_season_id').on(t.seasonId),
+		check('analytics_booking_date', isDate(t.date)),
+		check('analytics_booking_hhmm', sql`${t.hhmm} GLOB ${sql.raw(`'${TIME_GLOB}'`)}`),
+		check('analytics_booking_weekday', sql`${t.weekday} BETWEEN 1 AND 7 AND ${t.isoWeek} BETWEEN 1 AND 53`),
+		check('analytics_booking_heat', sql`${t.heat} IN ('hot', 'cold')`),
+		check('analytics_booking_start_kind', sql`${t.startKind} IN (1, 2, 3)`),
+		check('analytics_booking_guest_key', sql`${t.guestKey} IS NULL OR (length(${t.guestKey}) = 64 AND ${t.guestKey} NOT GLOB '*[^0-9a-f]*')`)
+	]
+);
+
+/**
+ * One record per passed season day (FR-30, AD-12; Story 4.1), with the settings in force when it
+ * was written; never changed or purged.
+ */
+export const analyticsDay = sqliteTable(
+	'analytics_day',
+	{
+		id: integer().primaryKey(),
+		date: text().notNull(),
+		seasonId: integer()
+			.notNull()
+			.references(() => season.id),
+		openMinute: integer().notNull(),
+		closeMinute: integer().notNull(),
+		blocks: text({ mode: 'json' }).$type<AnalyticsBlock[]>().notNull(),
+		unbooked: text({ mode: 'json' }).$type<AnalyticsUnbooked[]>().notNull()
+	},
+	(t) => [
+		uniqueIndex('analytics_day_date').on(t.date),
+		index('analytics_day_season_id').on(t.seasonId),
+		check('analytics_day_date_format', isDate(t.date)),
+		check('analytics_day_json', sql`json_valid(${t.blocks}) AND json_valid(${t.unbooked})`)
+	]
+);

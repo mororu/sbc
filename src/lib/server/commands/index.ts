@@ -8,3 +8,4 @@ export * from './mark-called.ts';
 export * from './outbox.ts';
 export * from './admin-session.ts';
 export * from './change-settings.ts';
+export * from './snapshot-analytics.ts';

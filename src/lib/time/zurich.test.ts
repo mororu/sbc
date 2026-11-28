@@ -16,6 +16,8 @@ import {
 	hoursInDay,
 	isValidDate,
 	isValidInstant,
+	isoWeek,
+	isoWeekday,
 	lastBookableDay,
 	localDate,
 	localMinuteOfDay,
@@ -166,5 +168,19 @@ describe('formatting', () => {
 	it('formats Zurich clock times', () => {
 		expect(formatTime('2027-01-12T17:15:00Z')).toBe('18:15');
 		expect(formatTime('2027-03-28T08:00:00Z')).toBe('10:00');
+	});
+});
+
+describe('ISO weekday and week (Story 4.1)', () => {
+	it.each([
+		['2027-01-03', 7, 53],
+		['2027-01-04', 1, 1],
+		['2027-01-12', 2, 2],
+		['2027-03-27', 6, 12],
+		['2027-03-28', 7, 12],
+		['2027-03-29', 1, 13]
+	])('%s is weekday %i of week %i', (date, weekday, week) => {
+		expect(isoWeekday(date)).toBe(weekday);
+		expect(isoWeek(date)).toBe(week);
 	});
 });

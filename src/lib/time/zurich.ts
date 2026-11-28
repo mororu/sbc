@@ -168,3 +168,15 @@ export function formatWeekdayShort(date: LocalDate, locale: Locale): string {
 export function formatDayNumber(date: LocalDate, locale: Locale): string {
 	return dateParts(date, locale, 'short').day;
 }
+
+/** The ISO weekday of a date: 1 (Monday) to 7 (Sunday). */
+export function isoWeekday(date: LocalDate): number {
+	return Temporal.PlainDate.from(date).dayOfWeek;
+}
+
+/** The ISO week number of a date (1–53). Around New Year it may belong to the neighbouring year. */
+export function isoWeek(date: LocalDate): number {
+	const week = Temporal.PlainDate.from(date).weekOfYear;
+	if (week === undefined) throw new Error('No ISO week');
+	return week;
+}
